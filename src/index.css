@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ============================================================
+     EVO GRID DESIGN SYSTEM · MODO CLARO EXECUTIVO (#f0f4f8)
+     ============================================================ */
+  :root {
+    --app-bg: #f0f4f8;                 /* Fundo ardósia suave anti-ofuscante */
+    --app-fg: #0f172a;                 /* Texto escuro de alto contraste */
+    --card-bg: #ffffff;                /* Superfície dos cartões */
+    --card-fg: #0f172a;
+    --border-color: #d7e0ea;           /* Borda sóbria mate de 1px */
+    --primary-color: #0284c7;          /* Azul safira executivo */
+    --primary-fg: #ffffff;
+    --secondary-bg: #e2e8f0;
+    --secondary-fg: #0f172a;
+    --muted-bg: #e2e8f0;               /* Sub-painéis e toolbars secundárias */
+    --muted-fg: #64748b;
+    --destructive-color: #dc2626;
+  }
+
+  /* ============================================================
+     EVO GRID DESIGN SYSTEM · MODO ESCURO CYBER NAVY (#07121c)
+     ============================================================ */
+  .dark {
+    --app-bg: #07121c;                 /* Azul petróleo escuro profundo */
+    --app-fg: #f8fafc;
+    --card-bg: #0c1520;                /* Superfície dos cartões em profundidade */
+    --card-fg: #f8fafc;
+    --border-color: #222f3e;           /* Borda mate de 1px sóbria */
+    --primary-color: #38bdf8;          /* Sky 400 elétrico */
+    --primary-fg: #07121c;
+    --secondary-bg: #112338;
+    --secondary-fg: #f8fafc;
+    --muted-bg: #112338;
+    --muted-fg: #94a3b8;
+    --destructive-color: #ef4444;
+  }
+
+  body {
+    font-family: 'Montserrat', sans-serif;
+    background-color: var(--app-bg);
+    color: var(--app-fg);
+    @apply antialiased overflow-hidden select-none;
+  }
+}
+
+@layer components {
+  /* Fundo em Grelha Excel Subtil (64px × 20px a 8% de opacidade com máscara zenital) */
+  .workspace-ledger {
+    background-image: 
+      linear-gradient(to right, rgba(15, 23, 42, 0.08) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(15, 23, 42, 0.08) 1px, transparent 1px);
+    background-size: 64px 20px;
+    mask-image: radial-gradient(ellipse at 50% 15%, #000 35%, transparent 88%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 15%, #000 35%, transparent 88%);
+  }
+
+  .dark .workspace-ledger {
+    background-image: 
+      linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+    background-size: 64px 20px;
+    mask-image: radial-gradient(ellipse at 50% 15%, #000 30%, transparent 85%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 15%, #000 30%, transparent 85%);
+  }
+
+  /* Títulos Executivos em Peso 300 / Light (Montserrat) */
+  .page-title,
+  h1,
+  h2 {
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 300 !important;
+    letter-spacing: -0.015em;
+  }
+
+  .page-kicker {
+    font-family: 'Roboto Mono', monospace;
+    letter-spacing: 0.2em;
+    font-size: 9.5px;
+    text-transform: uppercase;
+  }
+
+  .page-description {
+    font-family: 'Roboto Mono', monospace;
+    letter-spacing: 0.03em;
+    font-size: 11.5px;
+  }
+
+  /* Alinhamento Tabular de Folha de Cálculo (Roboto Mono) */
+  th {
+    font-family: 'Roboto Mono', monospace !important;
+    letter-spacing: 0.12em;
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .data-text,
+  td.tabular-nums {
+    font-family: 'Roboto Mono', monospace !important;
+  }
+
+  /* Assinatura Canónica Gexcel EVO dos Cartões (Barrinha lateral azul de 20px x 2px) */
+  .evo-card-signature {
+    position: relative;
+  }
+  .evo-card-signature::before {
+    content: "" !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 8px !important;
+    height: 20px !important;
+    width: 2px !important;
+    background-color: #0284c7 !important;
+    border-radius: 0 1px 1px 0 !important;
+    z-index: 20 !important;
+    display: block !important;
+  }
+  .dark .evo-card-signature::before {
+    background-color: #38bdf8 !important;
+  }
+}
+
+/* Scrollbar sutil e sóbria */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent; 
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--border-color);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-fg);
+}
