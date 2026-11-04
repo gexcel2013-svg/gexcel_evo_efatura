@@ -129,8 +129,13 @@ export function RecibosVerdesView({
   const [incluirRendas, setIncluirRendas] = useState<boolean>(true);
   const [baixarPdfs, setBaixarPdfs] = useState<boolean>(false);
   const [reimportarTudo, setReimportarTudo] = useState<boolean>(false);
+  const [gerarXmlLegado, setGerarXmlLegado] = useState<boolean>(() => {
+    const saved = localStorage.getItem('gexcel_alimentar_xml_legado');
+    return saved !== null ? saved === 'true' : true;
+  });
 
-  // Caminhos BdsRV e BdsRV_PDFs
+  // Caminhos BdsefaturaV4 (SQLite), BdsRV (XML) e BdsRV_PDFs
+  const [pastaV4, setPastaV4] = useState<string>('');
   const [pastaBdsrv, setPastaBdsrv] = useState<string>('');
   const [pastaPdfs, setPastaPdfs] = useState<string>('');
   const [pastaPdfsEdit, setPastaPdfsEdit] = useState<string>('');
@@ -201,9 +206,14 @@ export function RecibosVerdesView({
       ]);
       if (resCfg.ok) {
         const cfg = await resCfg.json();
+        setPastaV4(cfg.pasta_v4 || '');
         setPastaBdsrv(cfg.pasta_bdsrv || '');
         setPastaPdfs(cfg.pasta_pdfs || '');
         setPastaPdfsEdit(cfg.pasta_pdfs || '');
+        if (typeof cfg.alimentar_xml_legado === 'boolean') {
+          setGerarXmlLegado(cfg.alimentar_xml_legado);
+          localStorage.setItem('gexcel_alimentar_xml_legado', String(cfg.alimentar_xml_legado));
+        }
         onApiStatusChange?.(true);
       }
       if (resEnt.ok) {
@@ -224,7 +234,11 @@ export function RecibosVerdesView({
         const data = await res.json();
         setMatrizEmpresas(data.empresas || {});
         setSenhasInvalidas(data.senhas_invalidas || {});
+        if (data.pasta_v4) setPastaV4(data.pasta_v4);
         if (data.pasta_bdsrv) setPastaBdsrv(data.pasta_bdsrv);
+        if (typeof data.alimentar_xml_legado === 'boolean') {
+          setGerarXmlLegado(data.alimentar_xml_legado);
+        }
         if (data.pasta_pdfs) {
           setPastaPdfs(data.pasta_pdfs);
           if (!editandoPastaPdfs) setPastaPdfsEdit(data.pasta_pdfs);
@@ -385,6 +399,18 @@ export function RecibosVerdesView({
     } catch {}
   };
 
+  const toggleGerarXmlLegado = async (novoValor: boolean) => {
+    setGerarXmlLegado(novoValor);
+    localStorage.setItem('gexcel_alimentar_xml_legado', String(novoValor));
+    try {
+      await fetch('http://127.0.0.1:8015/api/app/config/xml-legado', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alimentar_xml_legado: novoValor }),
+      });
+    } catch {}
+  };
+
   // 6. Disparo de Extração (Individual ou Lote)
   const iniciarExtracaoEntidade = async (ent: Entidade) => {
     if (!incluirRv && !incluirRendas) {
@@ -406,6 +432,7 @@ export function RecibosVerdesView({
           pasta_pdfs: pastaPdfs,
           id_contab: ent.cod || '',
           reimportar_tudo: reimportarTudo,
+          gerar_xml_legado: gerarXmlLegado,
         }),
       });
       if (res.ok) {
@@ -840,6 +867,19 @@ export function RecibosVerdesView({
             />
             <span>Reimportar Tudo</span>
           </label>
+
+          <label
+            className="flex items-center space-x-1.5 cursor-pointer px-2 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-300 font-semibold"
+            title="Além de guardar na base SQLite moderna (BdsefaturaV4), mantém os ficheiros XML BdsRV sincronizados para o Gexcel Apps (Excel)"
+          >
+            <input
+              type="checkbox"
+              checked={gerarXmlLegado}
+              onChange={e => toggleGerarXmlLegado(e.target.checked)}
+              className="rounded border-emerald-500 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+            />
+            <span>Alimentar Excel Apps (XML BdsRV)</span>
+          </label>
         </div>
 
         {/* Endereço Completo da Pasta de PDFs + Botões Abrir no Windows (📂) e Copiar (📋) */}
@@ -968,29 +1008,54 @@ export function RecibosVerdesView({
               </div>
             </div>
 
-            {/* Pasta XML BdsRV */}
-            {pastaBdsrv && (
-              <div className="flex items-center space-x-1.5 text-[11px] font-mono text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1">
-                <span className="font-bold">BdsRV:</span>
-                <span className="break-all" title={pastaBdsrv}>{pastaBdsrv}</span>
-                <button
-                  type="button"
-                  onClick={() => copiarEndereco(pastaBdsrv)}
-                  title="Copiar endereço BdsRV (📋)"
-                  className="p-0.5 hover:text-[#0284c7] cursor-pointer"
-                >
-                  {copiadoCaminho === pastaBdsrv ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => abrirNoExplorador(pastaBdsrv)}
-                  title="Abrir pasta BdsRV no Explorador do Windows (📂)"
-                  className="p-0.5 text-[#0284c7] dark:text-sky-400 cursor-pointer"
-                >
-                  <FolderOpen className="w-3 h-3" />
-                </button>
-              </div>
-            )}
+            {/* Pastas SQLite (BdsefaturaV4) e XML Legado (BdsRV) */}
+            <div className="flex flex-wrap items-center gap-2">
+              {pastaV4 && (
+                <div className="flex items-center space-x-1.5 text-[11px] font-mono text-slate-800 dark:text-slate-200 bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800 rounded px-2 py-1">
+                  <span className="font-bold text-[#0284c7] dark:text-sky-400">SQLite V4:</span>
+                  <span className="break-all" title={pastaV4}>{pastaV4}</span>
+                  <button
+                    type="button"
+                    onClick={() => copiarEndereco(pastaV4)}
+                    title="Copiar endereço SQLite BdsefaturaV4 (📋)"
+                    className="p-0.5 hover:text-[#0284c7] cursor-pointer"
+                  >
+                    {copiadoCaminho === pastaV4 ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => abrirNoExplorador(pastaV4)}
+                    title="Abrir pasta BdsefaturaV4 no Explorador do Windows (📂)"
+                    className="p-0.5 text-[#0284c7] dark:text-sky-400 cursor-pointer"
+                  >
+                    <FolderOpen className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+
+              {pastaBdsrv && (
+                <div className="flex items-center space-x-1.5 text-[11px] font-mono text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1">
+                  <span className="font-bold">XML BdsRV:</span>
+                  <span className="break-all" title={pastaBdsrv}>{pastaBdsrv}</span>
+                  <button
+                    type="button"
+                    onClick={() => copiarEndereco(pastaBdsrv)}
+                    title="Copiar endereço BdsRV (📋)"
+                    className="p-0.5 hover:text-[#0284c7] cursor-pointer"
+                  >
+                    {copiadoCaminho === pastaBdsrv ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => abrirNoExplorador(pastaBdsrv)}
+                    title="Abrir pasta BdsRV no Explorador do Windows (📂)"
+                    className="p-0.5 text-[#0284c7] dark:text-sky-400 cursor-pointer"
+                  >
+                    <FolderOpen className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Grelha Matriz 12 Meses */}

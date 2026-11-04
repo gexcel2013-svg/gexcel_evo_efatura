@@ -50,6 +50,10 @@ export function ConfigView() {
   const [modoSelecionado, setModoSelecionado] = useState<'integrado' | 'autonomo'>(
     appConfig?.modo_dados || 'integrado'
   );
+  const [alimentarXmlLegado, setAlimentarXmlLegado] = useState<boolean>(() => {
+    const saved = localStorage.getItem('gexcel_alimentar_xml_legado');
+    return saved !== null ? saved === 'true' : true;
+  });
   const [salvandoModo, setSalvandoModo] = useState<boolean>(false);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
@@ -85,7 +89,35 @@ export function ConfigView() {
 
   useEffect(() => {
     carregarListaUtilizadores();
+    fetch('http://127.0.0.1:8015/api/recibos-verdes/config')
+      .then(r => r.ok ? r.json() : null)
+      .then(cfg => {
+        if (cfg && typeof cfg.alimentar_xml_legado === 'boolean') {
+          setAlimentarXmlLegado(cfg.alimentar_xml_legado);
+          localStorage.setItem('gexcel_alimentar_xml_legado', String(cfg.alimentar_xml_legado));
+        }
+      })
+      .catch(() => {});
   }, [carregarListaUtilizadores]);
+
+  const handleToggleXmlLegado = async (novoEstado: boolean) => {
+    setAlimentarXmlLegado(novoEstado);
+    localStorage.setItem('gexcel_alimentar_xml_legado', String(novoEstado));
+    try {
+      const res = await fetch('http://127.0.0.1:8015/api/app/config/xml-legado', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ alimentar_xml_legado: novoEstado }),
+      });
+      if (res.ok) {
+        setMensagemSucesso(
+          novoEstado
+            ? 'Alimentação paralela dos ficheiros XML do Gexcel Apps (BdsefaturaV3 e BdsRV) ATIVADA.'
+            : 'Modo 100% SQLite (BdsefaturaV4) ativo — geração de ficheiros XML legados desativada.'
+        );
+      }
+    } catch {}
+  };
 
   // Alterar Modo de Ligação (Integrado vs Autónomo)
   const handleAlterarModo = async (novoModo: 'integrado' | 'autonomo') => {
@@ -437,6 +469,29 @@ export function ConfigView() {
                 </p>
               </div>
             </div>
+
+            {/* Opção 3: Compatibilidade Paralela com Excel Apps (XML BdsefaturaV3 + BdsRV) */}
+            <label className="p-3 rounded-md border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-[#091e1a] flex items-start space-x-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={alimentarXmlLegado}
+                onChange={e => handleToggleXmlLegado(e.target.checked)}
+                className="mt-0.5 rounded border-emerald-500 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+              />
+              <div className="space-y-0.5">
+                <div className="flex items-center space-x-2">
+                  <span className="font-semibold font-mono text-xs text-emerald-950 dark:text-emerald-200">
+                    Alimentar Dados Atuais do Excel Apps (XML Legado)
+                  </span>
+                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200 font-bold">
+                    Dual-Write
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
+                  Os novos dados modernos ficam diretamente nas bases SQLite (<code className="text-[10.5px]">BdsefaturaV4/{'{NIF}'}/compras, vendas, anuladas e recibos_verdes</code>). Com esta opção ativa, continua a atualizar em paralelo os XMLs do Excel (<code className="text-[10.5px]">BdsefaturaV3</code> e <code className="text-[10.5px]">BdsRV</code>).
+                </p>
+              </div>
+            </label>
           </div>
 
           <div className="pt-1 text-[11px] font-mono text-muted-foreground flex items-center justify-between border-t border-slate-200 dark:border-[#1b2b3d]">

@@ -273,6 +273,33 @@ export default function CommandCenter({
   const [dataInicio, setDataInicio] = useState<string>(`${anoAtual}-01-01`);
   const [dataFim, setDataFim] = useState<string>(new Date().toISOString().split('T')[0]);
   const [reimportarTudo, setReimportarTudo] = useState<boolean>(false);
+  const [gerarXmlLegado, setGerarXmlLegado] = useState<boolean>(() => {
+    return localStorage.getItem('gexcel_alimentar_xml_legado') !== 'false';
+  });
+
+  useEffect(() => {
+    fetch('http://127.0.0.1:8015/api/recibos-verdes/config')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (d && typeof d.alimentar_xml_legado === 'boolean') {
+          setGerarXmlLegado(d.alimentar_xml_legado);
+          localStorage.setItem('gexcel_alimentar_xml_legado', String(d.alimentar_xml_legado));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const toggleGerarXmlLegado = async (val: boolean) => {
+    setGerarXmlLegado(val);
+    localStorage.setItem('gexcel_alimentar_xml_legado', String(val));
+    try {
+      await fetch('http://127.0.0.1:8015/api/app/config/xml-legado', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alimentar_xml_legado: val }),
+      });
+    } catch {}
+  };
 
   // Meses ativos no período atual (para sincronização e destaque visual nas colunas da tabela)
   const mesesAtivos = useMemo<Set<number>>(() => {
@@ -1418,7 +1445,7 @@ export default function CommandCenter({
         reimportar_tudo: reimportarTudo,
         volume_estimado: volEst,
         modo_saida: 'sqlite',
-        gerar_xml_legado: true
+        gerar_xml_legado: gerarXmlLegado
       };
 
       const res = await fetch("http://127.0.0.1:8015/api/extracao/iniciar", {
@@ -2080,7 +2107,7 @@ export default function CommandCenter({
             </div>
 
             {/* Opção Reimportação Forçada (Wipe) */}
-            <div className="p-2 rounded bg-white/60 dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42]">
+            <div className="p-2 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42]">
               <label className="flex items-start space-x-2.5 cursor-pointer group">
                 <div className="relative flex items-center justify-center mt-0.5">
                   <input 
@@ -2090,7 +2117,7 @@ export default function CommandCenter({
                     className="sr-only" 
                   />
                   <div className={`w-3.5 h-3.5 rounded-[4px] border ${
-                    reimportarTudo ? 'bg-destructive/15 border-destructive text-destructive' : 'bg-white dark:bg-[#182838] border-slate-300 dark:border-[#2b415a]'
+                    reimportarTudo ? 'bg-rose-600 border-rose-600 text-white' : 'bg-white dark:bg-[#182838] border-slate-300 dark:border-[#2b415a]'
                   } flex items-center justify-center transition-colors`}>
                     {reimportarTudo && <Check className="w-2.5 h-2.5 stroke-[3]" />}
                   </div>
@@ -2101,6 +2128,33 @@ export default function CommandCenter({
                   </span>
                   <span className="block text-[9.5px] text-muted-foreground dark:text-slate-400 mt-0.5 leading-tight">
                     Substitui registos do período na base central.
+                  </span>
+                </div>
+              </label>
+            </div>
+
+            {/* Opção Alimentar Dados Atuais do Excel Apps (XML Legado BdsefaturaV3) */}
+            <div className="p-2 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42]">
+              <label className="flex items-start space-x-2.5 cursor-pointer group">
+                <div className="relative flex items-center justify-center mt-0.5">
+                  <input 
+                    type="checkbox" 
+                    checked={gerarXmlLegado}
+                    onChange={e => toggleGerarXmlLegado(e.target.checked)}
+                    className="sr-only" 
+                  />
+                  <div className={`w-3.5 h-3.5 rounded-[4px] border ${
+                    gerarXmlLegado ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white dark:bg-[#182838] border-slate-300 dark:border-[#2b415a]'
+                  } flex items-center justify-center transition-colors`}>
+                    {gerarXmlLegado && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                  </div>
+                </div>
+                <div>
+                  <span className="block text-xs font-medium text-foreground dark:text-slate-200 group-hover:text-primary transition-colors">
+                    Alimentar Excel Apps (XML BdsefaturaV3)
+                  </span>
+                  <span className="block text-[9.5px] text-muted-foreground dark:text-slate-400 mt-0.5 leading-tight">
+                    Grava sempre em SQLite (BdsefaturaV4) e gera em paralelo os XML para o Excel.
                   </span>
                 </div>
               </label>
