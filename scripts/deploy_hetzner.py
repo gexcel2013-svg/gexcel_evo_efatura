@@ -3,6 +3,12 @@ import sys
 import stat
 import paramiko
 
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 
 def load_env(path):
     env = {}
@@ -163,7 +169,7 @@ def main():
     # 3. Garantir dependências Python no ambiente virtual e serviço systemd gevo-evo05-efatura.service (:8015)
     run_ssh(
         ssh,
-        "/opt/gexcel/evo12/.venv/bin/pip install -q zeep lxml cryptography python-dotenv requests fastapi uvicorn psutil requests-file requests-toolbelt isodate platformdirs"
+        "/opt/gexcel/evo07/venv/bin/pip install -q zeep lxml cryptography python-dotenv requests fastapi uvicorn psutil requests-file requests-toolbelt isodate platformdirs"
     )
 
     service_unit = """[Unit]
@@ -175,7 +181,7 @@ Type=simple
 WorkingDirectory=/opt/gexcel/evo05
 Environment="PYTHONUNBUFFERED=1"
 Environment="PORT=8015"
-ExecStart=/opt/gexcel/evo12/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8015
+ExecStart=/opt/gexcel/evo07/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8015
 Restart=always
 RestartSec=3
 
@@ -190,20 +196,27 @@ WantedBy=multi-user.target
     # 4. Atualizar Caddyfile com reverse_proxy para :8090 (PocketBase EVO-12), :8095 (SafeDrive) e :8015 (EVO-05 API)
     _, caddy_content, _ = run_ssh(ssh, "cat /etc/caddy/Caddyfile")
     marker = "# ==========================================================\n# EVO-06: GEXCEL IMPORTADOR E-FATURA, RECIBOS VERDES & ANULADOS"
-    if marker in caddy_content:
-        base_caddy = caddy_content.split(marker)[0].rstrip()
-    else:
-        base_caddy = caddy_content.rstrip()
+    next_marker = "# ==========================================================\n# EVO-00: PAINEL GEXCEL EVO"
 
     new_caddy_section = "\n\n".join([
         "# ==========================================================\n# EVO-06: GEXCEL IMPORTADOR E-FATURA, RECIBOS VERDES & ANULADOS\n# ==========================================================",
         build_caddy_site_block("dev.efatura.gexcelapps.com", "/opt/gexcel/evo06/dev/dist"),
         build_caddy_site_block("beta.efatura.gexcelapps.com", "/opt/gexcel/evo06/beta/dist"),
         build_caddy_site_block("efatura.gexcelapps.com", "/opt/gexcel/evo06/stable/dist"),
-    ]) + "\n"
+    ])
+
+    if marker in caddy_content and next_marker in caddy_content:
+        before = caddy_content.split(marker)[0].rstrip()
+        after = next_marker + caddy_content.split(next_marker, 1)[1]
+        final_caddy = before + "\n\n" + new_caddy_section + "\n\n" + after.strip() + "\n"
+    elif marker in caddy_content:
+        before = caddy_content.split(marker)[0].rstrip()
+        final_caddy = before + "\n\n" + new_caddy_section + "\n"
+    else:
+        final_caddy = caddy_content.rstrip() + "\n\n" + new_caddy_section + "\n"
 
     with sftp.open('/etc/caddy/Caddyfile', 'w') as f:
-        f.write(base_caddy + "\n\n" + new_caddy_section)
+        f.write(final_caddy)
 
     sftp.close()
     run_ssh(ssh, "systemctl reload caddy")
