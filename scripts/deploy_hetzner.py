@@ -1,6 +1,5 @@
 import os
 import sys
-import stat
 import paramiko
 
 try:
@@ -122,17 +121,16 @@ def main():
     ssh.connect(host, username=user, password=pw, timeout=20)
     sftp = ssh.open_sftp()
 
-    # 1. Atualizar código Frontend EVO-06 (dev, beta, stable) via GitHub
-    for env_name in ['dev', 'beta', 'stable']:
-        target_dir = f"/opt/gexcel/evo06/{env_name}"
-        run_ssh(ssh, f"mkdir -p {target_dir}")
-        status, out, _ = run_ssh(ssh, f"test -d {target_dir}/.git && echo 'EXISTS' || echo 'NEW'")
-        if 'NEW' in out:
-            run_ssh(ssh, f"git clone {repo} {target_dir}")
-        else:
-            run_ssh(ssh, f"cd {target_dir} && git fetch origin && git reset --hard origin/main")
+    # 1. Atualizar código Frontend EVO-06 APENAS no canal DEV (/opt/gexcel/evo06/dev)
+    target_dir = "/opt/gexcel/evo06/dev"
+    run_ssh(ssh, f"mkdir -p {target_dir}")
+    status, out, _ = run_ssh(ssh, f"test -d {target_dir}/.git && echo 'EXISTS' || echo 'NEW'")
+    if 'NEW' in out:
+        run_ssh(ssh, f"git clone {repo} {target_dir}")
+    else:
+        run_ssh(ssh, f"cd {target_dir} && git fetch origin && git reset --hard origin/main")
 
-    # 2. Deploy do Motor Backend EVO-05 (API e-Fatura, Recibos Verdes e Anulados :8015) + Scrapers SCR-01..03
+    # 2. Deploy do Motor Backend EVO-05 (:8015) + Scrapers SCR-01..03
     print("A sincronizar motor EVO-05_API_Efatura para /opt/gexcel/evo05...")
     run_ssh(ssh, "mkdir -p /opt/gexcel/evo05 /opt/gexcel/evo05/docs /opt/gexcel/evo05/certs /opt/gexcel/03.9_SCR_EVO_Scrapers_Gov")
 
@@ -166,7 +164,7 @@ def main():
                 allowed_exts=('.py', '.json'),
             )
 
-    # 3. Garantir dependências Python no ambiente virtual e serviço systemd gevo-evo05-efatura.service (:8015)
+    # 3. Garantir dependências Python e serviço systemd gevo-evo05-efatura.service (:8015)
     run_ssh(
         ssh,
         "/opt/gexcel/evo07/venv/bin/pip install -q zeep lxml cryptography python-dotenv requests fastapi uvicorn psutil requests-file requests-toolbelt isodate platformdirs"
@@ -193,40 +191,14 @@ WantedBy=multi-user.target
 
     run_ssh(ssh, "systemctl daemon-reload && systemctl enable gevo-evo05-efatura.service && systemctl restart gevo-evo05-efatura.service")
 
-    # 4. Atualizar Caddyfile com reverse_proxy para :8090 (PocketBase EVO-12), :8095 (SafeDrive) e :8015 (EVO-05 API)
-    _, caddy_content, _ = run_ssh(ssh, "cat /etc/caddy/Caddyfile")
-    marker = "# ==========================================================\n# EVO-06: GEXCEL IMPORTADOR E-FATURA, RECIBOS VERDES & ANULADOS"
-    next_marker = "# ==========================================================\n# EVO-00: PAINEL GEXCEL EVO"
-
-    new_caddy_section = "\n\n".join([
-        "# ==========================================================\n# EVO-06: GEXCEL IMPORTADOR E-FATURA, RECIBOS VERDES & ANULADOS\n# ==========================================================",
-        build_caddy_site_block("dev.efatura.gexcelapps.com", "/opt/gexcel/evo06/dev/dist"),
-        build_caddy_site_block("beta.efatura.gexcelapps.com", "/opt/gexcel/evo06/beta/dist"),
-        build_caddy_site_block("efatura.gexcelapps.com", "/opt/gexcel/evo06/stable/dist"),
-    ])
-
-    if marker in caddy_content and next_marker in caddy_content:
-        before = caddy_content.split(marker)[0].rstrip()
-        after = next_marker + caddy_content.split(next_marker, 1)[1]
-        final_caddy = before + "\n\n" + new_caddy_section + "\n\n" + after.strip() + "\n"
-    elif marker in caddy_content:
-        before = caddy_content.split(marker)[0].rstrip()
-        final_caddy = before + "\n\n" + new_caddy_section + "\n"
-    else:
-        final_caddy = caddy_content.rstrip() + "\n\n" + new_caddy_section + "\n"
-
-    with sftp.open('/etc/caddy/Caddyfile', 'w') as f:
-        f.write(final_caddy)
-
     sftp.close()
     run_ssh(ssh, "systemctl reload caddy")
 
-    # 5. Validar serviço :8015 e endpoints públicos HTTPS
-    run_ssh(ssh, "sleep 2 && systemctl is-active gevo-evo05-efatura.service")
-    run_ssh(ssh, "curl -s http://127.0.0.1:8015/api/efatura/health")
-    run_ssh(ssh, "curl -s https://efatura.gexcelapps.com/api/entidades | head -c 350")
+    # 4. Validar serviço :8015 e endpoint DEV
+    run_ssh(ssh, "sleep 1 && systemctl is-active gevo-evo05-efatura.service")
+    run_ssh(ssh, "curl -s https://dev.efatura.gexcelapps.com/api/entidades | head -c 250")
     ssh.close()
-    print("\nDeploy Hetzner (EVO-05 Backend + EVO-06 Frontend + Interligação EVO-12) concluído com sucesso!")
+    print("\nDeploy Hetzner no canal DEV (dev.efatura.gexcelapps.com) concluído com sucesso!")
 
 
 if __name__ == '__main__':
