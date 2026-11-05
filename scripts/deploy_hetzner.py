@@ -196,9 +196,9 @@ WantedBy=multi-user.target
 
     # 4. Validar serviço :8015 e endpoint DEV
     run_ssh(ssh, "sleep 1 && systemctl is-active gevo-evo05-efatura.service")
-    run_ssh(ssh, "curl -s https://dev.efatura.gexcelapps.com/api/entidades | head -c 250")
+    run_ssh(ssh, "curl -s https://dev.efatura.evogex.com/api/entidades | head -c 250")
     ssh.close()
-    print("\nDeploy Hetzner no canal DEV (dev.efatura.gexcelapps.com) concluído com sucesso!")
+    print("\nDeploy Hetzner no canal DEV (dev.efatura.evogex.com) concluído com sucesso!")
 
 
 if __name__ == '__main__':

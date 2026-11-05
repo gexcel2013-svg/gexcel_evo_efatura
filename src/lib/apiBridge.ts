@@ -2,7 +2,7 @@
  * Ponte Híbrida Local-First + Cloud Zero-Storage (EVO-06 Importador e-Fatura <-> EVO-05 API + EVO-12 Gestor de Entidades)
  *
  * Interceta de forma transparente os pedidos a `http://127.0.0.1:8015` e `http://127.0.0.1:8090`:
- * 1. Quando acedido via plataforma Web (`*.gexcelapps.com`), encaminha instantaneamente para a API da plataforma (`/api/...`)
+ * 1. Quando acedido via plataforma Web (`*.evogex.com`), encaminha instantaneamente para a API da plataforma (`/api/...`)
  *    ou utiliza o motor local (`127.0.0.1:8015`) se este estiver ativo na máquina do cliente.
  * 2. Garante interligação contínua com os dados do Gestor de Entidades (EVO-12) tanto na Cloud Hetzner como localmente.
  */
@@ -159,7 +159,7 @@ if (typeof window !== 'undefined') {
         pathPart.startsWith('/api/sistema/abrir-explorador') ||
         pathPart.startsWith('/api/efatura/login-browser');
 
-      // Na Cloud (*.gexcelapps.com), usar diretamente a API da plataforma salvo se o motor local estiver ativo e for ação local
+      // Na Cloud (*.evogex.com), usar diretamente a API da plataforma salvo se o motor local estiver ativo e for ação local
       if (isCloudHost && !isLocalOnlyAction) {
         try {
           const cloudRes = await origFetch(cloudUrl, init);
