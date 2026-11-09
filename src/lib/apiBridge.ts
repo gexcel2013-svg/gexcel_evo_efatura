@@ -175,7 +175,7 @@ if (typeof window !== 'undefined') {
       if (localMotorOnline || !isCloudHost || isLocalOnlyAction) {
         try {
           const localRes = await origFetch(rawUrl, init);
-          if (localRes.ok) {
+          if (localRes.ok || isLocalOnlyAction) {
             localMotorOnline = true;
             lastLocalProbeTs = Date.now();
             return isEntidades ? await checkAndEnrichEntidadesResponse(localRes) : localRes;

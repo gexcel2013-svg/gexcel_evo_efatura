@@ -259,7 +259,7 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
           modulo: scrapeModulo === 'ambos' ? 'compras' : scrapeModulo,
           ano: scrapeAno,
           gravar_db: true,
-          canal: 'msedge',
+          canal: 'auto',
           threads: 6,
         };
         if (scrapeMes > 0) payload.mes = scrapeMes;

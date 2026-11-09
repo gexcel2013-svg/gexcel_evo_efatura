@@ -158,6 +158,8 @@ export function RecibosVerdesView({
   // Jobs de Extração em Curso
   const [jobsPorNif, setJobsPorNif] = useState<Record<string, JobProgressRV>>({});
   const [extraindoLote, setExtraindoLote] = useState<boolean>(false);
+  const [loginEmCurso, setLoginEmCurso] = useState<string | null>(null);
+  const [loginStatusMsg, setLoginStatusMsg] = useState<{ tipo: 'sucesso' | 'erro' | 'info'; texto: string } | null>(null);
   const pollingRef = useRef<number | null>(null);
 
   // Estado da Consulta Detalhada de Documentos
@@ -476,14 +478,52 @@ export function RecibosVerdesView({
     } catch {}
   };
 
-  const abrirPortalBrowser = async (nif: string) => {
+  const abrirPortalBrowser = async (nif: string, nomeEmpresa?: string) => {
+    if (loginEmCurso) return;
+    setLoginEmCurso(nif);
+    setLoginStatusMsg({ tipo: 'info', texto: `A iniciar sessão de Recibos Verdes no navegador para ${nomeEmpresa || nif}...` });
+
     try {
-      await fetch('http://127.0.0.1:8015/api/efatura/login-browser', {
+      const res = await fetch('http://127.0.0.1:8015/api/efatura/login-browser', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nif, canal: 'auto', destino: 'recibos_verdes' }),
       });
-    } catch {}
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Falha na comunicação com a API.' }));
+        setLoginStatusMsg({ tipo: 'erro', texto: err.detail || 'Erro ao abrir navegador com login automático.' });
+        carregarMatriz();
+        setTimeout(() => setLoginStatusMsg(null), 7000);
+        return;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (data.modo === 'cloud_redirect' && data.portal_url) {
+        try {
+          if (data.utilizador && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(String(data.utilizador));
+          }
+        } catch {}
+        window.open(data.portal_url, '_blank', 'noopener,noreferrer');
+        setLoginStatusMsg({
+          tipo: 'sucesso',
+          texto: `Portal de Recibos Verdes aberto para ${data.utilizador || nif} (utilizador copiado para a área de transferência).`,
+        });
+        setTimeout(() => setLoginStatusMsg(null), 6000);
+        return;
+      }
+
+      setLoginStatusMsg({ tipo: 'sucesso', texto: `Sessão de Recibos Verdes iniciada no navegador para NIF ${nif}!` });
+      setTimeout(() => setLoginStatusMsg(null), 5000);
+      setTimeout(() => carregarMatriz(), 6500);
+      setTimeout(() => carregarMatriz(), 12000);
+    } catch (e: any) {
+      setLoginStatusMsg({ tipo: 'erro', texto: `Erro ao contactar API: ${e?.message || 'Falha de ligação'}` });
+      setTimeout(() => setLoginStatusMsg(null), 5000);
+    } finally {
+      setTimeout(() => setLoginEmCurso(null), 2000);
+    }
   };
 
   const limparDadosEntidade = async (nif: string) => {
@@ -737,6 +777,22 @@ export function RecibosVerdesView({
       </header>
 
       {/* 2. Cartões KPI Sólidos Opacos (gexcel-evo-design) */}
+      {loginStatusMsg && (
+        <div
+          className={`px-3 py-2 rounded-md border text-xs font-mono flex items-center justify-between shrink-0 ${
+            loginStatusMsg.tipo === 'erro'
+              ? 'bg-rose-50 dark:bg-[#240e14] border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+              : loginStatusMsg.tipo === 'sucesso'
+              ? 'bg-emerald-50 dark:bg-[#091e1a] border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+              : 'bg-sky-50 dark:bg-[#0a1929] border-sky-300 dark:border-sky-800 text-sky-800 dark:text-sky-200'
+          }`}
+        >
+          <span>{loginStatusMsg.texto}</span>
+          <button type="button" onClick={() => setLoginStatusMsg(null)} className="ml-2 hover:opacity-75 cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3 shrink-0">
         {/* Card 1: Recibos Verdes */}
         <div
@@ -1227,11 +1283,16 @@ export function RecibosVerdesView({
                             </button>
                             <button
                               type="button"
-                              onClick={() => abrirPortalBrowser(ent.nif)}
+                              onClick={() => abrirPortalBrowser(ent.nif, ent.nomecli)}
+                              disabled={loginEmCurso === ent.nif}
                               title="Abrir Portal das Finanças autenticado no navegador"
-                              className="p-1 rounded bg-slate-100 dark:bg-[#16273b] border border-slate-300 dark:border-[#2a405a] text-slate-700 dark:text-slate-200 hover:border-[#0284c7] cursor-pointer"
+                              className="p-1 rounded bg-slate-100 dark:bg-[#16273b] border border-slate-300 dark:border-[#2a405a] text-slate-700 dark:text-slate-200 hover:border-[#0284c7] disabled:opacity-50 cursor-pointer"
                             >
-                              <ExternalLink className="w-3 h-3" />
+                              {loginEmCurso === ent.nif ? (
+                                <Loader2 className="w-3 h-3 animate-spin text-[#0284c7]" />
+                              ) : (
+                                <ExternalLink className="w-3 h-3" />
+                              )}
                             </button>
                             {dados?.caminho_xml && (
                               <>

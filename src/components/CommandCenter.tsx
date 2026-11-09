@@ -653,7 +653,22 @@ export default function CommandCenter({
         return;
       }
 
-      await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (data.modo === 'cloud_redirect' && data.portal_url) {
+        try {
+          if (data.utilizador && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(String(data.utilizador));
+          }
+        } catch {}
+        window.open(data.portal_url, '_blank', 'noopener,noreferrer');
+        setLoginStatusMsg({
+          tipo: 'sucesso',
+          texto: `Portal e-Fatura aberto num novo separador para ${data.utilizador || nifAlvo} (utilizador copiado para colar).`,
+        });
+        setTimeout(() => setLoginStatusMsg(null), 6000);
+        return;
+      }
+
       setLoginStatusMsg({ tipo: 'sucesso', texto: `Sessão e-Fatura iniciada no navegador para NIF ${nifAlvo}!` });
       setTimeout(() => setLoginStatusMsg(null), 5000);
       // Atualizar matriz após a tentativa de autenticação no browser para refletir eventual senha rejeitada ou desbloqueada na base central
