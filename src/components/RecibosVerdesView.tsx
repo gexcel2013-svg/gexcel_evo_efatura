@@ -637,7 +637,7 @@ export function RecibosVerdesView({
 
   return (
     <div className="h-full flex flex-col space-y-3 min-h-0 select-none overflow-hidden">
-      {/* 1. Cabeçalho Executivo Gexcel EVO */}
+      {/* 1. Cabeçalho Executivo evoGex.com */}
       <header className="flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div>
           <div className="flex items-center space-x-2">
@@ -870,7 +870,7 @@ export function RecibosVerdesView({
 
           <label
             className="flex items-center space-x-1.5 cursor-pointer px-2 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-300 font-semibold"
-            title="Além de guardar na base SQLite moderna (BdsefaturaV4), mantém os ficheiros XML BdsRV sincronizados para o Gexcel Apps (Excel)"
+            title="Além de guardar na base SQLite moderna (BdsefaturaV4), mantém os ficheiros XML BdsRV sincronizados para o evoGex Apps (Excel)"
           >
             <input
               type="checkbox"

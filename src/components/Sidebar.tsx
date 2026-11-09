@@ -62,7 +62,7 @@ export function Sidebar({
     localStorage.setItem('gexcel_sidebar_collapsed', String(collapsed));
   }, [collapsed]);
 
-  const { currentUser, setShowLoginModal, isAdmin } = useAuth();
+  const { currentUser, setShowLoginModal } = useAuth();
   const toggleCollapsed = () => setCollapsed(prev => !prev);
 
   const navItems = [
@@ -102,7 +102,7 @@ export function Sidebar({
       icon: <SlidersHorizontal className="w-4 h-4 shrink-0" />,
       badge: undefined,
     },
-    ...(isAdmin ? [{
+    ...(false ? [{
       id: 'dev',
       label: 'Desenvolvedor',
       icon: <Code2 className="w-4 h-4 shrink-0" />,
@@ -120,16 +120,25 @@ export function Sidebar({
       <div className="p-3 border-b border-border/80 bg-white dark:bg-[#0c1520]">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2.5 overflow-hidden">
-            <div className="w-8 h-8 rounded-lg bg-[#0284c7] text-white flex items-center justify-center font-display font-bold text-base shadow-sm shrink-0">
-              G
+            <div className="w-8 h-8 rounded-lg bg-[#ffffff] dark:bg-[#07121c] border border-border flex items-center justify-center p-0.5 shadow-sm shrink-0 overflow-hidden">
+              <img
+                src="/evogex_simbolo_fundo_branco.png"
+                alt="evoGex.com"
+                className="w-full h-full object-contain dark:hidden"
+              />
+              <img
+                src="/evogex_simbolo_fundo_dark.png"
+                alt="evoGex.com"
+                className="w-full h-full object-contain hidden dark:block"
+              />
             </div>
             {!collapsed && (
               <div className="flex flex-col min-w-0">
                 <span className="font-display font-light text-sm tracking-tight text-foreground truncate">
-                  Importador e-Fatura
+                  <span className="text-[#0284c7] dark:text-[#38bdf8]">evo</span>Gex<span className="text-[8.5px] font-normal ml-[1px] text-[#0284c7] dark:text-[#38bdf8]">.com</span> · e-Fatura
                 </span>
                 <span className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground">
-                  GEXCEL EVO · ENGINE V4
+                  IMPORTADOR · ENGINE V4
                 </span>
               </div>
             )}
@@ -242,7 +251,7 @@ export function Sidebar({
 
         {/* Estado da Conexão e Licenciamento */}
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} text-xs font-mono`}>
-          <div className="flex items-center space-x-2" title="Gexcel Auth Oficial B2B">
+          <div className="flex items-center space-x-2" title="evoGex Auth Oficial B2B">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
             {!collapsed && (
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
@@ -335,7 +344,7 @@ export function Sidebar({
             title="Versão Oficial do Sistema"
             className="text-[9.5px] font-mono text-muted-foreground/60 tracking-wider"
           >
-            {collapsed ? 'v4.1' : 'v4.1.0 · Gexcel'}
+            {collapsed ? 'v4.1' : 'v4.1.0 · evoGex.com'}
           </span>
         </div>
       </div>

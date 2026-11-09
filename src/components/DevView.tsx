@@ -216,7 +216,7 @@ export function DevView({ onApiStatusChange, versaoMotor }: DevViewProps) {
   return (
     <div className="h-full flex flex-col space-y-4 min-h-0 select-none overflow-y-auto">
       
-      {/* 1. Cabeçalho Oficial Gexcel EVO */}
+      {/* 1. Cabeçalho Oficial evoGex.com */}
       <header className="flex justify-between items-start shrink-0">
         <div>
           <span className="page-kicker text-primary font-mono text-[9.5px] uppercase tracking-[0.2em] font-semibold block mb-0.5">
@@ -357,7 +357,7 @@ export function DevView({ onApiStatusChange, versaoMotor }: DevViewProps) {
               >
                 <option value={1}>1 Ano</option>
                 <option value={2}>2 Anos</option>
-                <option value={3}>3 Anos (Padrão Gexcel)</option>
+                <option value={3}>3 Anos (Padrão evoGex)</option>
                 <option value={4}>4 Anos</option>
                 <option value={5}>5 Anos (Fiscal AT)</option>
                 <option value={7}>7 Anos</option>
@@ -483,7 +483,7 @@ export function DevView({ onApiStatusChange, versaoMotor }: DevViewProps) {
           </div>
 
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Identificação dos microserviços em execução na máquina de trabalho e respetivas portas reservadas no ecossistema Gexcel.
+            Identificação dos microserviços em execução na máquina de trabalho e respetivas portas reservadas no ecossistema evoGex.com.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1 font-mono text-xs">

@@ -112,7 +112,7 @@ export function ConfigView() {
       if (res.ok) {
         setMensagemSucesso(
           novoEstado
-            ? 'Alimentação paralela dos ficheiros XML do Gexcel Apps (BdsefaturaV3 e BdsRV) ATIVADA.'
+            ? 'Alimentação paralela dos ficheiros XML do evoGex Apps (BdsefaturaV3 e BdsRV) ATIVADA.'
             : 'Modo 100% SQLite (BdsefaturaV4) ativo — geração de ficheiros XML legados desativada.'
         );
       }
@@ -131,7 +131,7 @@ export function ConfigView() {
       `⚠️ ALTERAÇÃO DO MODO DE LIGAÇÃO:\n\n` +
       `Tem a certeza de que deseja mudar para o modo ${novoModo.toUpperCase()}?\n\n` +
       (novoModo === 'integrado' 
-        ? 'A aplicação irá obter credenciais e utilizadores a partir do Gexcel Apps e do ecossistema central.' 
+        ? 'A aplicação irá obter credenciais e utilizadores a partir do evoGex Apps e do ecossistema central.' 
         : 'A aplicação irá operar de forma 100% isolada com catálogo e utilizadores locais.')
     );
     if (!confirmacao) return;
@@ -150,7 +150,7 @@ export function ConfigView() {
       if (res.ok) {
         setModoSelecionado(novoModo);
         await refreshConfig();
-        setMensagemSucesso(`Modo de ligação atualizado para: ${novoModo === 'integrado' ? 'Integrado (Gexcel Apps)' : 'Autónomo (Local)'}`);
+        setMensagemSucesso(`Modo de ligação atualizado para: ${novoModo === 'integrado' ? 'Integrado (evoGex Apps)' : 'Autónomo (Local)'}`);
       } else {
         const err = await res.json();
         setMensagemErro(`Falha ao alterar modo: ${err.detail || 'Erro na API'}`);
@@ -359,11 +359,11 @@ export function ConfigView() {
   return (
     <div className="h-full flex flex-col space-y-4 min-h-0 select-none overflow-y-auto">
       
-      {/* 1. Cabeçalho Oficial Gexcel EVO */}
+      {/* 1. Cabeçalho Oficial evoGex.com */}
       <header className="flex justify-between items-start shrink-0">
         <div>
           <span className="page-kicker text-primary font-mono text-[9.5px] uppercase tracking-[0.2em] font-semibold block mb-0.5">
-            Painel de Controlo · Gexcel EVO
+            Painel de Controlo · evoGex.com
           </span>
           <h1 className="page-title text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center">
             Configurações do Sistema
@@ -433,7 +433,7 @@ export function ConfigView() {
               <div className="space-y-0.5">
                 <div className="flex items-center space-x-2">
                   <span className="font-semibold font-mono text-xs text-foreground">
-                    Modo Integrado (Gexcel Apps / CRM Central)
+                    Modo Integrado (evoGex Apps / CRM Central)
                   </span>
                   <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold">
                     Padrão
@@ -465,7 +465,7 @@ export function ConfigView() {
                   </span>
                 </div>
                 <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  100% independente do Gexcel Apps. Guarda dados numa base SQLite local dedicada com utilizadores e permissões próprios.
+                  100% independente do evoGex Apps. Guarda dados numa base SQLite local dedicada com utilizadores e permissões próprios.
                 </p>
               </div>
             </div>

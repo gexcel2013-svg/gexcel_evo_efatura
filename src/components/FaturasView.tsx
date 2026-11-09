@@ -706,7 +706,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
     setTimeout(() => setCopiado(false), 2000);
   };
 
-  // Renderização individual de cada célula com estilo e tipografia Gexcel EVO
+  // Renderização individual de cada célula com estilo e tipografia evoGex.com
   const renderCelula = (colId: string, linha: LinhaFatura) => {
     switch (colId) {
       case 'data_emissao':
@@ -993,7 +993,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
   return (
     <div className="h-full flex flex-col space-y-3 min-h-0 select-none">
       
-      {/* 1. Cabeçalho Oficial Gexcel EVO */}
+      {/* 1. Cabeçalho Oficial evoGex.com */}
       <header className="flex justify-between items-start shrink-0">
         <div>
           <span className="page-kicker text-primary font-mono text-[9.5px] uppercase tracking-[0.2em] font-semibold block mb-0.5">
@@ -1039,7 +1039,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
         </div>
       )}
 
-      {/* 2. Card de Controlos e Filtros (Padrão Canónico Gexcel EVO com assinatura lateral) */}
+      {/* 2. Card de Controlos e Filtros (Padrão Canónico evoGex.com com assinatura lateral) */}
       <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-2.5 space-y-2.5 shadow-2xs text-foreground flex flex-col shrink-0 overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
         
         {/* Cabeçalho do Card de Filtros */}

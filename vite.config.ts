@@ -35,7 +35,7 @@ function gexcelMotorPlugin(): Plugin {
             // 1. Verificar e iniciar Motor Python (8015) se desligado
             const motorRunning = await isPortOpen(8015);
             if (!motorRunning) {
-              const apiDir = path.resolve(process.cwd(), '../Gexcel EVO - api e-fatura');
+              const apiDir = path.resolve(process.cwd(), '../evoGex.com - api e-fatura');
               let pyExe = path.join(apiDir, 'venv/Scripts/python.exe');
               if (!fs.existsSync(pyExe)) {
                 pyExe = path.join(apiDir, '.venv/Scripts/python.exe');

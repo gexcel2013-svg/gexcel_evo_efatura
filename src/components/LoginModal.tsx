@@ -59,7 +59,7 @@ export function LoginModal({ onClose }: LoginModalProps) {
           <X className="w-4 h-4" />
         </button>
 
-        {/* Cabeçalho Oficial Gexcel EVO */}
+        {/* Cabeçalho Oficial evoGex.com */}
         <div className="flex items-center space-x-3 border-b border-border/80 pb-3">
           <div className="w-10 h-10 rounded-lg bg-[#0284c7]/10 flex items-center justify-center text-[#0284c7] dark:text-sky-400 shrink-0">
             <UserCheck className="w-5 h-5" />

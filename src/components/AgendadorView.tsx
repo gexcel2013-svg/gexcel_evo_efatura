@@ -479,7 +479,7 @@ export function AgendadorView({ onApiStatusChange, modoPrivacidade = false }: Ag
   return (
     <div className="h-full flex flex-col space-y-3 min-h-0 select-none">
       
-      {/* 1. Cabeçalho Oficial Gexcel EVO */}
+      {/* 1. Cabeçalho Oficial evoGex.com */}
       <header className="flex justify-between items-start shrink-0">
         <div>
           <span className="page-kicker text-primary font-mono text-[9.5px] uppercase tracking-[0.2em] font-semibold block mb-0.5">

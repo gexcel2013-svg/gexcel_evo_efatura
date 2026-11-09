@@ -10,9 +10,18 @@ import { ConfigView } from './components/ConfigView';
 import { LoginModal } from './components/LoginModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
 import { AuthProvider, useAuth } from './lib/auth';
+import { EvoLoginGate, type AuthenticatedEvoUser } from './components/EvoLoginGate';
 
 function AppContent() {
-  const { showLoginModal, showSetupWizard, setShowLoginModal } = useAuth();
+  const { currentUser, showLoginModal, showSetupWizard, setShowLoginModal } = useAuth();
+  const [authUser, setAuthUser] = useState<AuthenticatedEvoUser | null>(() => {
+    try {
+      const saved = sessionStorage.getItem('gexcel_evo06_auth_session');
+      return saved ? (JSON.parse(saved) as AuthenticatedEvoUser) : null;
+    } catch {
+      return null;
+    }
+  });
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
     if (saved === 'light' || saved === 'dark') return saved;
@@ -162,12 +171,35 @@ function AppContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  if (!authUser && !currentUser) {
+    return (
+      <EvoLoginGate
+        appCodigo="EVO-06"
+        appTitle="Importador e-Fatura & Motor V4"
+        appSubtitle="Autenticação obrigatória de acesso ao sistema"
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onAuthenticated={(u) => {
+          sessionStorage.setItem('gexcel_evo06_auth_session', JSON.stringify(u));
+          localStorage.setItem('gexcel_app_auth_user', JSON.stringify({
+            id: 1,
+            username: u.username,
+            nome: u.nome,
+            role: u.role === 'DEV' ? 'superadmin' : u.role === 'ADMIN' ? 'admin' : 'subutilizador',
+            ativo: true,
+          }));
+          setAuthUser(u);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="h-screen w-screen bg-background text-foreground flex flex-row font-sans overflow-hidden select-none relative">
       {/* Camada de Fundo Grelha Excel Subtil (Evo Grid) - z-0 atrás de todo o conteúdo */}
       <div className="workspace-ledger absolute inset-0 pointer-events-none z-0" />
 
-      {/* Menu Lateral Esquerdo Canónico Gexcel EVO (z-20) */}
+      {/* Menu Lateral Esquerdo Canónico evoGex.com (z-20) */}
       <div className="relative z-20 flex">
         <Sidebar
           activeTab={activeTab}

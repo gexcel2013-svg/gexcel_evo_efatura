@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Gexcel EVO - Importador e-Fatura
+evoGex.com - Importador e-Fatura
 Launcher Unificado Desktop (Motor Python + PocketBase Core + Frontend)
 """
 
@@ -92,7 +92,7 @@ def open_app(url: str):
 
 def main():
     print("=" * 65)
-    print("   GEXCEL EVO - IMPORTADOR E-FATURA")
+    print("   EVOGEX.COM - IMPORTADOR E-FATURA")
     print("   Inicializador Unificado de Servicos")
     print("=" * 65)
 

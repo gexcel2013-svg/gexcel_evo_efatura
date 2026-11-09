@@ -287,7 +287,7 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
 
   return (
     <div className="h-full flex flex-col space-y-3 min-h-0 select-none overflow-hidden">
-      {/* 1. Cabeçalho Executivo Gexcel EVO */}
+      {/* 1. Cabeçalho Executivo evoGex.com */}
       <header className="flex flex-wrap justify-between items-center gap-2 shrink-0">
         <div>
           <div className="flex items-center space-x-2">

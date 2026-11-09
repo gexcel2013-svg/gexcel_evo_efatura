@@ -479,7 +479,7 @@ export default function CommandCenter({
     }
   };
 
-  // Alertas e Notificações de Erro da AT com interface Gexcel EVO
+  // Alertas e Notificações de Erro da AT com interface evoGex.com
   interface AlertaErroUI {
     id: string;
     nome: string;
@@ -1592,7 +1592,7 @@ export default function CommandCenter({
   return (
     <div className="h-full flex flex-col space-y-3 min-h-0">
       
-      {/* Cabeçalho Oficial Gexcel EVO */}
+      {/* Cabeçalho Oficial evoGex.com */}
       <header className="flex justify-between items-start shrink-0">
         <div>
           <span className="page-kicker text-primary font-mono text-[9.5px] uppercase tracking-[0.2em] font-semibold block mb-0.5">
@@ -2229,7 +2229,7 @@ export default function CommandCenter({
           <div className="relative evo-card-signature flex flex-wrap justify-between items-center border-b border-border/80 px-3.5 py-2 bg-card text-card-foreground gap-2 shrink-0 select-none before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
             {/* Lado Esquerdo: Seletor de Exercício + Atalhos Rápidos + Recarregar */}
             <div className="flex flex-wrap items-center gap-1.5">
-              {/* Seletor Executivo de Exercício Fiscal Gexcel EVO */}
+              {/* Seletor Executivo de Exercício Fiscal evoGex.com */}
               <div className="flex items-center space-x-1.5 bg-gradient-to-r from-sky-500/15 via-sky-500/5 to-transparent dark:from-sky-500/20 dark:via-sky-950/40 dark:to-transparent border-2 border-sky-500/40 dark:border-sky-400/50 rounded-lg px-2 py-1 shadow-sm">
                 <div className="flex items-center space-x-1 text-sky-700 dark:text-sky-300 mr-0.5">
                   <Calendar className="w-4 h-4 shrink-0 text-[#0284c7] dark:text-sky-400" />
@@ -2909,7 +2909,7 @@ export default function CommandCenter({
             </table>
           </div>
 
-          {/* Rodapé Resumo da Matriz (estilo Gexcel EVO de alta performance) */}
+          {/* Rodapé Resumo da Matriz (estilo evoGex.com de alta performance) */}
           <div className="sticky bottom-0 z-20 bg-muted/95 dark:bg-[#07121c] text-foreground font-mono text-xs border-t-2 border-border shadow-lg select-none px-4 py-2 flex flex-wrap items-center justify-between gap-2 shrink-0">
             <div className="flex items-center space-x-3 text-muted-foreground text-[11px]">
               <span className="font-semibold text-foreground">

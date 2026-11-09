@@ -171,7 +171,7 @@ def main():
     )
 
     service_unit = """[Unit]
-Description=Gexcel EVO-05 API e-Fatura, Recibos Verdes e Anulados (Porta 8015)
+Description=evoGex.com-05 API e-Fatura, Recibos Verdes e Anulados (Porta 8015)
 After=network.target gevo-evo12-pb.service
 
 [Service]

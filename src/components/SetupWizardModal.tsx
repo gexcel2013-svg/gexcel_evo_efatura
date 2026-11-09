@@ -100,7 +100,7 @@ export function SetupWizardModal() {
           </div>
           <div>
             <span className="text-[9.5px] font-mono uppercase tracking-[0.2em] text-[#0284c7] dark:text-sky-400 font-semibold block">
-              GEXCEL EVO · SETUP INICIAL
+              EVOGEX.COM · SETUP INICIAL
             </span>
             <h2 className="text-lg font-display font-light text-foreground tracking-tight">
               Configuração Inicial do Sistema
