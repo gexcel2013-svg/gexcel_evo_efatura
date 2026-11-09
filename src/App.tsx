@@ -13,7 +13,7 @@ import { AuthProvider, useAuth } from './lib/auth';
 import { EvoLoginGate, type AuthenticatedEvoUser } from './components/EvoLoginGate';
 
 function AppContent() {
-  const { currentUser, showLoginModal, showSetupWizard, setShowLoginModal } = useAuth();
+  const { currentUser, showLoginModal, showSetupWizard, setShowLoginModal, setExternalSession } = useAuth();
   const [authUser, setAuthUser] = useState<AuthenticatedEvoUser | null>(() => {
     try {
       const saved = sessionStorage.getItem('gexcel_evo06_auth_session');
@@ -22,6 +22,12 @@ function AppContent() {
       return null;
     }
   });
+
+  useEffect(() => {
+    if (!currentUser && !sessionStorage.getItem('gexcel_evo06_auth_session') && authUser) {
+      setAuthUser(null);
+    }
+  }, [currentUser, authUser]);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
     if (saved === 'light' || saved === 'dark') return saved;
@@ -181,13 +187,15 @@ function AppContent() {
         onToggleTheme={toggleTheme}
         onAuthenticated={(u) => {
           sessionStorage.setItem('gexcel_evo06_auth_session', JSON.stringify(u));
-          localStorage.setItem('gexcel_app_auth_user', JSON.stringify({
+          const mappedUser = {
             id: 1,
             username: u.username,
             nome: u.nome,
-            role: u.role === 'DEV' ? 'superadmin' : u.role === 'ADMIN' ? 'admin' : 'subutilizador',
+            email: u.email || '',
+            role: (u.role === 'DEV' || u.role === 'superadmin' ? 'superadmin' : u.role === 'ADMIN' || u.role === 'admin' ? 'admin' : 'subutilizador') as 'superadmin' | 'admin' | 'subutilizador',
             ativo: true,
-          }));
+          };
+          setExternalSession(mappedUser, u.token);
           setAuthUser(u);
         }}
       />

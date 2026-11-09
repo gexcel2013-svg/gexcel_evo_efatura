@@ -122,6 +122,12 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
     }
   };
 
+  const isDevChannel =
+    typeof window !== "undefined" &&
+    (window.location.hostname.startsWith("dev.") ||
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1");
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const u = username.trim();
@@ -130,7 +136,7 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
       setError("Introduza o utilizador e a palavra-passe.");
       return;
     }
-    if (BLOCKED_DEV_IDENTIFIERS.has(u.toLowerCase())) {
+    if (!isDevChannel && BLOCKED_DEV_IDENTIFIERS.has(u.toLowerCase())) {
       setError(
         "Por motivos de segurança, as credenciais de desenvolvedor são exclusivas da consola central DEV e estão bloqueadas nas aplicações de clientes."
       );

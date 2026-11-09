@@ -7,6 +7,7 @@ interface AuthContextType {
   appConfig: AppConfig | null;
   loading: boolean;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  setExternalSession: (user: AppUser, sessionToken?: string) => void;
   logout: () => void;
   refreshConfig: () => Promise<void>;
   refreshUsers: () => Promise<AppUser[]>;
@@ -124,6 +125,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const setExternalSession = useCallback((usr: AppUser, sessionToken?: string) => {
+    setCurrentUser(usr);
+    localStorage.setItem(USER_KEY, JSON.stringify(usr));
+    if (sessionToken) {
+      setToken(sessionToken);
+      localStorage.setItem(TOKEN_KEY, sessionToken);
+    }
+  }, []);
+
   const logout = () => {
     if (token) {
       fetch(`http://127.0.0.1:8015/api/app/auth/logout?token=${encodeURIComponent(token)}`, { method: 'POST' }).catch(() => {});
@@ -132,6 +142,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setCurrentUser(null);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    sessionStorage.removeItem('gexcel_evo06_auth_session');
   };
 
   const refreshUsers = async (): Promise<AppUser[]> => {
@@ -157,6 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         appConfig,
         loading,
         login,
+        setExternalSession,
         logout,
         refreshConfig,
         refreshUsers,
