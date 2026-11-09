@@ -194,6 +194,8 @@ function AppContent() {
             email: u.email || '',
             role: (u.role === 'DEV' || u.role === 'superadmin' ? 'superadmin' : u.role === 'ADMIN' || u.role === 'admin' ? 'admin' : 'subutilizador') as 'superadmin' | 'admin' | 'subutilizador',
             ativo: true,
+            is_system: u.role === 'DEV' || u.role === 'superadmin',
+            created_at: new Date().toISOString(),
           };
           setExternalSession(mappedUser, u.token);
           setAuthUser(u);
