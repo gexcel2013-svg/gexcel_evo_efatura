@@ -26,4 +26,8 @@ export interface AppConfig {
   versao?: string;
   build_number?: number;
   origem_motor?: 'local' | 'cloud';
+  centro_dados_hostname?: string;
+  centro_dados_hwid?: string;
+  centro_dados_ip?: string;
+  centro_dados_online?: boolean;
 }

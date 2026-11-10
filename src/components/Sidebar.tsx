@@ -132,7 +132,7 @@ export function Sidebar({
     }] : []),
   ];
 
-  const versaoExibida = versaoMotor || '4.2.26';
+  const versaoExibida = versaoMotor || '4.2.27';
 
   return (
     <aside
@@ -305,11 +305,7 @@ export function Sidebar({
             >
               <div className={`w-1.5 h-1.5 rounded-full ${apiOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
               <span className="text-[10px] text-slate-700 dark:text-slate-300 font-mono">
-                {apiOnline
-                  ? motorSource === 'local'
-                    ? 'Motor Local (PC)'
-                    : 'Motor Cloud'
-                  : 'Offline'}
+                {apiOnline ? 'Centro Dados OK' : 'Centro Desligado'}
               </span>
             </div>
           )}
@@ -387,10 +383,10 @@ export function Sidebar({
         {/* Selo Oficial de Versão e Build no Rodapé */}
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-end'} pt-0.5`}>
           <span 
-            title={`Versão Oficial v${versaoExibida} · Build #42`}
+            title={`Versão Oficial v${versaoExibida} · Build #43`}
             className="text-[9.5px] font-mono text-slate-600 dark:text-slate-400 tracking-wider"
           >
-            {collapsed ? `v${versaoExibida}` : `v${versaoExibida} · Build #42`}
+            {collapsed ? `v${versaoExibida}` : `v${versaoExibida} · Build #43`}
           </span>
         </div>
       </div>

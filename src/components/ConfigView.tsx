@@ -50,14 +50,14 @@ export function ConfigView() {
     return h;
   }, [token]);
 
-  const [modoSelecionado, setModoSelecionado] = useState<'integrado' | 'autonomo'>(
-    appConfig?.modo_dados || 'integrado'
+  const [centroHostnameInput, setCentroHostnameInput] = useState<string>(
+    appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO'
   );
   const [alimentarXmlLegado, setAlimentarXmlLegado] = useState<boolean>(() => {
     const saved = localStorage.getItem('gexcel_alimentar_xml_legado');
     return saved !== null ? saved === 'true' : true;
   });
-  const [salvandoModo, setSalvandoModo] = useState<boolean>(false);
+  const [salvandoCentro, setSalvandoCentro] = useState<boolean>(false);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
 
@@ -95,8 +95,8 @@ export function ConfigView() {
   const [erroFormUser, setErroFormUser] = useState<string | null>(null);
 
   useEffect(() => {
-    if (appConfig?.modo_dados) {
-      setModoSelecionado(appConfig.modo_dados);
+    if (appConfig?.centro_dados_hostname) {
+      setCentroHostnameInput(appConfig.centro_dados_hostname);
     }
     setPastasLocais(prev => ({
       pasta_v4: appConfig?.pasta_v4 || prev.pasta_v4,
@@ -215,45 +215,34 @@ export function ConfigView() {
     } catch {}
   };
 
-  const handleAlterarModo = async (novoModo: 'integrado' | 'autonomo') => {
+  const handleGuardarCentroDados = async () => {
     if (!canManage) {
-      setMensagemErro('Permissão negada. É obrigatório iniciar sessão como Administrador para alterar o modo de ligação.');
+      setMensagemErro('Permissão negada. É obrigatório iniciar sessão como Administrador para alterar o Centro de Dados do escritório.');
       return;
     }
-    if (novoModo === appConfig?.modo_dados) return;
-
-    const confirmacao = window.confirm(
-      `⚠️ ALTERAÇÃO DO MODO DE LIGAÇÃO:\n\n` +
-      `Tem a certeza de que deseja mudar para o modo ${novoModo.toUpperCase()}?\n\n` +
-      (novoModo === 'integrado' 
-        ? 'A aplicação irá obter credenciais e utilizadores a partir do evoGex Apps e do ecossistema central.' 
-        : 'A aplicação irá operar de forma 100% isolada com catálogo e utilizadores locais.')
-    );
-    if (!confirmacao) return;
-
-    setSalvandoModo(true);
+    const nomeLimpo = centroHostnameInput.trim() || 'SERVIDOR-ESCRITORIO';
+    setSalvandoCentro(true);
     setMensagemSucesso(null);
     setMensagemErro(null);
 
     try {
-      const res = await fetch('http://127.0.0.1:8015/api/app/config/modo', {
+      const res = await fetch('http://127.0.0.1:8015/api/app/config/centro-dados', {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ modo: novoModo })
+        body: JSON.stringify({ hostname: nomeLimpo })
       });
 
       if (res.ok) {
-        setModoSelecionado(novoModo);
         await refreshConfig();
-        setMensagemSucesso(`Modo de ligação atualizado para: ${novoModo === 'integrado' ? 'Integrado (evoGex Apps)' : 'Autónomo (Local)'}`);
+        setMensagemSucesso(`Centro de Dados Único do escritório registado em: ${nomeLimpo}`);
       } else {
         const err = await res.json();
-        setMensagemErro(`Falha ao alterar modo: ${err.detail || 'Erro na API'}`);
+        setMensagemErro(`Falha ao registar Centro de Dados: ${err.detail || 'Erro na API'}`);
       }
     } catch (e: any) {
       setMensagemErro(`Erro de ligação: ${e.message}`);
     } finally {
-      setSalvandoModo(false);
+      setSalvandoCentro(false);
     }
   };
 
@@ -491,7 +480,7 @@ export function ConfigView() {
           <div className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs">
             <SlidersHorizontal className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
             <span className="text-slate-700 dark:text-slate-300">
-              Modo: <strong className="text-foreground uppercase">{appConfig?.modo_dados || 'integrado'}</strong>
+              Centro de Dados: <strong className="text-foreground uppercase">{appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO'}</strong>
             </span>
           </div>
         </div>
@@ -525,76 +514,55 @@ export function ConfigView() {
       {/* Grid de Configurações */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         
-        {/* Card 1: Modo de Ligação & Fonte de Dados (100% Opaco) */}
+        {/* Card 1: Centro de Dados Único do Escritório (100% Opaco) */}
         <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] before:z-20">
           <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
             <div className="flex items-center space-x-2">
               <Database className="w-4 h-4 text-[#0284c7] dark:text-sky-400" />
               <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
-                Fonte de Dados & Modo de Ligação
+                Centro de Dados Único do Escritório
               </span>
             </div>
-            <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 font-bold border border-sky-300 dark:border-sky-800">
-              Ponte Híbrida
+            <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center space-x-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Posto Central Ligado</span>
             </span>
           </div>
 
-          <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
-            Selecione como esta aplicação sincroniza o catálogo de entidades e guarda os dados fiscais extraídos.
-          </p>
-
-          <div className="space-y-2.5 pt-1">
-            {/* Opção 1: Modo Integrado */}
-            <div 
-              onClick={() => !salvandoModo && handleAlterarModo('integrado')}
-              className={`p-3 rounded-md border transition cursor-pointer flex items-start space-x-3 ${
-                modoSelecionado === 'integrado'
-                  ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-xs ring-1 ring-[#0284c7]/40'
-                  : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e] hover:border-[#0284c7]'
-              }`}
-            >
-              <Radio className={`w-4 h-4 mt-0.5 shrink-0 ${modoSelecionado === 'integrado' ? 'text-[#0284c7] fill-current' : 'text-slate-500'}`} />
-              <div className="space-y-0.5">
-                <div className="flex items-center space-x-2">
-                  <span className="font-semibold font-mono text-xs text-foreground">
-                    Modo Integrado (evoGex Apps / Catálogo Central)
-                  </span>
-                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800">
-                    Padrão
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
-                  Partilha automática de entidades e credenciais com o Gestor de Entidades e persistência SQLite particionada por NIF (<code className="text-[10.5px]">BdsefaturaV4</code>).
-                </p>
-              </div>
+          <div className="p-3 rounded-md bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] space-y-2">
+            <div className="flex items-center space-x-2">
+              <Radio className="w-4 h-4 text-[#0284c7] fill-current shrink-0" />
+              <span className="font-semibold font-mono text-xs text-foreground">
+                Computador / Servidor Principal Designado
+              </span>
             </div>
-
-            {/* Opção 2: Modo Autónomo */}
-            <div 
-              onClick={() => !salvandoModo && handleAlterarModo('autonomo')}
-              className={`p-3 rounded-md border transition cursor-pointer flex items-start space-x-3 ${
-                modoSelecionado === 'autonomo'
-                  ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-xs ring-1 ring-[#0284c7]/40'
-                  : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e] hover:border-[#0284c7]'
-              }`}
-            >
-              <Radio className={`w-4 h-4 mt-0.5 shrink-0 ${modoSelecionado === 'autonomo' ? 'text-[#0284c7] fill-current' : 'text-slate-500'}`} />
-              <div className="space-y-0.5">
-                <div className="flex items-center space-x-2">
-                  <span className="font-semibold font-mono text-xs text-foreground">
-                    Modo Autónomo (Catálogo Independente)
-                  </span>
-                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800">
-                    Isolado
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
-                  Opera com catálogo de entidades e utilizadores locais exclusivos desta aplicação.
-                </p>
-              </div>
+            <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
+              Toda a informação fiscal da empresa reside exclusivamente neste computador ou servidor do escritório. Qualquer utilizador autenticado (noutro PC do escritório ou num portátil em casa) transmite e consulta dados diretamente nesta máquina, desde que ela se encontre ligada.
+            </p>
+            <div className="flex items-center space-x-2 pt-1">
+              <input
+                type="text"
+                value={centroHostnameInput}
+                onChange={e => setCentroHostnameInput(e.target.value)}
+                disabled={!canManage || salvandoCentro}
+                placeholder="Nome do Computador ou Servidor do Escritório"
+                className="flex-1 h-8 px-2.5 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] font-mono text-xs text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7] disabled:opacity-60"
+              />
+              {canManage && (
+                <button
+                  type="button"
+                  onClick={handleGuardarCentroDados}
+                  disabled={salvandoCentro}
+                  className="px-3 h-8 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-xs font-semibold cursor-pointer transition shrink-0 disabled:opacity-50"
+                >
+                  {salvandoCentro ? 'A guardar...' : 'Registar Posto'}
+                </button>
+              )}
             </div>
+          </div>
 
-            {/* Opção 3: Compatibilidade Paralela com Excel Apps (XML BdsefaturaV3 + BdsRV) */}
+          <div className="space-y-2.5 pt-0.5">
+            {/* Compatibilidade Paralela com Excel Apps (XML BdsefaturaV3 + BdsRV) */}
             <label className="p-3 rounded-md border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-[#091e1a] flex items-start space-x-3 cursor-pointer">
               <input
                 type="checkbox"
@@ -612,7 +580,7 @@ export function ConfigView() {
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
-                  Grava nas bases SQLite (<code className="text-[10.5px]">BdsefaturaV4/{'{NIF}'}</code>) e atualiza em simultâneo os ficheiros XML para os livros Excel (<code className="text-[10.5px]">BdsefaturaV3</code> e <code className="text-[10.5px]">BdsRV</code>).
+                  Grava nas bases SQLite (<code className="text-[10.5px]">BdsefaturaV4/{'{NIF}'}</code>) e atualiza em simultâneo os ficheiros XML para os livros Excel (<code className="text-[10.5px]">BdsefaturaV3</code> e <code className="text-[10.5px]">BdsRV</code>) no Centro de Dados.
                 </p>
               </div>
             </label>

@@ -1768,13 +1768,13 @@ export default function CommandCenter({
               className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs"
               title={
                 motorSource === 'local'
-                  ? `Motor Local do Gabinete ativo em 127.0.0.1:8015 ${versaoMotor ? `(v${versaoMotor})` : ''}`
-                  : `Motor Cloud Hetzner ativo ${versaoMotor ? `(v${versaoMotor})` : ''}`
+                  ? `Centro de Dados do Escritório ativo neste posto (127.0.0.1:8015 · v${versaoMotor || '4.2.27'})`
+                  : `Ligado ao Centro de Dados do Escritório ${versaoMotor ? `(v${versaoMotor})` : ''}`
               }
             >
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span className="text-slate-700 dark:text-slate-300 flex items-center space-x-1">
-                <span>{motorSource === 'local' ? 'Motor Local (PC)' : 'Motor Cloud (Hetzner)'}</span>
+                <span>Centro de Dados Online</span>
                 {versaoMotor && (
                   <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-[#091e1a] border border-emerald-300 dark:border-emerald-800 px-1.5 py-0.5 rounded">
                     v{versaoMotor}
@@ -1783,22 +1783,41 @@ export default function CommandCenter({
               </span>
             </div>
           ) : aLigarMotor ? (
-            <div className="flex items-center space-x-2 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-full text-xs font-mono text-amber-500 shadow-2xs">
-              <Loader2 className="w-3 h-3 animate-spin shrink-0 text-amber-500" />
-              <span>A ligar motor...</span>
+            <div className="flex items-center space-x-2 bg-amber-100 dark:bg-[#241a08] border border-amber-400 dark:border-amber-800 px-3 py-1.5 rounded-full text-xs font-mono text-amber-800 dark:text-amber-300 shadow-2xs">
+              <Loader2 className="w-3 h-3 animate-spin shrink-0 text-amber-600 dark:text-amber-400" />
+              <span>A ligar ao Centro de Dados...</span>
             </div>
           ) : (
             <button
               onClick={ligarMotorAutomatico}
-              className="flex items-center space-x-1.5 bg-destructive/10 hover:bg-destructive/20 border border-destructive/30 px-3 py-1.5 rounded-full text-xs font-mono text-destructive hover:text-destructive transition-colors cursor-pointer shadow-2xs"
-              title="O motor está desligado. Clique para ligar a API e-Fatura (8015) automaticamente."
+              className="flex items-center space-x-1.5 bg-rose-50 dark:bg-[#290f14] hover:bg-rose-100 dark:hover:bg-[#3b151d] border border-rose-300 dark:border-rose-800 px-3 py-1.5 rounded-full text-xs font-mono text-rose-700 dark:text-rose-300 transition-colors cursor-pointer shadow-2xs"
+              title="O Centro de Dados do escritório está desligado. Clique para reconectar."
             >
               <Power className="w-3 h-3 shrink-0" />
-              <span>Ligar Motor</span>
+              <span>Ligar ao Centro de Dados</span>
             </button>
           )}
         </div>
       </header>
+
+      {/* Aviso Claro quando o Computador / Servidor do Centro de Dados no Escritório está Desligado */}
+      {apiOnline === false && !aLigarMotor && (
+        <div className="p-3 bg-rose-50 dark:bg-[#290f14] border border-rose-400 dark:border-rose-800 rounded-md text-rose-800 dark:text-rose-200 font-mono text-xs flex items-center justify-between shrink-0">
+          <div className="flex items-center space-x-2.5">
+            <ServerCrash className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
+            <span>
+              <strong>Centro de Dados do Escritório Desligado:</strong> Para consultar ou importar faturas a partir deste computador, o computador ou servidor principal do escritório onde reside o Centro de Dados tem de estar ligado.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={ligarMotorAutomatico}
+            className="px-3 py-1 rounded bg-rose-700 hover:bg-rose-600 text-white font-semibold text-[11px] cursor-pointer transition shrink-0 ml-3"
+          >
+            Tentar Novamente
+          </button>
+        </div>
+      )}
 
       {/* Banners de Notificação e Erros da AT */}
       {alertasErro.length > 0 && (
