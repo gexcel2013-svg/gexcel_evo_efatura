@@ -1812,7 +1812,7 @@ export default function CommandCenter({
           <div className="flex items-center space-x-2 shrink-0">
             <button
               type="button"
-              onClick={() => window.open('http://127.0.0.1:8015/api/sistema/instalador-centro-dados', '_blank')}
+              onClick={() => window.open('/api/sistema/instalador-centro-dados', '_blank')}
               className="px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-semibold text-[11px] cursor-pointer transition shrink-0"
               title="Cria a pasta única Dados_evoGex e instala automaticamente o Motor, SafeDrive, PocketBase e Bases SQLite neste computador"
             >

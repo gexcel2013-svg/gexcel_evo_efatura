@@ -360,7 +360,7 @@ export function ConfigView() {
     const n = encodeURIComponent(centro.nome || 'Escritório Principal');
     const pEvo = encodeURIComponent(centro.pasta_evogex || 'C:\\Dados_evoGex');
     const pAnt = encodeURIComponent(centro.pasta_gexcel_antiga || '');
-    window.open(`http://127.0.0.1:8015/api/sistema/instalador-centro-dados?nome=${n}&pasta_evogex=${pEvo}&pasta_gexcel_antiga=${pAnt}`, '_blank');
+    window.open(`/api/sistema/instalador-centro-dados?nome=${n}&pasta_evogex=${pEvo}&pasta_gexcel_antiga=${pAnt}`, '_blank');
   };
 
   const abrirCriacaoUser = (rolePredefinido: 'subutilizador' | 'admin' = 'subutilizador') => {

@@ -64,7 +64,7 @@ function AppContent() {
     const n = encodeURIComponent(nome || centroAtivo.nome || 'Escritório Principal');
     const pEvo = encodeURIComponent(pastaEvogex || centroAtivo.pasta_evogex || 'C:\\Dados_evoGex');
     const pAnt = encodeURIComponent(pastaAntiga ?? centroAtivo.pasta_gexcel_antiga ?? '');
-    window.open(`http://127.0.0.1:8015/api/sistema/instalador-centro-dados?nome=${n}&pasta_evogex=${pEvo}&pasta_gexcel_antiga=${pAnt}`, '_blank');
+    window.open(`/api/sistema/instalador-centro-dados?nome=${n}&pasta_evogex=${pEvo}&pasta_gexcel_antiga=${pAnt}`, '_blank');
   };
   const [authUser, setAuthUser] = useState<AuthenticatedEvoUser | null>(() => {
     try {
