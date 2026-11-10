@@ -30,6 +30,7 @@ import {
   Trash2,
   X
 } from 'lucide-react';
+import { getMotorSource, type MotorSourceType } from '../lib/apiBridge';
 
 interface Entidade {
   id: string;
@@ -281,6 +282,16 @@ export default function CommandCenter({
 
   // Tipo de Operação Fiscal: Compras (BdsefaturaV4/{NIF}/compras_{NIF}.db) vs Vendas (BdsefaturaV4/{NIF}/vendas_{NIF}.db)
   const [tipoOperacao, setTipoOperacao] = useState<'compras' | 'vendas'>('compras');
+  const [motorSource, setMotorSource] = useState<MotorSourceType>(() => getMotorSource());
+
+  useEffect(() => {
+    const onSourceChange = (ev: Event) => {
+      const customEv = ev as CustomEvent<MotorSourceType>;
+      setMotorSource(customEv.detail || getMotorSource());
+    };
+    window.addEventListener('gexcel-motor-source', onSourceChange);
+    return () => window.removeEventListener('gexcel-motor-source', onSourceChange);
+  }, []);
 
   // Matriz de dados agregados por ano (NIF -> DadosEmpresaMatriz)
   const [matriz, setMatriz] = useState<Record<string, DadosEmpresaMatriz>>({});
@@ -1755,13 +1766,17 @@ export default function CommandCenter({
           {apiOnline ? (
             <div 
               className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs"
-              title={`Motor e-Fatura ativo na porta 8015 ${versaoMotor ? `(versão ${versaoMotor})` : ''}`}
+              title={
+                motorSource === 'local'
+                  ? `Motor Local do Gabinete ativo em 127.0.0.1:8015 ${versaoMotor ? `(v${versaoMotor})` : ''}`
+                  : `Motor Cloud Hetzner ativo ${versaoMotor ? `(v${versaoMotor})` : ''}`
+              }
             >
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-muted-foreground flex items-center space-x-1">
-                <span>API Motor 8015</span>
+              <span className="text-slate-700 dark:text-slate-300 flex items-center space-x-1">
+                <span>{motorSource === 'local' ? 'Motor Local (PC)' : 'Motor Cloud (Hetzner)'}</span>
                 {versaoMotor && (
-                  <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                  <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-[#091e1a] border border-emerald-300 dark:border-emerald-800 px-1.5 py-0.5 rounded">
                     v{versaoMotor}
                   </span>
                 )}

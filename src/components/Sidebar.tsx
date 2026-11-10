@@ -17,9 +17,12 @@ import {
   Code2,
   Calendar,
   SlidersHorizontal,
-  User
+  User,
+  LayoutGrid,
+  ExternalLink
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { getMotorSource, type MotorSourceType } from '../lib/apiBridge';
 
 interface SidebarProps {
   activeTab: string;
@@ -57,13 +60,32 @@ export function Sidebar({
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem('gexcel_sidebar_collapsed') === 'true';
   });
+  const [motorSource, setMotorSource] = useState<MotorSourceType>(() => getMotorSource());
 
   useEffect(() => {
     localStorage.setItem('gexcel_sidebar_collapsed', String(collapsed));
   }, [collapsed]);
 
+  useEffect(() => {
+    const onSourceChange = (ev: Event) => {
+      const customEv = ev as CustomEvent<MotorSourceType>;
+      if (customEv.detail) {
+        setMotorSource(customEv.detail);
+      } else {
+        setMotorSource(getMotorSource());
+      }
+    };
+    window.addEventListener('gexcel-motor-source', onSourceChange);
+    return () => window.removeEventListener('gexcel-motor-source', onSourceChange);
+  }, []);
+
   const { currentUser, setShowLoginModal } = useAuth();
   const toggleCollapsed = () => setCollapsed(prev => !prev);
+
+  const painelUrl =
+    typeof window !== 'undefined' && window.location.hostname.startsWith('dev.')
+      ? 'https://dev.painel.evogex.com'
+      : 'https://painel.evogex.com';
 
   const navItems = [
     {
@@ -110,6 +132,8 @@ export function Sidebar({
     }] : []),
   ];
 
+  const versaoExibida = versaoMotor || '4.2.26';
+
   return (
     <aside
       className={`h-screen bg-white dark:bg-[#0c1520] text-card-foreground border-r border-border flex flex-col justify-between transition-all duration-300 select-none z-30 shrink-0 ${
@@ -137,7 +161,7 @@ export function Sidebar({
                 <span className="font-display font-light text-sm tracking-tight text-foreground truncate">
                   <span className="text-[#0284c7] dark:text-[#38bdf8]">evo</span>Gex<span className="text-[8.5px] font-normal ml-[1px] text-[#0284c7] dark:text-[#38bdf8]">.com</span> · e-Fatura
                 </span>
-                <span className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground">
+                <span className="text-[9px] font-mono uppercase tracking-widest text-slate-700 dark:text-slate-300">
                   IMPORTADOR · ENGINE V4
                 </span>
               </div>
@@ -146,17 +170,17 @@ export function Sidebar({
           <button
             onClick={toggleCollapsed}
             title={collapsed ? "Expandir Menu" : "Recolher Menu"}
-            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors shrink-0 cursor-pointer"
+            className="p-1 rounded-md text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-100 dark:hover:bg-[#132233] transition-colors shrink-0 cursor-pointer"
           >
             {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
         </div>
 
-        {/* Resumo da Seleção de Empresas */}
+        {/* Resumo da Seleção de Empresas (100% Opaco) */}
         {!collapsed && (
-          <div className="mt-3 p-2.5 rounded-md bg-slate-100/70 dark:bg-[#132233] border border-slate-200 dark:border-[#253a52] text-xs shadow-2xs">
+          <div className="mt-3 p-2.5 rounded-md bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] text-xs shadow-2xs">
             <div className="flex items-center justify-between font-mono text-[10.5px]">
-              <span className="text-muted-foreground dark:text-slate-300 flex items-center">
+              <span className="text-slate-700 dark:text-slate-300 flex items-center">
                 <CheckSquare className="w-3 h-3 mr-1 text-[#0284c7] dark:text-sky-400" />
                 Selecionadas
               </span>
@@ -186,7 +210,7 @@ export function Sidebar({
               className={`w-full flex items-center px-3 py-2 rounded-md text-xs font-semibold transition cursor-pointer ${
                 isActive
                   ? 'bg-[#0284c7] text-white shadow-xs border border-[#0284c7]'
-                  : 'bg-card/70 hover:bg-card dark:bg-[#13202e] dark:hover:bg-[#1a2c40] text-muted-foreground hover:text-foreground dark:text-slate-200 border border-border/70 dark:border-[#2b415a]'
+                  : 'bg-slate-50 hover:bg-slate-100 dark:bg-[#13202e] dark:hover:bg-[#1a2c40] text-slate-700 hover:text-foreground dark:text-slate-200 border border-slate-300 dark:border-[#2b415a]'
               } ${collapsed ? 'justify-center px-0' : 'justify-between'}`}
             >
               <div className="flex items-center space-x-2.5 overflow-hidden">
@@ -198,8 +222,8 @@ export function Sidebar({
               {!collapsed && item.badge && (
                 <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
                   isActive 
-                    ? 'bg-white/20 text-white font-bold' 
-                    : 'bg-muted/80 dark:bg-[#1a2c3f] text-muted-foreground dark:text-slate-200 border border-border/50 dark:border-[#304764]'
+                    ? 'bg-[#0369a1] text-white font-bold border border-sky-300' 
+                    : 'bg-white dark:bg-[#1a2c3f] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-[#304764]'
                 }`}>
                   {item.badge}
                 </span>
@@ -207,27 +231,42 @@ export function Sidebar({
             </button>
           );
         })}
+
+        {/* Atalho Direto para o Painel Central (EVO-00) */}
+        <div className="pt-2 border-t border-slate-200 dark:border-[#222f3e]">
+          <a
+            href={painelUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Abrir Painel Principal evoGex.com"
+            className={`w-full flex items-center px-3 py-2 rounded-md text-xs font-semibold transition cursor-pointer bg-slate-100 hover:bg-sky-50 dark:bg-[#132233] dark:hover:bg-[#0a1929] text-slate-700 hover:text-[#0284c7] dark:text-slate-200 dark:hover:text-sky-400 border border-slate-300 dark:border-[#253a52] ${
+              collapsed ? 'justify-center px-0' : 'justify-between'
+            }`}
+          >
+            <div className="flex items-center space-x-2.5 overflow-hidden">
+              <LayoutGrid className="w-4 h-4 shrink-0 text-[#0284c7] dark:text-sky-400" />
+              {!collapsed && (
+                <span className="truncate font-sans font-medium text-xs">Painel Principal</span>
+              )}
+            </div>
+            {!collapsed && <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-70" />}
+          </a>
+        </div>
       </nav>
 
-      {/* 3. Rodapé Integrado */}
+      {/* 3. Rodapé Integrado (100% Opaco) */}
       <div className="p-3 border-t border-border/80 space-y-2.5 bg-white dark:bg-[#0c1520]">
         
         {/* Operador / Sessão Ativa */}
         <div 
           onClick={() => setShowLoginModal(true)}
-          title={currentUser ? `Operador: ${currentUser.nome} (${currentUser.role}) · Clique para alternar` : "Clique para iniciar sessão"}
-          className={`p-1.5 rounded-md bg-slate-100/80 dark:bg-[#132233] border border-slate-200 dark:border-[#253a52] flex items-center cursor-pointer hover:border-[#0284c7] transition ${
+          title={currentUser ? `Operador: ${currentUser.nome} · Clique para alternar` : "Clique para iniciar sessão"}
+          className={`p-1.5 rounded-md bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] flex items-center cursor-pointer hover:border-[#0284c7] transition ${
             collapsed ? 'justify-center' : 'justify-between space-x-2'
           }`}
         >
           <div className="flex items-center space-x-2 overflow-hidden">
-            <div className={`w-5 h-5 rounded-full flex items-center justify-center font-mono font-bold text-[10px] shrink-0 ${
-              currentUser?.role === 'superadmin'
-                ? 'bg-purple-500/20 text-purple-400'
-                : currentUser?.role === 'admin'
-                ? 'bg-sky-500/20 text-sky-400'
-                : 'bg-slate-200 dark:bg-slate-700 text-foreground'
-            }`}>
+            <div className="w-5 h-5 rounded-full flex items-center justify-center font-mono font-bold text-[10px] shrink-0 bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-400 border border-sky-300 dark:border-sky-800">
               {currentUser ? currentUser.nome.charAt(0).toUpperCase() : <User className="w-3 h-3" />}
             </div>
             {!collapsed && (
@@ -237,33 +276,40 @@ export function Sidebar({
             )}
           </div>
           {!collapsed && (
-            <span className={`text-[8.5px] font-mono uppercase px-1 py-0.2 rounded font-bold ${
-              currentUser?.role === 'superadmin'
-                ? 'text-purple-400 bg-purple-500/10'
-                : currentUser?.role === 'admin'
-                ? 'text-sky-400 bg-sky-500/10'
-                : 'text-muted-foreground'
-            }`}>
-              {currentUser ? (currentUser.role === 'superadmin' ? 'DEV' : currentUser.role) : 'LOGIN'}
+            <span className="text-[8.5px] font-mono uppercase px-1.5 py-0.5 rounded font-bold text-[#0284c7] dark:text-sky-300 bg-sky-100 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800">
+              {currentUser ? (currentUser.role === 'subutilizador' ? 'OPERADOR' : 'ADMIN') : 'LOGIN'}
             </span>
           )}
         </div>
 
-        {/* Estado da Conexão e Licenciamento */}
+        {/* Estado da Conexão e Origem do Motor (Local vs Cloud) */}
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'} text-xs font-mono`}>
-          <div className="flex items-center space-x-2" title="evoGex Auth Oficial B2B">
+          <div className="flex items-center space-x-1.5" title="Licenciamento Gexcel Auth Ativo">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
             {!collapsed && (
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              <span className="text-[10px] text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                 Auth Ativo
               </span>
             )}
           </div>
           {!collapsed && (
-            <div className="flex items-center space-x-1.5" title={apiOnline ? `Motor Porta 8015 Online ${versaoMotor ? `(v${versaoMotor})` : ''}` : 'Motor Offline'}>
+            <div
+              className="flex items-center space-x-1.5"
+              title={
+                apiOnline
+                  ? motorSource === 'local'
+                    ? `Motor Local do Gabinete Ativo (127.0.0.1:8015 · v${versaoExibida})`
+                    : `Motor Cloud Hetzner Ativo (v${versaoExibida})`
+                  : 'Motor Offline'
+              }
+            >
               <div className={`w-1.5 h-1.5 rounded-full ${apiOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
-              <span className="text-[10px] text-muted-foreground font-mono">
-                {apiOnline ? (versaoMotor ? `8015 v${versaoMotor}` : '8015 OK') : 'Offline'}
+              <span className="text-[10px] text-slate-700 dark:text-slate-300 font-mono">
+                {apiOnline
+                  ? motorSource === 'local'
+                    ? 'Motor Local (PC)'
+                    : 'Motor Cloud'
+                  : 'Offline'}
               </span>
             </div>
           )}
@@ -272,25 +318,25 @@ export function Sidebar({
         {/* Controlos de Zoom e Alternador de Tema */}
         <div className={`flex items-center ${collapsed ? 'flex-col space-y-2' : 'justify-between'} pt-1`}>
           {!collapsed ? (
-            <div className="flex items-center space-x-1 border border-border/80 rounded-lg p-0.5 bg-card/60 shadow-2xs">
+            <div className="flex items-center space-x-1 border border-slate-300 dark:border-[#253a52] rounded-lg p-0.5 bg-slate-50 dark:bg-[#132233] shadow-2xs">
               <button
                 onClick={onZoomOut}
                 title="Diminuir Zoom (-5%)"
-                className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer"
+                className="h-6 w-6 rounded flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200 dark:hover:bg-[#1c314a] transition-colors cursor-pointer"
               >
                 <ZoomOut className="w-3 h-3" />
               </button>
               <button
                 onClick={onResetZoom}
                 title="Repor Zoom Padrão (100%)"
-                className="px-1 text-[10px] font-mono text-muted-foreground hover:text-foreground tabular-nums cursor-pointer"
+                className="px-1 text-[10px] font-mono text-slate-700 dark:text-slate-300 hover:text-foreground tabular-nums cursor-pointer"
               >
                 {Math.round(zoomLevel * 100)}%
               </button>
               <button
                 onClick={onZoomIn}
                 title="Aumentar Zoom (+5%)"
-                className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer"
+                className="h-6 w-6 rounded flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200 dark:hover:bg-[#1c314a] transition-colors cursor-pointer"
               >
                 <ZoomIn className="w-3 h-3" />
               </button>
@@ -300,21 +346,21 @@ export function Sidebar({
               <button
                 onClick={onZoomIn}
                 title={`Aumentar Zoom (${Math.round(zoomLevel * 100)}%)`}
-                className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer"
+                className="h-6 w-6 rounded flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200 dark:hover:bg-[#1c314a] transition-colors cursor-pointer"
               >
                 <ZoomIn className="w-3 h-3" />
               </button>
               <button
                 onClick={onZoomOut}
                 title={`Diminuir Zoom (${Math.round(zoomLevel * 100)}%)`}
-                className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer"
+                className="h-6 w-6 rounded flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200 dark:hover:bg-[#1c314a] transition-colors cursor-pointer"
               >
                 <ZoomOut className="w-3 h-3" />
               </button>
             </div>
           )}
 
-          {/* Botão de Modo Demonstração / Privacidade (Ofuscação de Dados com Quadradinhos ■) */}
+          {/* Botão de Modo Demonstração / Privacidade */}
           <button
             onClick={onToggleModoPrivacidade}
             title={modoPrivacidade 
@@ -322,8 +368,8 @@ export function Sidebar({
               : "Ativar Modo Demonstração (Ofuscar NIFs e Nomes com ■) · Ctrl+Shift+P"}
             className={`h-8 w-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
               modoPrivacidade
-                ? 'bg-amber-500/20 border-amber-500/50 text-amber-600 dark:text-amber-400 ring-1 ring-amber-500/30'
-                : 'border-border/80 bg-card text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                ? 'bg-amber-100 dark:bg-[#241a08] border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-300'
+                : 'border-slate-300 dark:border-[#253a52] bg-slate-50 dark:bg-[#132233] text-slate-700 dark:text-slate-300 hover:text-foreground'
             }`}
           >
             {modoPrivacidade ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -332,19 +378,19 @@ export function Sidebar({
           <button
             onClick={onToggleTheme}
             title={theme === 'dark' ? 'Mudar para Modo Claro (Ardósia)' : 'Mudar para Modo Escuro (Cyber Navy)'}
-            className="h-8 w-8 rounded-lg border border-border/80 bg-card flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors cursor-pointer shrink-0"
+            className="h-8 w-8 rounded-lg border border-slate-300 dark:border-[#253a52] bg-slate-50 dark:bg-[#132233] flex items-center justify-center text-slate-700 dark:text-slate-300 hover:text-foreground transition-colors cursor-pointer shrink-0"
           >
             {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
         </div>
 
-        {/* Versão Discreta no Rodapé Conforme Norma Gexcel Desktop */}
+        {/* Selo Oficial de Versão e Build no Rodapé */}
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-end'} pt-0.5`}>
           <span 
-            title="Versão Oficial do Sistema"
-            className="text-[9.5px] font-mono text-muted-foreground/60 tracking-wider"
+            title={`Versão Oficial v${versaoExibida} · Build #42`}
+            className="text-[9.5px] font-mono text-slate-600 dark:text-slate-400 tracking-wider"
           >
-            {collapsed ? 'v4.1' : 'v4.1.0 · evoGex.com'}
+            {collapsed ? `v${versaoExibida}` : `v${versaoExibida} · Build #42`}
           </span>
         </div>
       </div>

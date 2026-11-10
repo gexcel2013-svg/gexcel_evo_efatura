@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   SlidersHorizontal, 
   Database, 
   Users, 
   UserPlus, 
   ShieldCheck, 
-  KeyRound, 
   CheckCircle2, 
   AlertTriangle, 
   Loader2, 
@@ -15,10 +14,15 @@ import {
   User, 
   RefreshCw,
   LogOut,
-  Radio
+  Radio,
+  FolderOpen,
+  Copy,
+  HardDrive
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import type { AppUser } from '../types/auth';
+
+type UserSortColumn = 'nome' | 'email' | 'role' | 'ativo' | 'ultimo_login';
 
 export function ConfigView() {
   const { 
@@ -28,7 +32,6 @@ export function ConfigView() {
     refreshConfig, 
     refreshUsers, 
     setShowLoginModal, 
-    login,
     logout 
   } = useAuth();
 
@@ -58,9 +61,26 @@ export function ConfigView() {
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
 
-  // Lista de utilizadores
+  // Pastas locais resolvidas pela API
+  const [pastasLocais, setPastasLocais] = useState<{
+    pasta_v4: string;
+    pasta_v3: string;
+    pasta_bdsrv: string;
+    pasta_pdfs: string;
+    db_path: string;
+  }>({
+    pasta_v4: appConfig?.pasta_v4 || '',
+    pasta_v3: appConfig?.pasta_v3 || '',
+    pasta_bdsrv: appConfig?.pasta_bdsrv || '',
+    pasta_pdfs: appConfig?.pasta_pdfs || '',
+    db_path: appConfig?.db_path || '',
+  });
+
+  // Lista de utilizadores e ordenação universal
   const [utilizadores, setUtilizadores] = useState<AppUser[]>([]);
   const [carregandoUsers, setCarregandoUsers] = useState<boolean>(false);
+  const [sortCol, setSortCol] = useState<UserSortColumn>('nome');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   // Modal de criação / edição de utilizador
   const [modalUserAberto, setModalUserAberto] = useState<boolean>(false);
@@ -78,12 +98,19 @@ export function ConfigView() {
     if (appConfig?.modo_dados) {
       setModoSelecionado(appConfig.modo_dados);
     }
-  }, [appConfig?.modo_dados]);
+    setPastasLocais(prev => ({
+      pasta_v4: appConfig?.pasta_v4 || prev.pasta_v4,
+      pasta_v3: appConfig?.pasta_v3 || prev.pasta_v3,
+      pasta_bdsrv: appConfig?.pasta_bdsrv || prev.pasta_bdsrv,
+      pasta_pdfs: appConfig?.pasta_pdfs || prev.pasta_pdfs,
+      db_path: appConfig?.db_path || prev.db_path,
+    }));
+  }, [appConfig]);
 
   const carregarListaUtilizadores = useCallback(async () => {
     setCarregandoUsers(true);
     const users = await refreshUsers();
-    setUtilizadores(users);
+    setUtilizadores(users.filter(u => u.role !== 'superadmin' && !u.is_system));
     setCarregandoUsers(false);
   }, [refreshUsers]);
 
@@ -92,13 +119,82 @@ export function ConfigView() {
     fetch('http://127.0.0.1:8015/api/recibos-verdes/config')
       .then(r => r.ok ? r.json() : null)
       .then(cfg => {
-        if (cfg && typeof cfg.alimentar_xml_legado === 'boolean') {
-          setAlimentarXmlLegado(cfg.alimentar_xml_legado);
-          localStorage.setItem('gexcel_alimentar_xml_legado', String(cfg.alimentar_xml_legado));
+        if (cfg) {
+          if (typeof cfg.alimentar_xml_legado === 'boolean') {
+            setAlimentarXmlLegado(cfg.alimentar_xml_legado);
+            localStorage.setItem('gexcel_alimentar_xml_legado', String(cfg.alimentar_xml_legado));
+          }
+          setPastasLocais(prev => ({
+            ...prev,
+            pasta_v4: cfg.pasta_v4 || prev.pasta_v4,
+            pasta_bdsrv: cfg.pasta_bdsrv || prev.pasta_bdsrv,
+            pasta_pdfs: cfg.pasta_pdfs || prev.pasta_pdfs,
+          }));
         }
       })
       .catch(() => {});
   }, [carregarListaUtilizadores]);
+
+  const maxUsers = appConfig?.max_users || 5;
+  const lugaresOcupados = utilizadores.length;
+
+  const handleSortUsers = (col: UserSortColumn) => {
+    if (sortCol === col) {
+      setSortDir(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortCol(col);
+      setSortDir('asc');
+    }
+  };
+
+  const utilizadoresOrdenados = useMemo(() => {
+    const arr = [...utilizadores];
+    arr.sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === 'nome') {
+        cmp = `${a.nome} ${a.username}`.localeCompare(`${b.nome} ${b.username}`, 'pt');
+      } else if (sortCol === 'email') {
+        cmp = (a.email || '').localeCompare(b.email || '', 'pt');
+      } else if (sortCol === 'role') {
+        cmp = a.role.localeCompare(b.role, 'pt');
+      } else if (sortCol === 'ativo') {
+        cmp = (a.ativo === b.ativo) ? 0 : a.ativo ? -1 : 1;
+      } else if (sortCol === 'ultimo_login') {
+        const isoA = a.ultimo_login || '';
+        const isoB = b.ultimo_login || '';
+        cmp = isoA.localeCompare(isoB);
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [utilizadores, sortCol, sortDir]);
+
+  const handleCopiarCaminho = async (caminho: string, label: string) => {
+    if (!caminho) return;
+    try {
+      await navigator.clipboard.writeText(caminho);
+      setMensagemSucesso(`Endereço copiado para a área de transferência (${label}).`);
+    } catch {
+      setMensagemErro('Não foi possível copiar o endereço automaticamente.');
+    }
+  };
+
+  const handleAbrirNoWindows = async (caminho: string) => {
+    if (!caminho) return;
+    setMensagemErro(null);
+    try {
+      const res = await fetch('http://127.0.0.1:8015/api/sistema/abrir-explorador', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caminho }),
+      });
+      if (!res.ok) {
+        setMensagemErro('Para abrir pastas diretamente no Explorador do Windows, certifique-se de que o Motor Local está ativo neste computador.');
+      }
+    } catch {
+      setMensagemErro('Para abrir pastas diretamente no Explorador do Windows, certifique-se de que o Motor Local está ativo neste computador.');
+    }
+  };
 
   const handleToggleXmlLegado = async (novoEstado: boolean) => {
     setAlimentarXmlLegado(novoEstado);
@@ -119,7 +215,6 @@ export function ConfigView() {
     } catch {}
   };
 
-  // Alterar Modo de Ligação (Integrado vs Autónomo)
   const handleAlterarModo = async (novoModo: 'integrado' | 'autonomo') => {
     if (!canManage) {
       setMensagemErro('Permissão negada. É obrigatório iniciar sessão como Administrador para alterar o modo de ligação.');
@@ -162,10 +257,13 @@ export function ConfigView() {
     }
   };
 
-  // Abrir modal de criação com perfil pré-definido
   const abrirCriacaoUser = (rolePredefinido: 'subutilizador' | 'admin' = 'subutilizador') => {
     if (!canManage) {
       setMensagemErro('Permissão negada. É obrigatório iniciar sessão como Administrador para criar utilizadores.');
+      return;
+    }
+    if (lugaresOcupados >= maxUsers) {
+      setMensagemErro(`Limite de utilizadores atingido (${lugaresOcupados} de ${maxUsers} lugares contratados). Elimine um utilizador inativo ou amplie a licença da empresa.`);
       return;
     }
     setUserEmEdicao(null);
@@ -179,30 +277,20 @@ export function ConfigView() {
     setModalUserAberto(true);
   };
 
-  // Abrir modal de edição com RBAC estrito
   const abrirEdicaoUser = (user: AppUser) => {
     if (!isLoggedIn) {
       setMensagemErro('Permissão negada. Inicie sessão para gerir o seu perfil.');
       return;
     }
-    const isSuperTarget = user.role === 'superadmin' || user.is_system || user.id === 1;
     const isSelf = currentUser && user.id === currentUser.id;
 
-    // 1. Subutilizador só pode editar o seu próprio perfil
     if (isSub && !isSelf) {
       setMensagemErro('Permissão negada. Um subutilizador não tem permissão para editar outros utilizadores.');
       return;
     }
 
-    // 2. Superadministrador só pode ser editado pelo próprio Superadministrador
-    if (isSuperTarget && !isSuper) {
-      setMensagemErro('Permissão negada. Apenas o Superadministrador pode editar a conta Mestre do sistema.');
-      return;
-    }
-
-    // 3. Administrador comum não pode editar outros administradores (a menos que seja o próprio)
     if (isAdm && user.role === 'admin' && !isSelf) {
-      setMensagemErro('Apenas o Superadministrador pode editar outros administradores.');
+      setMensagemErro('Não é permitido editar a conta de outro Administrador.');
       return;
     }
 
@@ -211,13 +299,12 @@ export function ConfigView() {
     setFormUsername(user.username);
     setFormEmail(user.email || '');
     setFormRole(user.role as any);
-    setFormPassword(''); // Vazio = manter a atual
+    setFormPassword('');
     setFormAtivo(user.ativo);
     setErroFormUser(null);
     setModalUserAberto(true);
   };
 
-  // Guardar utilizador (Criação ou Edição)
   const handleGuardarUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvandoUser(true);
@@ -225,8 +312,6 @@ export function ConfigView() {
 
     try {
       if (userEmEdicao) {
-        // Validações estritas de segurança no frontend
-        const isSuperTarget = userEmEdicao.role === 'superadmin' || userEmEdicao.is_system || userEmEdicao.id === 1;
         const isSelf = currentUser && userEmEdicao.id === currentUser.id;
 
         if (isSub && !isSelf) {
@@ -235,17 +320,11 @@ export function ConfigView() {
           return;
         }
 
-        if (isSuperTarget && !isSuper) {
-          setErroFormUser('Permissão negada. Apenas o Superadministrador pode alterar a conta Mestre do sistema.');
-          setSalvandoUser(false);
-          return;
-        }
-
         const body: any = {
           nome: formNome.trim(),
           email: formEmail.trim(),
-          role: isSuperTarget ? 'superadmin' : isSub ? 'subutilizador' : formRole,
-          ativo: (isSuperTarget || isSub) ? true : formAtivo
+          role: isSub ? 'subutilizador' : formRole,
+          ativo: isSub ? true : formAtivo
         };
         if (formPassword.trim()) {
           body.nova_password = formPassword.trim();
@@ -260,18 +339,21 @@ export function ConfigView() {
         if (res.ok) {
           setModalUserAberto(false);
           await carregarListaUtilizadores();
-          if (currentUser && currentUser.id === userEmEdicao.id) {
-            await refreshConfig();
-          }
+          await refreshConfig();
           setMensagemSucesso(`Utilizador '${formUsername}' atualizado com sucesso.`);
         } else {
           const err = await res.json();
           setErroFormUser(err.detail || 'Falha ao atualizar utilizador.');
         }
       } else {
-        // Criar novo
         if (!canManage) {
           setErroFormUser('Permissão negada. É obrigatório iniciar sessão como Administrador para criar utilizadores.');
+          setSalvandoUser(false);
+          return;
+        }
+
+        if (lugaresOcupados >= maxUsers) {
+          setErroFormUser(`Limite de utilizadores atingido (${lugaresOcupados}/${maxUsers}).`);
           setSalvandoUser(false);
           return;
         }
@@ -297,6 +379,7 @@ export function ConfigView() {
         if (res.ok) {
           setModalUserAberto(false);
           await carregarListaUtilizadores();
+          await refreshConfig();
           setMensagemSucesso(`Utilizador '${formUsername}' criado com sucesso.`);
         } else {
           const err = await res.json();
@@ -310,29 +393,19 @@ export function ConfigView() {
     }
   };
 
-  // Eliminar utilizador com proteção absoluta de auto-eliminação e hierarquia
   const handleEliminarUser = async (user: AppUser) => {
-    // 1. Superadministrador
-    if (user.is_system || user.role === 'superadmin' || user.id === 1) {
-      alert('Não é permitido eliminar o Superadministrador do sistema.');
-      return;
-    }
-
-    // 2. Apenas Administrador ou Superadministrador pode eliminar
     if (!canManage) {
       setMensagemErro('Permissão negada. É obrigatório iniciar sessão como Administrador para eliminar utilizadores.');
       return;
     }
 
-    // 3. Regra de Ouro: Proibição absoluta de auto-eliminação
     if (currentUser && user.id === currentUser.id) {
       setMensagemErro('Operação recusada: Não é permitido eliminar a sua própria conta enquanto a sua sessão estiver ativa.');
       return;
     }
 
-    // 4. Admin comum não pode eliminar outros administradores
     if (isAdm && user.role === 'admin') {
-      setMensagemErro('Apenas o Superadministrador tem permissão para eliminar contas de Administrador.');
+      setMensagemErro('Não tem permissão para eliminar outras contas de Administrador.');
       return;
     }
 
@@ -346,6 +419,7 @@ export function ConfigView() {
       });
       if (res.ok) {
         await carregarListaUtilizadores();
+        await refreshConfig();
         setMensagemSucesso(`Utilizador '${user.username}' removido com sucesso.`);
       } else {
         const err = await res.json();
@@ -356,8 +430,48 @@ export function ConfigView() {
     }
   };
 
+  const renderSortIndicator = (col: UserSortColumn) => {
+    if (sortCol !== col) {
+      return <span className="ml-1 opacity-40 text-[10px]">⇅</span>;
+    }
+    return <span className="ml-1 text-[#0284c7] dark:text-sky-400 text-[10px]">{sortDir === 'asc' ? '▲' : '▼'}</span>;
+  };
+
+  const itensPastas = [
+    {
+      id: 'v4',
+      titulo: 'Bases SQLite Modernas (BdsefaturaV4)',
+      subtitulo: 'Faturas de compras, vendas, anuladas, recibos verdes e controlo geral',
+      caminho: pastasLocais.pasta_v4 || (pastasLocais.pasta_bdsrv ? pastasLocais.pasta_bdsrv.replace(/BdsRV$/i, 'BdsefaturaV4') : ''),
+    },
+    {
+      id: 'v3',
+      titulo: 'Ficheiros XML e-Fatura (BdsefaturaV3)',
+      subtitulo: 'Alimentação paralela de compatibilidade com os mapas Excel',
+      caminho: pastasLocais.pasta_v3 || (pastasLocais.pasta_v4 ? pastasLocais.pasta_v4.replace(/BdsefaturaV4$/i, 'BdsefaturaV3') : ''),
+    },
+    {
+      id: 'bdsrv',
+      titulo: 'Ficheiros XML Recibos Verdes & Rendas (BdsRV)',
+      subtitulo: 'Repositório estruturado de Recibos Verdes e Recibos de Renda por ano e NIF',
+      caminho: pastasLocais.pasta_bdsrv,
+    },
+    {
+      id: 'pdfs',
+      titulo: 'Comprovativos PDF de Recibos Verdes & Rendas',
+      subtitulo: 'Pasta destino dos documentos PDF oficiais descarregados da AT',
+      caminho: pastasLocais.pasta_pdfs,
+    },
+    {
+      id: 'db_app',
+      titulo: 'Catálogo Local de Utilizadores & Preferências',
+      subtitulo: 'Base SQLite dedicada à gestão de utilizadores, sessões e estado local',
+      caminho: pastasLocais.db_path,
+    },
+  ];
+
   return (
-    <div className="h-full flex flex-col space-y-4 min-h-0 select-none overflow-y-auto">
+    <div className="h-full flex flex-col space-y-4 min-h-0 select-none overflow-y-auto pr-1">
       
       {/* 1. Cabeçalho Oficial evoGex.com */}
       <header className="flex justify-between items-start shrink-0">
@@ -368,55 +482,65 @@ export function ConfigView() {
           <h1 className="page-title text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center">
             Configurações do Sistema
           </h1>
-          <p className="page-description text-muted-foreground text-[11.5px] font-mono tracking-[0.03em] mt-0.5">
-            Gestão do modo de ligação, fonte de dados e controlo de utilizadores locais com permissões (RBAC).
+          <p className="page-description text-slate-700 dark:text-slate-300 text-[11.5px] font-mono tracking-[0.03em] mt-0.5">
+            Modo de ligação, diretórios locais de armazenamento e gestão de utilizadores da empresa.
           </p>
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
           <div className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs">
             <SlidersHorizontal className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
-            <span className="text-muted-foreground">
+            <span className="text-slate-700 dark:text-slate-300">
               Modo: <strong className="text-foreground uppercase">{appConfig?.modo_dados || 'integrado'}</strong>
             </span>
           </div>
         </div>
       </header>
 
-      {/* Alertas de Notificação */}
+      {/* Alertas de Notificação (100% Opacos) */}
       {mensagemSucesso && (
-        <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-md text-emerald-600 dark:text-emerald-400 font-mono text-xs flex items-center space-x-2 animate-in fade-in">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          <span>{mensagemSucesso}</span>
+        <div className="p-3 bg-emerald-50 dark:bg-[#091e1a] border border-emerald-400 dark:border-emerald-800 rounded-md text-emerald-800 dark:text-emerald-300 font-mono text-xs flex items-center justify-between animate-in fade-in">
+          <div className="flex items-center space-x-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{mensagemSucesso}</span>
+          </div>
+          <button type="button" onClick={() => setMensagemSucesso(null)} className="text-emerald-700 dark:text-emerald-400 hover:opacity-75 cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
       {mensagemErro && (
-        <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-md text-destructive font-mono text-xs flex items-center space-x-2 animate-in fade-in">
-          <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>{mensagemErro}</span>
+        <div className="p-3 bg-rose-50 dark:bg-[#290f14] border border-rose-400 dark:border-rose-800 rounded-md text-rose-800 dark:text-rose-300 font-mono text-xs flex items-center justify-between animate-in fade-in">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{mensagemErro}</span>
+          </div>
+          <button type="button" onClick={() => setMensagemErro(null)} className="text-rose-700 dark:text-rose-400 hover:opacity-75 cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
       {/* Grid de Configurações */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         
-        {/* Card 1: Modo de Ligação & Fonte de Dados */}
-        <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] before:z-20">
-          <div className="flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] pb-2">
+        {/* Card 1: Modo de Ligação & Fonte de Dados (100% Opaco) */}
+        <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] before:z-20">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
             <div className="flex items-center space-x-2">
               <Database className="w-4 h-4 text-[#0284c7] dark:text-sky-400" />
               <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
                 Fonte de Dados & Modo de Ligação
               </span>
             </div>
-            <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-sky-500/15 text-[#0284c7] dark:text-sky-400 font-bold border border-sky-500/30">
-              Arquitetura Híbrida
+            <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 font-bold border border-sky-300 dark:border-sky-800">
+              Ponte Híbrida
             </span>
           </div>
 
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Selecione como esta aplicação deve operar no posto de trabalho. Pode integrar-se no ecossistema central ou funcionar de forma totalmente autónoma.
+          <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+            Selecione como esta aplicação sincroniza o catálogo de entidades e guarda os dados fiscais extraídos.
           </p>
 
           <div className="space-y-2.5 pt-1">
@@ -425,22 +549,22 @@ export function ConfigView() {
               onClick={() => !salvandoModo && handleAlterarModo('integrado')}
               className={`p-3 rounded-md border transition cursor-pointer flex items-start space-x-3 ${
                 modoSelecionado === 'integrado'
-                  ? 'bg-white dark:bg-[#0c1520] border-[#0284c7] shadow-xs ring-1 ring-[#0284c7]/40'
-                  : 'bg-white/60 dark:bg-[#0c1520]/60 border-slate-300 dark:border-[#222f3e] hover:border-border'
+                  ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-xs ring-1 ring-[#0284c7]/40'
+                  : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e] hover:border-[#0284c7]'
               }`}
             >
-              <Radio className={`w-4 h-4 mt-0.5 shrink-0 ${modoSelecionado === 'integrado' ? 'text-[#0284c7] fill-current' : 'text-muted-foreground'}`} />
+              <Radio className={`w-4 h-4 mt-0.5 shrink-0 ${modoSelecionado === 'integrado' ? 'text-[#0284c7] fill-current' : 'text-slate-500'}`} />
               <div className="space-y-0.5">
                 <div className="flex items-center space-x-2">
                   <span className="font-semibold font-mono text-xs text-foreground">
-                    Modo Integrado (evoGex Apps / CRM Central)
+                    Modo Integrado (evoGex Apps / Catálogo Central)
                   </span>
-                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold">
+                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800">
                     Padrão
                   </span>
                 </div>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  Lê entidades e senhas fiscais de <code className="text-[10.5px]">tCredenciais.xml</code> via <code className="text-[10.5px]">z-GexcelApps.ini</code> com persistência particionada por NIF (<code className="text-[10.5px]">BdsefaturaV4</code>).
+                <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
+                  Partilha automática de entidades e credenciais com o Gestor de Entidades e persistência SQLite particionada por NIF (<code className="text-[10.5px]">BdsefaturaV4</code>).
                 </p>
               </div>
             </div>
@@ -450,22 +574,22 @@ export function ConfigView() {
               onClick={() => !salvandoModo && handleAlterarModo('autonomo')}
               className={`p-3 rounded-md border transition cursor-pointer flex items-start space-x-3 ${
                 modoSelecionado === 'autonomo'
-                  ? 'bg-white dark:bg-[#0c1520] border-[#0284c7] shadow-xs ring-1 ring-[#0284c7]/40'
-                  : 'bg-white/60 dark:bg-[#0c1520]/60 border-slate-300 dark:border-[#222f3e] hover:border-border'
+                  ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-xs ring-1 ring-[#0284c7]/40'
+                  : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e] hover:border-[#0284c7]'
               }`}
             >
-              <Radio className={`w-4 h-4 mt-0.5 shrink-0 ${modoSelecionado === 'autonomo' ? 'text-[#0284c7] fill-current' : 'text-muted-foreground'}`} />
+              <Radio className={`w-4 h-4 mt-0.5 shrink-0 ${modoSelecionado === 'autonomo' ? 'text-[#0284c7] fill-current' : 'text-slate-500'}`} />
               <div className="space-y-0.5">
                 <div className="flex items-center space-x-2">
                   <span className="font-semibold font-mono text-xs text-foreground">
-                    Modo Autónomo (Instalação Independente)
+                    Modo Autónomo (Catálogo Independente)
                   </span>
-                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold">
+                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800">
                     Isolado
                   </span>
                 </div>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  100% independente do evoGex Apps. Guarda dados numa base SQLite local dedicada com utilizadores e permissões próprios.
+                <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
+                  Opera com catálogo de entidades e utilizadores locais exclusivos desta aplicação.
                 </p>
               </div>
             </div>
@@ -483,142 +607,184 @@ export function ConfigView() {
                   <span className="font-semibold font-mono text-xs text-emerald-950 dark:text-emerald-200">
                     Alimentar Dados Atuais do Excel Apps (XML Legado)
                   </span>
-                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200 font-bold">
+                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200 font-bold">
                     Dual-Write
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
-                  Os novos dados modernos ficam diretamente nas bases SQLite (<code className="text-[10.5px]">BdsefaturaV4/{'{NIF}'}/compras, vendas, anuladas e recibos_verdes</code>). Com esta opção ativa, continua a atualizar em paralelo os XMLs do Excel (<code className="text-[10.5px]">BdsefaturaV3</code> e <code className="text-[10.5px]">BdsRV</code>).
+                  Grava nas bases SQLite (<code className="text-[10.5px]">BdsefaturaV4/{'{NIF}'}</code>) e atualiza em simultâneo os ficheiros XML para os livros Excel (<code className="text-[10.5px]">BdsefaturaV3</code> e <code className="text-[10.5px]">BdsRV</code>).
                 </p>
               </div>
             </label>
           </div>
-
-          <div className="pt-1 text-[11px] font-mono text-muted-foreground flex items-center justify-between border-t border-slate-200 dark:border-[#1b2b3d]">
-            <span>Base Local da Aplicação:</span>
-            <span className="font-semibold text-foreground truncate max-w-[240px]" title={appConfig?.db_path}>
-              gevo_efatura_app.db
-            </span>
-          </div>
         </div>
 
-        {/* Card 2: Sessão Ativa & Chave Mestra */}
-        <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-emerald-500 before:z-20">
-          <div className="flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] pb-2">
-            <div className="flex items-center space-x-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-500" />
-              <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
-                Sessão Ativa & Operador
-              </span>
-            </div>
-            <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold border border-emerald-500/30">
-              {currentUser ? currentUser.role.toUpperCase() : 'SEM SESSÃO'}
-            </span>
-          </div>
-
-          {currentUser ? (
-            <div className="space-y-3 pt-1">
-              <div className="p-3 rounded-md bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="w-9 h-9 rounded-full bg-[#0284c7]/15 text-[#0284c7] dark:text-sky-400 flex items-center justify-center font-mono font-bold text-sm">
-                    {currentUser.nome.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <span className="font-semibold font-mono text-xs block text-foreground">
-                      {currentUser.nome}
-                    </span>
-                    <span className="text-[10px] font-mono text-muted-foreground block">
-                      @{currentUser.username} {currentUser.email && `· ${currentUser.email}`}
-                    </span>
-                  </div>
-                </div>
-
-                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
-                  currentUser.role === 'superadmin' 
-                    ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30'
-                    : currentUser.role === 'admin'
-                    ? 'bg-sky-500/15 text-[#0284c7] dark:text-sky-400 border-sky-500/30'
-                    : 'bg-slate-200 dark:bg-slate-800 text-muted-foreground border-border'
-                }`}>
-                  {currentUser.role.toUpperCase()}
+        {/* Card 2: Sessão Ativa & Quota da Licença da Empresa (100% Opaco) */}
+        <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col justify-between before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-emerald-500 before:z-20">
+          <div className="space-y-3.5">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
+              <div className="flex items-center space-x-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
+                  Sessão Ativa & Quota de Utilizadores
                 </span>
               </div>
-
-              <div className="flex items-center space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setShowLoginModal(true)}
-                  className="flex-1 px-3 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-muted border border-slate-300 dark:border-[#222f3e] text-xs font-mono transition cursor-pointer flex items-center justify-center space-x-1.5"
-                >
-                  <User className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span>Trocar de Operador</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="px-3 py-1.5 rounded bg-destructive/10 hover:bg-destructive/20 border border-destructive/30 text-destructive text-xs font-mono transition cursor-pointer flex items-center space-x-1.5"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Sair</span>
-                </button>
-              </div>
+              <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800">
+                {currentUser ? (currentUser.role === 'admin' || currentUser.role === 'superadmin' ? 'ADMINISTRADOR' : 'OPERADOR') : 'SEM SESSÃO'}
+              </span>
             </div>
-          ) : (
-            <div className="p-4 rounded-md bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-center space-y-2.5">
-              <p className="text-xs font-mono text-muted-foreground">
-                Nenhum operador com sessão iniciada nesta estação de trabalho.
-              </p>
-              <div className="flex items-center justify-center space-x-2">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const res = await login('superadmin', '41238886');
-                    if (res.success) {
-                      setMensagemSucesso('Sessão iniciada como Superadministrador Mestre (Victor Gamboa).');
-                      await carregarListaUtilizadores();
-                    } else {
-                      setMensagemErro(res.error || 'Falha ao autenticar.');
-                    }
-                  }}
-                  className="px-3.5 py-1.5 rounded bg-purple-600 hover:bg-purple-500 text-white font-mono text-xs font-semibold shadow-xs cursor-pointer transition flex items-center space-x-1.5"
-                  title="Autenticação direta com a Chave Mestra Universal (41238886)"
-                >
-                  <KeyRound className="w-3.5 h-3.5" />
-                  <span>Entrar como Superadmin</span>
-                </button>
 
-                <button
-                  type="button"
-                  onClick={() => setShowLoginModal(true)}
-                  className="px-3.5 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-xs font-semibold shadow-xs cursor-pointer transition flex items-center space-x-1.5"
-                >
-                  <User className="w-3.5 h-3.5" />
-                  <span>Iniciar Sessão</span>
-                </button>
+            {currentUser ? (
+              <div className="space-y-3 pt-1">
+                <div className="p-3 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-9 h-9 rounded-full bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-400 flex items-center justify-center font-mono font-bold text-sm border border-sky-300 dark:border-sky-800">
+                      {currentUser.nome.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <span className="font-semibold font-mono text-xs block text-foreground">
+                        {currentUser.nome}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-700 dark:text-slate-300 block">
+                        @{currentUser.username} {currentUser.email && `· ${currentUser.email}`}
+                      </span>
+                    </div>
+                  </div>
+
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border-sky-300 dark:border-sky-800">
+                    {currentUser.role === 'subutilizador' ? 'OPERADOR' : 'ADMIN'}
+                  </span>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginModal(true)}
+                    className="flex-1 px-3 py-1.5 rounded bg-slate-50 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-xs font-mono transition cursor-pointer flex items-center justify-center space-x-1.5"
+                  >
+                    <User className="w-3.5 h-3.5 text-slate-700 dark:text-slate-300" />
+                    <span>Trocar de Operador</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="px-3 py-1.5 rounded bg-rose-50 dark:bg-[#290f14] hover:bg-rose-100 dark:hover:bg-[#3b151d] border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-mono transition cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Terminar Sessão</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="p-4 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-center space-y-2.5">
+                <p className="text-xs font-mono text-slate-700 dark:text-slate-300">
+                  Inicie sessão com a sua conta de Administrador ou Operador para gerir permissões.
+                </p>
+                <div className="flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginModal(true)}
+                    className="px-4 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-xs font-semibold shadow-xs cursor-pointer transition flex items-center space-x-1.5"
+                  >
+                    <User className="w-3.5 h-3.5" />
+                    <span>Iniciar Sessão</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
-          {/* Cartão Informativo da Chave Mestra */}
-          <div className="p-2.5 rounded bg-purple-500/10 border border-purple-500/20 text-xs font-mono space-y-1">
-            <span className="font-bold text-purple-600 dark:text-purple-400 flex items-center space-x-1.5">
-              <KeyRound className="w-3.5 h-3.5" />
-              <span>Chave Mestra Universal do Superadministrador</span>
-            </span>
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              O Superadministrador tem privilégios de Nível 3 permanentes para suporte, recuperação e desbloqueio em qualquer máquina independente.
+          {/* Resumo de Quota Contratada da Empresa */}
+          <div className="p-3 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-2">
+            <div className="flex items-center justify-between font-mono text-xs">
+              <span className="font-semibold text-foreground">Lugares de Utilizador Ativos</span>
+              <span className="font-bold text-[#0284c7] dark:text-sky-400">
+                {lugaresOcupados} / {maxUsers} utilizados
+              </span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-[#0c1520] overflow-hidden border border-slate-300 dark:border-[#222f3e]">
+              <div
+                className={`h-full transition-all ${lugaresOcupados >= maxUsers ? 'bg-amber-500' : 'bg-[#0284c7]'}`}
+                style={{ width: `${Math.min(100, Math.round((lugaresOcupados / Math.max(1, maxUsers)) * 100))}%` }}
+              />
+            </div>
+            <p className="text-[11px] font-mono text-slate-700 dark:text-slate-300">
+              O Administrador da empresa pode adicionar ou remover operadores a qualquer momento dentro do limite de lugares da assinatura.
             </p>
           </div>
         </div>
 
-        {/* Card 3: Gestão de Utilizadores Locais (RBAC) - 2 Colunas */}
-        <div className="md:col-span-2 relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-purple-500 before:z-20">
-          <div className="flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] pb-2">
+        {/* Card 3: Pastas Locais & Transparência de Armazenamento (100% Opaco + Abrir no Windows + Copiar) */}
+        <div className="md:col-span-2 relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-amber-500 before:z-20">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
+            <div className="flex items-center space-x-2">
+              <HardDrive className="w-4 h-4 text-amber-500" />
+              <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
+                Diretórios Locais de Dados & Ficheiros Fiscais
+              </span>
+            </div>
+            <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800">
+              Leitura Completa
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            {itensPastas.map(item => (
+              <div
+                key={item.id}
+                className="p-2.5 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] flex flex-col justify-between space-y-1.5"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <span className="font-mono font-semibold text-xs text-foreground block">
+                      {item.titulo}
+                    </span>
+                    <span className="font-mono text-[10.5px] text-slate-700 dark:text-slate-300 block">
+                      {item.subtitulo}
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleAbrirNoWindows(item.caminho)}
+                      disabled={!item.caminho}
+                      className="px-2 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-sky-50 dark:hover:bg-[#0a1929] border border-slate-300 dark:border-[#222f3e] text-[10.5px] font-mono text-foreground flex items-center space-x-1 cursor-pointer transition disabled:opacity-40"
+                      title="Abrir diretamente no Explorador do Windows (📂)"
+                    >
+                      <FolderOpen className="w-3 h-3 text-amber-500" />
+                      <span>Abrir</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCopiarCaminho(item.caminho, item.titulo)}
+                      disabled={!item.caminho}
+                      className="px-2 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-sky-50 dark:hover:bg-[#0a1929] border border-slate-300 dark:border-[#222f3e] text-[10.5px] font-mono text-foreground flex items-center space-x-1 cursor-pointer transition disabled:opacity-40"
+                      title="Copiar endereço completo (📋)"
+                    >
+                      <Copy className="w-3 h-3 text-[#0284c7] dark:text-sky-400" />
+                      <span>Copiar</span>
+                    </button>
+                  </div>
+                </div>
+                <div
+                  className="font-mono text-[11px] text-slate-800 dark:text-slate-200 bg-white dark:bg-[#0c1520] px-2.5 py-1.5 rounded border border-slate-200 dark:border-[#222f3e] break-all select-text"
+                  title={item.caminho || 'A aguardar leitura do diretório...'}
+                >
+                  {item.caminho || '—'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Card 4: Gestão de Utilizadores da Empresa (RBAC + Ordenação Universal) */}
+        <div className="md:col-span-2 relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-purple-500 before:z-20">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
             <div className="flex items-center space-x-2">
               <Users className="w-4 h-4 text-purple-500" />
               <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
-                Gestão de Utilizadores & Perfis de Acesso (RBAC)
+                Utilizadores da Empresa & Perfis de Acesso ({lugaresOcupados}/{maxUsers})
               </span>
             </div>
             
@@ -627,8 +793,8 @@ export function ConfigView() {
                 type="button"
                 onClick={carregarListaUtilizadores}
                 disabled={carregandoUsers}
-                className="p-1.5 rounded border border-slate-300 dark:border-[#222f3e] text-muted-foreground hover:text-foreground hover:bg-muted transition cursor-pointer"
-                title="Atualizar lista"
+                className="p-1.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200 dark:hover:bg-[#1c314a] transition cursor-pointer"
+                title="Atualizar lista de utilizadores"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${carregandoUsers ? 'animate-spin' : ''}`} />
               </button>
@@ -642,170 +808,166 @@ export function ConfigView() {
                     title="Adicionar um novo subutilizador / operador diário"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
-                    <span>+ Adicionar Subutilizador</span>
+                    <span>+ Adicionar Operador</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => abrirCriacaoUser('admin')}
-                    className="px-3 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-muted border border-slate-300 dark:border-[#222f3e] text-foreground font-mono text-xs font-semibold shadow-xs flex items-center space-x-1.5 cursor-pointer transition"
-                    title="Adicionar um novo administrador da entidade"
+                    className="px-3 py-1.5 rounded bg-slate-50 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-foreground font-mono text-xs font-semibold shadow-xs flex items-center space-x-1.5 cursor-pointer transition"
+                    title="Adicionar um novo administrador da empresa"
                   >
                     <ShieldCheck className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
                     <span>+ Novo Administrador</span>
                   </button>
                 </>
               ) : (
-                <span className="text-[10px] font-mono text-muted-foreground px-2.5 py-1 rounded bg-muted/50 border border-border">
+                <span className="text-[10px] font-mono text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e]">
                   Operador (Apenas Leitura)
                 </span>
               )}
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Controlo de acessos da aplicação: <strong className="text-foreground">Superadministrador</strong> (Nível 3 - Total), <strong className="text-foreground">Administrador</strong> (Nível 2 - Gestão e Retenção) e <strong className="text-foreground">Subutilizador</strong> (Nível 1 - Apenas Importação e Consulta).
+          <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+            Perfis disponíveis na empresa: <strong className="text-foreground">Administrador</strong> (gestão de utilizadores, configurações e retenção) e <strong className="text-foreground">Operador / Subutilizador</strong> (importação e consulta diária).
           </p>
 
-          {/* Tabela de Utilizadores */}
+          {/* Tabela de Utilizadores com Ordenação Universal */}
           <div className="overflow-x-auto rounded border border-slate-300 dark:border-[#222f3e]">
             <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-slate-200/80 dark:bg-[#0c1520] text-muted-foreground border-b border-slate-300 dark:border-[#222f3e]">
+              <thead className="bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-b border-slate-300 dark:border-[#222f3e] select-none">
                 <tr>
-                  <th className="py-2 px-3">Nome / Utilizador</th>
-                  <th className="py-2 px-3">Email</th>
-                  <th className="py-2 px-3">Perfil</th>
-                  <th className="py-2 px-3">Estado</th>
-                  <th className="py-2 px-3">Último Acesso</th>
+                  <th
+                    onClick={() => handleSortUsers('nome')}
+                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
+                  >
+                    Nome / Utilizador {renderSortIndicator('nome')}
+                  </th>
+                  <th
+                    onClick={() => handleSortUsers('email')}
+                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
+                  >
+                    Email {renderSortIndicator('email')}
+                  </th>
+                  <th
+                    onClick={() => handleSortUsers('role')}
+                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
+                  >
+                    Perfil {renderSortIndicator('role')}
+                  </th>
+                  <th
+                    onClick={() => handleSortUsers('ativo')}
+                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
+                  >
+                    Estado {renderSortIndicator('ativo')}
+                  </th>
+                  <th
+                    onClick={() => handleSortUsers('ultimo_login')}
+                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
+                  >
+                    Último Acesso {renderSortIndicator('ultimo_login')}
+                  </th>
                   <th className="py-2 px-3 text-right">Ações</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-[#1b2b3d] bg-white dark:bg-[#0c1520]/80">
-                {utilizadores.map(u => (
-                  <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-[#132233] transition">
-                    <td className="py-2.5 px-3">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-semibold text-foreground">{u.nome}</span>
-                        <span className="text-[10px] text-muted-foreground">@{u.username}</span>
-                        {u.is_system && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-400 border border-purple-500/30">
-                            SISTEMA
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3 text-muted-foreground">
-                      {u.email || '—'}
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                        u.role === 'superadmin'
-                          ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30'
-                          : u.role === 'admin'
-                          ? 'bg-sky-500/15 text-[#0284c7] dark:text-sky-400 border-sky-500/30'
-                          : 'bg-slate-200 dark:bg-slate-800 text-muted-foreground border-border'
-                      }`}>
-                        {u.role.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span className={`text-[10px] font-semibold flex items-center space-x-1 ${
-                        u.ativo ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${u.ativo ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                        <span>{u.ativo ? 'Ativo' : 'Inativo'}</span>
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3 text-[11px] text-muted-foreground">
-                      {u.ultimo_login ? new Date(u.ultimo_login).toLocaleDateString('pt-PT') : 'Nunca'}
-                    </td>
-                    <td className="py-2.5 px-3 text-right">
-                      <div className="flex items-center justify-end space-x-1">
-                        {/* 1. Botão Editar com RBAC estrito */}
-                        {(() => {
-                          const isSuperTarget = u.role === 'superadmin' || u.is_system || u.id === 1;
-                          const isSelf = currentUser && u.id === currentUser.id;
-
-                          // Quem pode editar esta linha?
-                          // - Superadministrador pode editar qualquer conta
-                          // - Administrador pode editar-se a si próprio ou a subutilizadores (NUNCA o superadministrador)
-                          // - Subutilizador só pode editar o seu próprio perfil (NUNCA o superadministrador nem outros utilizadores)
-                          const podeEditar = isSuper || 
-                                             (isAdm && (!isSuperTarget || isSelf)) || 
-                                             (isSub && isSelf) ||
-                                             (!currentUser);
-
-                          if (podeEditar) {
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => abrirEdicaoUser(u)}
-                                className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer transition"
-                                title={isSelf ? "Alterar a minha palavra-passe / perfil" : "Editar Utilizador / Alterar Palavra-passe"}
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                            );
-                          }
-
-                          if (isSuperTarget) {
-                            return (
-                              <span className="text-[9.5px] text-purple-600 dark:text-purple-400 font-mono px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/20" title="Conta de Superadministrador Mestre Protegida">
-                                Protegido
-                              </span>
-                            );
-                          }
-
-                          return (
-                            <span className="text-[9.5px] text-muted-foreground font-mono px-1.5 py-0.5 rounded bg-muted/40" title="Sem permissão para alterar este utilizador">
-                              Bloqueado
-                            </span>
-                          );
-                        })()}
-
-                        {/* 2. Botão Eliminar com proibição absoluta de auto-eliminação */}
-                        {(() => {
-                          const isSuperTarget = u.role === 'superadmin' || u.is_system || u.id === 1;
-                          const isSelf = currentUser && u.id === currentUser.id;
-
-                          // Quem pode eliminar esta linha?
-                          // - Superadmin NUNCA pode ser eliminado
-                          // - Um utilizador NUNCA pode apagar a sua própria conta ativa
-                          // - Um subutilizador NUNCA pode apagar ninguém
-                          // - Um admin só pode apagar subutilizadores (não outros admins)
-                          // - Superadmin pode apagar admins e subutilizadores
-                          const podeEliminar = !isSuperTarget && 
-                                               !isSelf && 
-                                               !isSub && 
-                                               (isSuper || (isAdm && u.role === 'subutilizador'));
-
-                          if (podeEliminar) {
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => handleEliminarUser(u)}
-                                className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer transition"
-                                title="Eliminar Utilizador"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            );
-                          }
-
-                          if (isSelf) {
-                            return (
-                              <span className="text-[9px] text-[#0284c7] dark:text-sky-400 font-mono px-1.5 py-0.5 rounded bg-sky-500/10 border border-sky-500/20" title="Sua sessão ativa atual (auto-eliminação bloqueada)">
-                                Conta Ativa
-                              </span>
-                            );
-                          }
-
-                          return null;
-                        })()}
-                      </div>
+              <tbody className="divide-y divide-slate-200 dark:divide-[#1b2b3d] bg-white dark:bg-[#0c1520]">
+                {utilizadoresOrdenados.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 text-center text-slate-600 dark:text-slate-400">
+                      Nenhum operador adicional registado. Clique em &ldquo;+ Adicionar Operador&rdquo; para criar acessos para a sua equipa.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  utilizadoresOrdenados.map(u => (
+                    <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-[#132233] transition">
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-semibold text-foreground">{u.nome}</span>
+                          <span className="text-[10px] text-slate-600 dark:text-slate-400">@{u.username}</span>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">
+                        {u.email || '—'}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                          u.role === 'admin'
+                            ? 'bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border-sky-300 dark:border-sky-800'
+                            : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#222f3e]'
+                        }`}>
+                          {u.role === 'admin' ? 'ADMINISTRADOR' : 'OPERADOR'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className={`text-[10px] font-semibold flex items-center space-x-1 ${
+                          u.ativo ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${u.ativo ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                          <span>{u.ativo ? 'Ativo' : 'Inativo'}</span>
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-[11px] text-slate-700 dark:text-slate-300">
+                        {u.ultimo_login ? new Date(u.ultimo_login).toLocaleDateString('pt-PT') : 'Nunca'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <div className="flex items-center justify-end space-x-1">
+                          {(() => {
+                            const isSelf = currentUser && u.id === currentUser.id;
+                            const podeEditar = isSuper || isAdm || (isSub && isSelf) || !currentUser;
+
+                            if (podeEditar) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => abrirEdicaoUser(u)}
+                                  className="p-1 rounded text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200 dark:hover:bg-[#1c314a] cursor-pointer transition"
+                                  title={isSelf ? "Alterar a minha palavra-passe / perfil" : "Editar Utilizador / Alterar Palavra-passe"}
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                              );
+                            }
+
+                            return (
+                              <span className="text-[9.5px] text-slate-600 dark:text-slate-400 font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#132233]">
+                                Bloqueado
+                              </span>
+                            );
+                          })()}
+
+                          {(() => {
+                            const isSelf = currentUser && u.id === currentUser.id;
+                            const podeEliminar = !isSelf && !isSub && (isSuper || (isAdm && u.role === 'subutilizador'));
+
+                            if (podeEliminar) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => handleEliminarUser(u)}
+                                  className="p-1 rounded text-slate-700 dark:text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-[#290f14] cursor-pointer transition"
+                                  title="Eliminar Utilizador"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              );
+                            }
+
+                            if (isSelf) {
+                              return (
+                                <span className="text-[9px] text-[#0284c7] dark:text-sky-300 font-mono px-1.5 py-0.5 rounded bg-sky-100 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800" title="Sua sessão ativa atual (auto-eliminação bloqueada)">
+                                  Conta Ativa
+                                </span>
+                              );
+                            }
+
+                            return null;
+                          })()}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -816,18 +978,18 @@ export function ConfigView() {
       {/* Modal de Criação / Edição de Utilizador */}
       {modalUserAberto && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in select-none">
-          <div className="bg-card w-full max-w-md rounded-lg border border-border/80 shadow-2xl p-5 space-y-4 relative text-foreground">
+          <div className="bg-white dark:bg-[#0c1520] w-full max-w-md rounded-lg border border-slate-300 dark:border-[#222f3e] shadow-2xl p-5 space-y-4 relative text-foreground">
             
             <button
               type="button"
               onClick={() => setModalUserAberto(false)}
-              className="absolute right-3.5 top-3.5 text-muted-foreground hover:text-foreground cursor-pointer transition"
+              className="absolute right-3.5 top-3.5 text-slate-600 dark:text-slate-400 hover:text-foreground cursor-pointer transition"
             >
               <X className="w-4 h-4" />
             </button>
 
-            <div className="flex items-center space-x-3 border-b border-border/80 pb-3">
-              <div className="w-9 h-9 rounded-lg bg-[#0284c7]/15 flex items-center justify-center text-[#0284c7] dark:text-sky-400 shrink-0">
+            <div className="flex items-center space-x-3 border-b border-slate-200 dark:border-[#222f3e] pb-3">
+              <div className="w-9 h-9 rounded-lg bg-sky-100 dark:bg-[#0a1929] flex items-center justify-center text-[#0284c7] dark:text-sky-400 shrink-0 border border-sky-300 dark:border-sky-800">
                 {userEmEdicao ? <Edit2 className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
               </div>
               <div>
@@ -835,31 +997,17 @@ export function ConfigView() {
                   {userEmEdicao 
                     ? (isSub && userEmEdicao.id === currentUser?.id ? 'Alterar A Minha Palavra-passe / Perfil' : `Editar: ${userEmEdicao.nome}`)
                     : formRole === 'subutilizador'
-                    ? 'Adicionar Novo Subutilizador (Operador)'
+                    ? 'Adicionar Novo Operador'
                     : 'Adicionar Novo Administrador'}
                 </h3>
-                <p className="text-[11px] font-mono text-muted-foreground">
-                  {userEmEdicao ? 'Atualize os dados ou redefina a palavra-passe' : 'Defina os dados de acesso do novo utilizador'}
+                <p className="text-[11px] font-mono text-slate-700 dark:text-slate-300">
+                  {userEmEdicao ? 'Atualize os dados ou redefina a palavra-passe' : 'Defina os dados de acesso do novo elemento da equipa'}
                 </p>
               </div>
             </div>
 
-            {userEmEdicao?.role === 'superadmin' && (
-              <div className="p-2.5 rounded bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-600 dark:text-purple-400 font-mono flex items-center space-x-2">
-                <ShieldCheck className="w-4 h-4 shrink-0" />
-                <span>Superadministrador de Sistema: O identificador @superadmin e o perfil são permanentes para suporte universal. Pode atualizar o Nome, o Email e a Palavra-passe.</span>
-              </div>
-            )}
-
-            {isSub && userEmEdicao?.id === currentUser?.id && (
-              <div className="p-2.5 rounded bg-sky-500/10 border border-sky-500/20 text-[11px] text-sky-600 dark:text-sky-400 font-mono flex items-center space-x-2">
-                <ShieldCheck className="w-4 h-4 shrink-0" />
-                <span>Perfil de Operador: Pode atualizar o seu Nome de exibição, Email e Palavra-passe. O perfil de acesso e permissões são geridos por um Administrador.</span>
-              </div>
-            )}
-
             {erroFormUser && (
-              <div className="p-2.5 rounded bg-destructive/10 border border-destructive/30 text-destructive text-xs font-mono flex items-center space-x-2">
+              <div className="p-2.5 rounded bg-rose-50 dark:bg-[#290f14] border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-mono flex items-center space-x-2">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
                 <span>{erroFormUser}</span>
               </div>
@@ -867,21 +1015,21 @@ export function ConfigView() {
 
             <form onSubmit={handleGuardarUser} className="space-y-3 font-mono text-xs">
               <div>
-                <label className="block text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
                   Nome Completo
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="Nome do operador"
+                  placeholder="Nome do colaborador"
                   value={formNome}
                   onChange={e => setFormNome(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded bg-muted/50 border border-border/80 text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
                 />
               </div>
 
               <div>
-                <label className="block text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
                   Nome de Utilizador (Login)
                 </label>
                 <input
@@ -891,54 +1039,48 @@ export function ConfigView() {
                   placeholder="utilizador"
                   value={formUsername}
                   onChange={e => setFormUsername(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded bg-muted/50 border border-border/80 text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7] disabled:opacity-50"
+                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7] disabled:opacity-50"
                 />
               </div>
 
               <div>
-                <label className="block text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
                   Email (Opcional)
                 </label>
                 <input
                   type="email"
-                  placeholder="gexcel2013@gmail.com"
+                  placeholder="colaborador@empresa.pt"
                   value={formEmail}
                   onChange={e => setFormEmail(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded bg-muted/50 border border-border/80 text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                  <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
                     Perfil de Acesso
                   </label>
                   <select
                     value={formRole}
                     onChange={e => setFormRole(e.target.value as any)}
-                    disabled={userEmEdicao?.is_system || userEmEdicao?.role === 'superadmin' || isSub}
-                    className="w-full h-8 px-2 rounded bg-muted/50 border border-border/80 text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7] cursor-pointer disabled:opacity-60"
+                    disabled={isSub}
+                    className="w-full h-8 px-2 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7] cursor-pointer disabled:opacity-60"
                   >
-                    {userEmEdicao?.role === 'superadmin' ? (
-                      <option value="superadmin">Superadministrador (Sistema)</option>
-                    ) : (
-                      <>
-                        <option value="subutilizador">Subutilizador (Operador)</option>
-                        {!isSub && <option value="admin">Administrador (Gestor)</option>}
-                      </>
-                    )}
+                    <option value="subutilizador">Operador (Subutilizador)</option>
+                    {!isSub && <option value="admin">Administrador (Gestor)</option>}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                  <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
                     Estado da Conta
                   </label>
                   <select
                     value={formAtivo ? '1' : '0'}
                     onChange={e => setFormAtivo(e.target.value === '1')}
-                    disabled={userEmEdicao?.is_system || userEmEdicao?.role === 'superadmin' || isSub}
-                    className="w-full h-8 px-2 rounded bg-muted/50 border border-border/80 text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7] cursor-pointer disabled:opacity-60"
+                    disabled={isSub}
+                    className="w-full h-8 px-2 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7] cursor-pointer disabled:opacity-60"
                   >
                     <option value="1">Ativo (Permite Login)</option>
                     <option value="0">Inativo (Bloqueado)</option>
@@ -947,7 +1089,7 @@ export function ConfigView() {
               </div>
 
               <div>
-                <label className="block text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
                   {userEmEdicao ? 'Nova Palavra-passe (Opcional)' : 'Palavra-passe'}
                 </label>
                 <input
@@ -955,15 +1097,15 @@ export function ConfigView() {
                   placeholder={userEmEdicao ? 'Deixe em branco para manter a atual' : 'Mínimo 4 caracteres'}
                   value={formPassword}
                   onChange={e => setFormPassword(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded bg-muted/50 border border-border/80 text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
                 />
               </div>
 
-              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-border/80">
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-200 dark:border-[#222f3e]">
                 <button
                   type="button"
                   onClick={() => setModalUserAberto(false)}
-                  className="px-3 py-1.5 rounded border border-border text-foreground hover:bg-muted font-mono text-xs cursor-pointer transition"
+                  className="px-3 py-1.5 rounded border border-slate-300 dark:border-[#222f3e] text-foreground hover:bg-slate-100 dark:hover:bg-[#132233] font-mono text-xs cursor-pointer transition"
                 >
                   Cancelar
                 </button>

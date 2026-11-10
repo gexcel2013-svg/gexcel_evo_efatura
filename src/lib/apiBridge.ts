@@ -1,11 +1,22 @@
 /**
- * Ponte Híbrida Local-First + Cloud Zero-Storage (EVO-06 Importador e-Fatura <-> EVO-05 API + EVO-12 Gestor de Entidades)
+ * Ponte Híbrida Pilar 2: Motor Local do Gabinete (127.0.0.1:8015) + Retaguarda Cloud Hetzner
+ * (EVO-06 Importador e-Fatura <-> EVO-05 API + EVO-12 Gestor de Entidades)
  *
- * Interceta de forma transparente os pedidos a `http://127.0.0.1:8015` e `http://127.0.0.1:8090`:
- * 1. Quando acedido via plataforma Web (`*.evogex.com`), encaminha instantaneamente para a API da plataforma (`/api/...`)
- *    ou utiliza o motor local (`127.0.0.1:8015`) se este estiver ativo na máquina do cliente.
- * 2. Garante interligação contínua com os dados do Gestor de Entidades (EVO-12) tanto na Cloud Hetzner como localmente.
+ * Arquitetura Híbrida Inteligente:
+ * 1. Sonda silenciosamente em background `http://127.0.0.1:8015/` (timeout 800ms, sem bloquear a UI).
+ * 2. Se o Motor Local estiver ativo no PC do cliente, prioriza o Motor Local (0 carga no Hetzner,
+ *    IP residencial do gabinete perante a AT e gravação direta nas pastas locais BdsefaturaV4/V3/BdsRV).
+ * 3. Se o Motor Local não estiver ativo (ou acesso fora do escritório), encaminha em 0ms para o
+ *    Motor Cloud Hetzner (`/api/...`), garantindo disponibilidade 24/7 sem qualquer espera.
  */
+
+export type MotorSourceType = 'local' | 'cloud';
+
+declare global {
+  interface Window {
+    __GEXCEL_MOTOR_SOURCE__?: MotorSourceType;
+  }
+}
 
 const LOCAL_API_PREFIX = /^https?:\/\/(127\.0\.0\.1|localhost):8015(\/.*)?$/i;
 const LOCAL_PB_PREFIX = /^https?:\/\/(127\.0\.0\.1|localhost):(8090|8095)(\/.*)?$/i;
@@ -16,6 +27,63 @@ const isCloudHost =
   window.location.hostname !== '127.0.0.1';
 
 const origFetch = window.fetch.bind(window);
+
+let localMotorOnline = !isCloudHost;
+let currentMotorSource: MotorSourceType = isCloudHost ? 'cloud' : 'local';
+
+function setMotorSource(source: MotorSourceType) {
+  if (typeof window === 'undefined') return;
+  const changed = currentMotorSource !== source || window.__GEXCEL_MOTOR_SOURCE__ !== source;
+  currentMotorSource = source;
+  window.__GEXCEL_MOTOR_SOURCE__ = source;
+  if (changed) {
+    window.dispatchEvent(new CustomEvent<MotorSourceType>('gexcel-motor-source', { detail: source }));
+  }
+}
+
+export function getMotorSource(): MotorSourceType {
+  if (typeof window !== 'undefined' && window.__GEXCEL_MOTOR_SOURCE__) {
+    return window.__GEXCEL_MOTOR_SOURCE__;
+  }
+  return currentMotorSource;
+}
+
+async function probeLocalMotor(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 800);
+  try {
+    const res = await origFetch('http://127.0.0.1:8015/', {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    if (res.ok) {
+      const text = await res.text();
+      if (text.includes('API Importador e-Fatura Gexcel')) {
+        localMotorOnline = true;
+        setMotorSource('local');
+        return true;
+      }
+    }
+  } catch {
+    // Motor local não disponível neste posto
+  } finally {
+    window.clearTimeout(timer);
+  }
+  localMotorOnline = false;
+  if (isCloudHost) {
+    setMotorSource('cloud');
+  }
+  return false;
+}
+
+if (typeof window !== 'undefined') {
+  window.__GEXCEL_MOTOR_SOURCE__ = currentMotorSource;
+  void probeLocalMotor();
+  window.setInterval(() => {
+    void probeLocalMotor();
+  }, 10000);
+}
 
 function toCloudUrl(pathPart: string): string {
   const cleanPath = pathPart || '/';
@@ -115,27 +183,28 @@ if (typeof window !== 'undefined') {
         pathPart.startsWith('/api/sistema/abrir-explorador') ||
         pathPart.startsWith('/api/efatura/login-browser');
 
-      // Na Cloud (*.evogex.com), usar exclusivamente o motor do servidor Hetzner para todas as rotas exceto ações locais do PC
-      if (isCloudHost && !isLocalOnlyAction) {
-        const cloudRes = await origFetch(cloudUrl, init);
-        return isEntidades ? await checkAndEnrichEntidadesResponse(cloudRes) : cloudRes;
-      }
-
-      // Ações locais (abrir explorador / abrir browser visível no PC) ou execução local em localhost
-      if (!isCloudHost || isLocalOnlyAction) {
+      // 1. Se o Motor Local do PC estiver ativo (Pilar 2) ou for ação exclusiva do PC local:
+      if (!isCloudHost || localMotorOnline || isLocalOnlyAction) {
         try {
           const localRes = await origFetch(rawUrl, init);
-          if (localRes.ok) {
+          if (localRes.ok || !isCloudHost) {
+            setMotorSource('local');
             return isEntidades ? await checkAndEnrichEntidadesResponse(localRes) : localRes;
           }
         } catch {
-          // Segue para fallback Cloud
+          localMotorOnline = false;
+          if (isCloudHost) {
+            setMotorSource('cloud');
+          }
         }
       }
 
-      // Fallback para o endpoint Cloud na mesma origem
-      const fallbackRes = await origFetch(cloudUrl, init);
-      return isEntidades ? await checkAndEnrichEntidadesResponse(fallbackRes) : fallbackRes;
+      // 2. Retaguarda Cloud Hetzner em 0ms (sem reutilizar signal abortado se o local falhou)
+      setMotorSource('cloud');
+      const safeInit: RequestInit | undefined =
+        init?.signal && init.signal.aborted ? { ...init, signal: undefined } : init;
+      const cloudRes = await origFetch(cloudUrl, safeInit);
+      return isEntidades ? await checkAndEnrichEntidadesResponse(cloudRes) : cloudRes;
     }
 
     const matchPb = rawUrl.match(LOCAL_PB_PREFIX);
@@ -154,5 +223,3 @@ if (typeof window !== 'undefined') {
     return origFetch(input, init);
   };
 }
-
-export {};
