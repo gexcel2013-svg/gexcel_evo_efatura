@@ -278,9 +278,9 @@ export function ConfigView() {
     }
     const num = centrosDadosLista.length + 1;
     setCentroEmEdicao(null);
-    setFormCentroNome(`Escritório ${num}`);
+    setFormCentroNome(num === 1 ? 'Escritório Principal' : `Escritório ${num}`);
     setFormCentroHost(appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO');
-    setFormCentroPastaEvogex(`C:\\Dados_evoGex_${num}`);
+    setFormCentroPastaEvogex(num === 1 ? 'C:\\Dados_evoGex' : `C:\\Dados_evoGex_${num}`);
     setFormCentroPastaAntiga('');
     setModalCentroAberto(true);
   };
@@ -303,29 +303,41 @@ export function ConfigView() {
     setSalvandoCentro(true);
     setMensagemSucesso(null);
     setMensagemErro(null);
+    const nomeLimpo = formCentroNome.trim() || 'Escritório Principal';
+    const hostLimpo = formCentroHost.trim() || 'SERVIDOR-ESCRITORIO';
+    const pastaEvoLimpa = formCentroPastaEvogex.trim() || 'C:\\Dados_evoGex';
+    const pastaAntLimpa = formCentroPastaAntiga.trim();
     try {
       const res = await fetch('http://127.0.0.1:8015/api/app/centros-dados', {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
           centro_id: centroEmEdicao?.id,
-          nome: formCentroNome.trim() || 'Escritório Principal',
-          hostname: formCentroHost.trim() || 'SERVIDOR-ESCRITORIO',
-          pasta_evogex: formCentroPastaEvogex.trim() || 'C:\\Dados_evoGex',
-          pasta_gexcel_antiga: formCentroPastaAntiga.trim(),
+          nome: nomeLimpo,
+          hostname: hostLimpo,
+          pasta_evogex: pastaEvoLimpa,
+          pasta_gexcel_antiga: pastaAntLimpa,
           tornar_ativo: true,
         }),
       });
       if (res.ok) {
         setModalCentroAberto(false);
         await refreshConfig();
-        setMensagemSucesso(`Centro de Dados '${formCentroNome.trim()}' guardado e ativado com sucesso.`);
+        setMensagemSucesso(`Centro de Dados '${nomeLimpo}' guardado e ativado com sucesso.`);
       } else {
         const err = await res.json();
         setMensagemErro(err.detail || 'Falha ao guardar Centro de Dados.');
       }
-    } catch (e: any) {
-      setMensagemErro(`Erro de comunicação: ${e.message}`);
+    } catch {
+      // Computador novo sem motor local ainda em execução: descarrega automaticamente o instalador configurado!
+      setModalCentroAberto(false);
+      const n = encodeURIComponent(nomeLimpo);
+      const pEvo = encodeURIComponent(pastaEvoLimpa);
+      const pAnt = encodeURIComponent(pastaAntLimpa);
+      window.open(`/api/sistema/instalador-centro-dados?nome=${n}&pasta_evogex=${pEvo}&pasta_gexcel_antiga=${pAnt}`, '_blank');
+      setMensagemSucesso(
+        `Instalador 'Instalar_Centro_Dados_evoGex.bat' transferido! Execute o ficheiro transferido para criar '${pastaEvoLimpa}' e ligar o Motor Local neste computador.`
+      );
     } finally {
       setSalvandoCentro(false);
     }
@@ -708,14 +720,32 @@ export function ConfigView() {
                   Se está num computador novo ou ainda não instalou o Centro de Dados local, clique abaixo para criar/instalar o Centro de Dados e o Motor.
                 </p>
                 {canManage && (
-                  <button
-                    type="button"
-                    onClick={abrirModalNovoCentro}
-                    className="px-3 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[11px] font-semibold flex items-center space-x-1.5 cursor-pointer transition"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Configurar / Instalar Centro de Dados</span>
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.open(
+                          '/api/sistema/instalador-centro-dados?nome=Escrit%C3%B3rio%20Principal&pasta_evogex=C%3A%5CDados_evoGex',
+                          '_blank'
+                        );
+                        setMensagemSucesso(
+                          "Instalador 'Instalar_Centro_Dados_evoGex.bat' transferido! Execute o ficheiro transferido para criar 'C:\\Dados_evoGex' e iniciar o Motor Local."
+                        );
+                      }}
+                      className="px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-semibold flex items-center space-x-1.5 cursor-pointer transition"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Instalar Já (C:\Dados_evoGex + Motor)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={abrirModalNovoCentro}
+                      className="px-3 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[11px] font-semibold flex items-center space-x-1.5 cursor-pointer transition"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Personalizar Pasta / Nome e Instalar</span>
+                    </button>
+                  </div>
                 )}
               </div>
             ) : (

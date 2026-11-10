@@ -12,5 +12,5 @@ export const APP_CHANNEL: "DEV" | "BETA" | "STABLE" = host.startsWith("dev.")
     : "STABLE";
 
 export const APP_VERSION = "v4.2.27";
-export const APP_BUILD = "Build #49";
+export const APP_BUILD = "Build #50";
 export const APP_FULL_VERSION = `${APP_VERSION} · ${APP_BUILD}`;
