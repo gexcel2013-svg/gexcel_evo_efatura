@@ -77,17 +77,29 @@ export function EvoVersionWatchBadge({
         });
         if (res.ok) {
           const data = (await res.json()) as VersionManifestPayload;
-          if (
-            data &&
-            data.build &&
-            (data.build.trim() !== currentBuild.trim() ||
-              (data.version && data.version.trim() !== currentVersion.trim()))
-          ) {
-            setRemoteVersion(data.version || currentVersion);
-            setRemoteBuild(data.build);
-            setUpdateAvailable(true);
-            setBannerDismissed(false);
-            if (manual) setChecking(false);
+          if (data && data.build) {
+            const remoteB = data.build.trim();
+            const currentB = currentBuild.trim();
+            if (remoteB !== currentB) {
+              const appliedKey = `${data.version || currentVersion}|${remoteB}`;
+              const alreadyApplied =
+                typeof sessionStorage !== "undefined" &&
+                sessionStorage.getItem("evogex_applied_build") === appliedKey;
+              if (!alreadyApplied) {
+                setRemoteVersion(data.version || currentVersion);
+                setRemoteBuild(remoteB);
+                setUpdateAvailable(true);
+                setBannerDismissed(false);
+                if (manual) setChecking(false);
+                return;
+              }
+            }
+            setUpdateAvailable(false);
+            if (manual) {
+              setJustCheckedOk(true);
+              window.setTimeout(() => setJustCheckedOk(false), 2500);
+              setChecking(false);
+            }
             return;
           }
         }
@@ -154,6 +166,14 @@ export function EvoVersionWatchBadge({
   }, [checkRemoteVersion]);
 
   const handleApplyUpdate = () => {
+    try {
+      sessionStorage.setItem(
+        "evogex_applied_build",
+        `${remoteVersion}|${remoteBuild.trim()}`
+      );
+    } catch {
+      // ignore
+    }
     const url = new URL(window.location.href);
     url.searchParams.delete("simular_update");
     url.searchParams.set("_v", String(Date.now()));

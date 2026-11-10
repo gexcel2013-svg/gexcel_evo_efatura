@@ -128,7 +128,12 @@ def main():
     if 'NEW' in out:
         run_ssh(ssh, f"git clone {repo} {target_dir}")
     else:
-        run_ssh(ssh, f"cd {target_dir} && git fetch origin && git reset --hard origin/main")
+        run_ssh(ssh, f"cd {target_dir} && (git fetch origin || git fetch origin) && git reset --hard origin/main")
+
+    dist_local = os.path.join(base_dir, 'dist')
+    if os.path.exists(dist_local):
+        print("A sincronizar dist/ diretamente para /opt/gexcel/evo06/dev/dist...")
+        upload_dir_filtered(sftp, dist_local, f"{target_dir}/dist")
 
     # 2. Deploy do Motor Backend EVO-05 (:8015) + Scrapers SCR-01..03
     print("A sincronizar motor EVO-05_API_Efatura para /opt/gexcel/evo05...")

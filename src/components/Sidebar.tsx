@@ -24,7 +24,7 @@ import {
 import { useAuth } from '../lib/auth';
 import { getMotorSource, type MotorSourceType } from '../lib/apiBridge';
 import { EvoVersionWatchBadge } from './EvoVersionWatchBadge';
-import { APP_BUILD, APP_CHANNEL } from '../lib/version';
+import { APP_BUILD, APP_CHANNEL, APP_VERSION } from '../lib/version';
 
 interface SidebarProps {
   activeTab: string;
@@ -386,14 +386,14 @@ export function Sidebar({
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-end'} pt-0.5`}>
           {collapsed ? (
             <span
-              title={`Versão Oficial v${versaoExibida} · ${APP_BUILD}`}
+              title={`Versão Oficial ${APP_VERSION} · ${APP_BUILD}`}
               className="text-[9.5px] font-mono text-slate-600 dark:text-slate-400 tracking-wider"
             >
-              {`v${versaoExibida}`}
+              {APP_VERSION}
             </span>
           ) : (
             <EvoVersionWatchBadge
-              currentVersion={`v${versaoExibida}`}
+              currentVersion={APP_VERSION}
               currentBuild={APP_BUILD}
               channel={APP_CHANNEL}
               compact
