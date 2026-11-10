@@ -108,23 +108,35 @@ export function ConfigView() {
   const [salvandoUser, setSalvandoUser] = useState<boolean>(false);
   const [erroFormUser, setErroFormUser] = useState<string | null>(null);
 
+  const pastaRaizRealMotor = useMemo(() => {
+    const pV4 = pastasLocais.pasta_v4 || appConfig?.pasta_v4 || '';
+    if (pV4) return pV4.replace(/[\\/]BdsefaturaV4[\\/]?$/i, '');
+    const pV3 = pastasLocais.pasta_v3 || appConfig?.pasta_v3 || '';
+    if (pV3) return pV3.replace(/[\\/]BdsefaturaV3[\\/]?$/i, '');
+    return '';
+  }, [pastasLocais.pasta_v4, pastasLocais.pasta_v3, appConfig?.pasta_v4, appConfig?.pasta_v3]);
+
   const centrosDadosLista = useMemo<CentroDadosItem[]>(() => {
     if (appConfig?.centros_dados && appConfig.centros_dados.length > 0) {
       return appConfig.centros_dados;
     }
-    return [
-      {
-        id: appConfig?.centro_dados_ativo_id || 'escritorio-principal',
-        nome: appConfig?.centro_dados_nome || 'Escritório Principal',
-        hostname: appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO',
-        pasta_evogex: appConfig?.centro_dados_pasta_evogex || 'C:\\Dados_evoGex',
-        pasta_motor: appConfig?.centro_dados_pasta_motor || 'C:\\Dados_evoGex\\motor',
-        pasta_gexcel_antiga: appConfig?.centro_dados_pasta_gexcel_antiga || '',
-        ativo: true,
-        selecionado: true,
-      },
-    ];
-  }, [appConfig]);
+    if (pastaRaizRealMotor) {
+      const isEvogexFolder = /dados_evogex/i.test(pastaRaizRealMotor);
+      return [
+        {
+          id: appConfig?.centro_dados_ativo_id || 'instalacao-local-atual',
+          nome: appConfig?.centro_dados_nome || 'Escritório Principal (Motor Local)',
+          hostname: appConfig?.centro_dados_hostname || 'COMPUTADOR-LOCAL',
+          pasta_evogex: isEvogexFolder ? pastaRaizRealMotor : (appConfig?.centro_dados_pasta_evogex || ''),
+          pasta_motor: isEvogexFolder ? `${pastaRaizRealMotor}\\motor` : (appConfig?.centro_dados_pasta_motor || ''),
+          pasta_gexcel_antiga: isEvogexFolder ? (appConfig?.centro_dados_pasta_gexcel_antiga || '') : pastaRaizRealMotor,
+          ativo: true,
+          selecionado: true,
+        },
+      ];
+    }
+    return [];
+  }, [appConfig, pastaRaizRealMotor]);
 
   useEffect(() => {
     setPastasLocais(prev => ({
@@ -570,13 +582,13 @@ export function ConfigView() {
       id: 'evogex_raiz',
       titulo: 'Pasta Unificada do Centro de Dados (Dados evoGex)',
       subtitulo: 'Diretório central onde residem o Motor, SafeDrive, PocketBase e Bases SQLite',
-      caminho: pastasLocais.pasta_evogex || 'C:\\Dados_evoGex',
+      caminho: pastasLocais.pasta_evogex || (/dados_evogex/i.test(pastaRaizRealMotor) ? pastaRaizRealMotor : ''),
     },
     {
       id: 'evogex_motor',
       titulo: 'Motor Local & Ponte do Centro de Dados (Dados_evoGex\\motor)',
       subtitulo: 'Motor instalado junto ao Centro de Dados (usado localmente e pelos portáteis em casa)',
-      caminho: pastasLocais.pasta_motor || (pastasLocais.pasta_evogex ? `${pastasLocais.pasta_evogex}\\motor` : 'C:\\Dados_evoGex\\motor'),
+      caminho: pastasLocais.pasta_motor || (pastasLocais.pasta_evogex ? `${pastasLocais.pasta_evogex}\\motor` : ''),
     },
     {
       id: 'v4',
@@ -686,106 +698,136 @@ export function ConfigView() {
           </p>
 
           <div className="space-y-2 max-h-64 overflow-y-auto pr-0.5">
-            {centrosDadosLista.map(centro => (
-              <div
-                key={centro.id}
-                className={`p-3 rounded-md border space-y-2 font-mono text-xs transition ${
-                  centro.selecionado
-                    ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7]'
-                    : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e]'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center space-x-2 min-w-0">
-                    <Building2 className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0" />
-                    <span className="font-bold text-foreground truncate">{centro.nome}</span>
-                    <span className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
-                      ({centro.hostname})
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-1.5 shrink-0">
-                    {centro.selecionado ? (
-                      <span className="text-[9.5px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center space-x-1">
-                        <Check className="w-3 h-3" />
-                        <span>EM USO</span>
+            {centrosDadosLista.length === 0 ? (
+              <div className="p-3 rounded-md border border-amber-400 dark:border-amber-800 bg-amber-50 dark:bg-[#241a08] space-y-2 font-mono text-xs text-amber-900 dark:text-amber-200">
+                <div className="flex items-center space-x-2 font-bold">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>Nenhum Centro de Dados / Motor Local detetado neste computador</span>
+                </div>
+                <p className="text-[11px] leading-relaxed">
+                  Se está num computador novo ou ainda não instalou o Centro de Dados local, clique abaixo para criar/instalar o Centro de Dados e o Motor.
+                </p>
+                {canManage && (
+                  <button
+                    type="button"
+                    onClick={abrirModalNovoCentro}
+                    className="px-3 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[11px] font-semibold flex items-center space-x-1.5 cursor-pointer transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Configurar / Instalar Centro de Dados</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              centrosDadosLista.map(centro => (
+                <div
+                  key={centro.id}
+                  className={`p-3 rounded-md border space-y-2 font-mono text-xs transition ${
+                    centro.selecionado
+                      ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7]'
+                      : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center space-x-2 min-w-0">
+                      <Building2 className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                      <span className="font-bold text-foreground truncate">{centro.nome}</span>
+                      <span className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
+                        ({centro.hostname})
                       </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleSelecionarCentro(centro)}
-                        className="px-2 py-0.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[10px] font-semibold cursor-pointer transition"
-                      >
-                        Ativar
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleDescarregarInstalador(centro)}
-                      className="px-2 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] hover:bg-emerald-100 dark:hover:bg-[#0e2d27] border border-emerald-400 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold flex items-center space-x-1 cursor-pointer transition"
-                      title="Descarregar instalador de 1 clique (cria Dados evoGex + instala Motor, SafeDrive, PocketBase e SQLite)"
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>Instalador</span>
-                    </button>
-                    {canManage && (
-                      <>
+                    </div>
+                    <div className="flex items-center space-x-1.5 shrink-0">
+                      {centro.selecionado ? (
+                        <span className="text-[9.5px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center space-x-1">
+                          <Check className="w-3 h-3" />
+                          <span>EM USO</span>
+                        </span>
+                      ) : (
                         <button
                           type="button"
-                          onClick={() => abrirModalEditarCentro(centro)}
-                          className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
-                          title="Editar nome e pastas deste Centro de Dados"
+                          onClick={() => handleSelecionarCentro(centro)}
+                          className="px-2 py-0.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[10px] font-semibold cursor-pointer transition"
                         >
-                          <Edit2 className="w-3 h-3" />
+                          Ativar
                         </button>
-                        {centrosDadosLista.length > 1 && (
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDescarregarInstalador(centro)}
+                        className="px-2 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] hover:bg-emerald-100 dark:hover:bg-[#0e2d27] border border-emerald-400 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold flex items-center space-x-1 cursor-pointer transition"
+                        title="Descarregar instalador de 1 clique (cria Dados evoGex + instala Motor, SafeDrive, PocketBase e SQLite)"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Instalador</span>
+                      </button>
+                      {canManage && (
+                        <>
                           <button
                             type="button"
-                            onClick={() => handleEliminarCentro(centro)}
-                            className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-rose-50 dark:hover:bg-[#290f14] border border-slate-300 dark:border-[#222f3e] text-rose-600 dark:text-rose-400 cursor-pointer"
-                            title="Remover Centro de Dados"
+                            onClick={() => abrirModalEditarCentro(centro)}
+                            className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
+                            title="Editar nome e pastas deste Centro de Dados"
                           >
-                            <Trash2 className="w-3 h-3" />
+                            <Edit2 className="w-3 h-3" />
                           </button>
-                        )}
-                      </>
+                          {centrosDadosLista.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleEliminarCentro(centro)}
+                              className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-rose-50 dark:hover:bg-[#290f14] border border-slate-300 dark:border-[#222f3e] text-rose-600 dark:text-rose-400 cursor-pointer"
+                              title="Remover Centro de Dados"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1 text-[10.5px]">
+                    {centro.pasta_evogex ? (
+                      <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
+                        <span className="break-all text-slate-800 dark:text-slate-200">
+                          <strong>Dados evoGex (Novo + Motor):</strong> {centro.pasta_evogex}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleAbrirNoWindows(centro.pasta_evogex)}
+                          className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
+                          title="Abrir no Explorador do Windows"
+                        >
+                          <FolderOpen className="w-3 h-3" />
+                          <span>Abrir</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2 bg-amber-50 dark:bg-[#241a08] px-2 py-1 rounded border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200">
+                        <span>
+                          <strong>Dados evoGex (Novo):</strong> Ainda não instalado — a ler diretamente da pasta ativa abaixo
+                        </span>
+                      </div>
+                    )}
+                    {centro.pasta_gexcel_antiga && (
+                      <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
+                        <span className="break-all text-slate-700 dark:text-slate-300">
+                          <strong>Pasta Ativa / Dados GexcelApps:</strong> {centro.pasta_gexcel_antiga}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleAbrirNoWindows(centro.pasta_gexcel_antiga)}
+                          className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
+                          title="Abrir no Explorador do Windows"
+                        >
+                          <FolderOpen className="w-3 h-3" />
+                          <span>Abrir</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
-
-                <div className="space-y-1 text-[10.5px]">
-                  <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
-                    <span className="break-all text-slate-800 dark:text-slate-200">
-                      <strong>Dados evoGex (Novo + Motor):</strong> {centro.pasta_evogex || 'C:\\Dados_evoGex'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleAbrirNoWindows(centro.pasta_evogex)}
-                      className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
-                      title="Abrir no Explorador do Windows"
-                    >
-                      <FolderOpen className="w-3 h-3" />
-                      <span>Abrir</span>
-                    </button>
-                  </div>
-                  {centro.pasta_gexcel_antiga && (
-                    <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
-                      <span className="break-all text-slate-700 dark:text-slate-300">
-                        <strong>Dados GexcelApps (Excel Antigo):</strong> {centro.pasta_gexcel_antiga}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleAbrirNoWindows(centro.pasta_gexcel_antiga)}
-                        className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
-                        title="Abrir no Explorador do Windows"
-                      >
-                        <FolderOpen className="w-3 h-3" />
-                        <span>Abrir</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
 
           <div className="space-y-2.5 pt-0.5">

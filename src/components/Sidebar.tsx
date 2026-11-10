@@ -22,6 +22,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import type { CentroDadosItem } from '../types/auth';
 import { getMotorSource, type MotorSourceType } from '../lib/apiBridge';
 import { EvoVersionWatchBadge } from './EvoVersionWatchBadge';
 import { APP_BUILD, APP_CHANNEL, APP_VERSION } from '../lib/version';
@@ -41,6 +42,9 @@ interface SidebarProps {
   onResetZoom: () => void;
   modoPrivacidade?: boolean;
   onToggleModoPrivacidade?: () => void;
+  centrosDisponiveis?: CentroDadosItem[];
+  centroAtivoId?: string;
+  onSelecionarCentro?: (centroId: string) => void;
 }
 
 export function Sidebar({
@@ -58,6 +62,9 @@ export function Sidebar({
   onResetZoom,
   modoPrivacidade = false,
   onToggleModoPrivacidade,
+  centrosDisponiveis = [],
+  centroAtivoId,
+  onSelecionarCentro,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem('gexcel_sidebar_collapsed') === 'true';
@@ -177,6 +184,24 @@ export function Sidebar({
             {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
         </div>
+
+        {/* Seletor Compacto de Escritório / Centro de Dados (só visível quando existem 2 ou mais Centros configurados) */}
+        {!collapsed && centrosDisponiveis.length > 1 && onSelecionarCentro && (
+          <div className="mt-2.5">
+            <select
+              value={centroAtivoId || centrosDisponiveis[0]?.id || ''}
+              onChange={e => onSelecionarCentro(e.target.value)}
+              className="w-full px-2.5 py-1.5 rounded-md bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] text-xs font-mono font-semibold text-foreground cursor-pointer focus:outline-none"
+              title="Alternar entre os Centros de Dados configurados"
+            >
+              {centrosDisponiveis.map(c => (
+                <option key={c.id} value={c.id}>
+                  Centro: {c.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Resumo da Seleção de Empresas (100% Opaco) */}
         {!collapsed && (
