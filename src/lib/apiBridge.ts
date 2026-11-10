@@ -15,48 +15,7 @@ const isCloudHost =
   window.location.hostname !== 'localhost' &&
   window.location.hostname !== '127.0.0.1';
 
-let localMotorOnline = !isCloudHost;
-let lastLocalProbeTs = 0;
-let probeInFlight: Promise<boolean> | null = null;
-
 const origFetch = window.fetch.bind(window);
-
-async function probeLocalMotor(): Promise<boolean> {
-  const now = Date.now();
-  if (now - lastLocalProbeTs < 12000) {
-    return localMotorOnline;
-  }
-  if (probeInFlight) {
-    return probeInFlight;
-  }
-  probeInFlight = (async () => {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 900);
-      const res = await origFetch('http://127.0.0.1:8015/', {
-        method: 'GET',
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const text = await res.text();
-        if (text.includes('API Importador e-Fatura Gexcel')) {
-          localMotorOnline = true;
-          lastLocalProbeTs = Date.now();
-          return true;
-        }
-      }
-    } catch {
-      // Motor local não está em execução neste posto; usar API da plataforma Cloud
-    }
-    localMotorOnline = false;
-    lastLocalProbeTs = Date.now();
-    return false;
-  })().finally(() => {
-    probeInFlight = null;
-  });
-  return probeInFlight;
-}
 
 function toCloudUrl(pathPart: string): string {
   const cleanPath = pathPart || '/';
@@ -139,9 +98,6 @@ async function checkAndEnrichEntidadesResponse(res: Response): Promise<Response>
 }
 
 if (typeof window !== 'undefined') {
-  // Iniciar sonda silenciosa em background
-  void probeLocalMotor();
-
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const rawUrl =
       typeof input === 'string'
@@ -159,33 +115,21 @@ if (typeof window !== 'undefined') {
         pathPart.startsWith('/api/sistema/abrir-explorador') ||
         pathPart.startsWith('/api/efatura/login-browser');
 
-      // Na Cloud (*.evogex.com), usar diretamente a API da plataforma salvo se o motor local estiver ativo e for ação local
+      // Na Cloud (*.evogex.com), usar exclusivamente o motor do servidor Hetzner para todas as rotas exceto ações locais do PC
       if (isCloudHost && !isLocalOnlyAction) {
-        try {
-          const cloudRes = await origFetch(cloudUrl, init);
-          if (cloudRes.ok) {
-            return isEntidades ? await checkAndEnrichEntidadesResponse(cloudRes) : cloudRes;
-          }
-        } catch {
-          // Fallback para tentativa local abaixo
-        }
+        const cloudRes = await origFetch(cloudUrl, init);
+        return isEntidades ? await checkAndEnrichEntidadesResponse(cloudRes) : cloudRes;
       }
 
-      // Tentativa no motor local (127.0.0.1:8015) com fallback automático para a Cloud
-      if (localMotorOnline || !isCloudHost || isLocalOnlyAction) {
+      // Ações locais (abrir explorador / abrir browser visível no PC) ou execução local em localhost
+      if (!isCloudHost || isLocalOnlyAction) {
         try {
           const localRes = await origFetch(rawUrl, init);
-          if (localRes.ok || isLocalOnlyAction) {
-            localMotorOnline = true;
-            lastLocalProbeTs = Date.now();
+          if (localRes.ok) {
             return isEntidades ? await checkAndEnrichEntidadesResponse(localRes) : localRes;
           }
         } catch {
-          localMotorOnline = false;
-          lastLocalProbeTs = Date.now();
-          if (isCloudHost) {
-            void probeLocalMotor();
-          }
+          // Segue para fallback Cloud
         }
       }
 

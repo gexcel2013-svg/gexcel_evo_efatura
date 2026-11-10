@@ -669,20 +669,28 @@ export default function CommandCenter({
 
   // Healthcheck contínuo da API com validação de assinatura oficial e captura de versão
   useEffect(() => {
+    let falhasConsecutivas = 0;
     const checkApi = async () => {
       try {
-        const res = await fetch("http://127.0.0.1:8015/", { signal: AbortSignal.timeout(2000) });
+        const res = await fetch("http://127.0.0.1:8015/", { signal: AbortSignal.timeout(5000) });
         if (res.ok) {
           const data = await res.json();
           if (data.assinatura && data.assinatura.includes("API Importador e-Fatura Gexcel")) {
+            falhasConsecutivas = 0;
             setApiOnline(true);
             if (data.versao) setVersaoMotor(data.versao);
             return;
           }
         }
-        setApiOnline(false);
+        falhasConsecutivas += 1;
+        if (falhasConsecutivas >= 2) {
+          setApiOnline(false);
+        }
       } catch {
-        setApiOnline(false);
+        falhasConsecutivas += 1;
+        if (falhasConsecutivas >= 2) {
+          setApiOnline(false);
+        }
       }
     };
     checkApi();
@@ -763,10 +771,10 @@ export default function CommandCenter({
 
       // 3. Polling ativo até 12 segundos com verificação da assinatura oficial Gexcel
       let motorOnline = false;
-      for (let i = 0; i < 24; i++) {
-        await new Promise(r => setTimeout(r, 500));
+      for (let i = 0; i < 12; i++) {
+        await new Promise(r => setTimeout(r, 400));
         try {
-          const res = await fetch("http://127.0.0.1:8015/", { signal: AbortSignal.timeout(1000) });
+          const res = await fetch("http://127.0.0.1:8015/", { signal: AbortSignal.timeout(3000) });
           if (res.ok) {
             const data = await res.json();
             if (data.assinatura && data.assinatura.includes("API Importador e-Fatura Gexcel")) {

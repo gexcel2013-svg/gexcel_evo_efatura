@@ -179,6 +179,7 @@ Type=simple
 WorkingDirectory=/opt/gexcel/evo05
 Environment="PYTHONUNBUFFERED=1"
 Environment="PORT=8015"
+LimitNOFILE=65536
 ExecStart=/opt/gexcel/evo07/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8015
 Restart=always
 RestartSec=3
