@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { getMotorSource, type MotorSourceType } from '../lib/apiBridge';
+import { EvoVersionWatchBadge } from './EvoVersionWatchBadge';
+import { APP_BUILD, APP_CHANNEL } from '../lib/version';
 
 interface SidebarProps {
   activeTab: string;
@@ -380,14 +382,23 @@ export function Sidebar({
           </button>
         </div>
 
-        {/* Selo Oficial de Versão e Build no Rodapé */}
+        {/* Selo Oficial de Versão e Build no Rodapé c/ Deteção Automática */}
         <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-end'} pt-0.5`}>
-          <span 
-            title={`Versão Oficial v${versaoExibida} · Build #43`}
-            className="text-[9.5px] font-mono text-slate-600 dark:text-slate-400 tracking-wider"
-          >
-            {collapsed ? `v${versaoExibida}` : `v${versaoExibida} · Build #43`}
-          </span>
+          {collapsed ? (
+            <span
+              title={`Versão Oficial v${versaoExibida} · ${APP_BUILD}`}
+              className="text-[9.5px] font-mono text-slate-600 dark:text-slate-400 tracking-wider"
+            >
+              {`v${versaoExibida}`}
+            </span>
+          ) : (
+            <EvoVersionWatchBadge
+              currentVersion={`v${versaoExibida}`}
+              currentBuild={APP_BUILD}
+              channel={APP_CHANNEL}
+              compact
+            />
+          )}
         </div>
       </div>
     </aside>

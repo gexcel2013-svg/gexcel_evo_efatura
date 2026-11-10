@@ -95,6 +95,51 @@ function gexcelMotorPlugin(): Plugin {
   };
 }
 
+function evogexVersionManifestPlugin(): Plugin {
+  const syncManifest = () => {
+    try {
+      const versionTsPath = path.resolve(process.cwd(), './src/lib/version.ts');
+      if (!fs.existsSync(versionTsPath)) return;
+      const src = fs.readFileSync(versionTsPath, 'utf-8');
+      const versionMatch = src.match(/APP_VERSION\s*=\s*"([^"]+)"/);
+      const buildMatch = src.match(/APP_BUILD\s*=\s*"([^"]+)"/);
+      const codeMatch = src.match(/APP_CODE\s*=\s*"([^"]+)"/);
+      const payload = {
+        appCode: codeMatch?.[1] || 'EVO_06_EFATURA',
+        version: versionMatch?.[1] || 'v4.5.0',
+        build: buildMatch?.[1] || 'Build #44',
+        releasedAt: new Date().toISOString(),
+      };
+      const pubDir = path.resolve(process.cwd(), './public');
+      if (!fs.existsSync(pubDir)) fs.mkdirSync(pubDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(pubDir, 'version.json'),
+        JSON.stringify(payload, null, 2),
+        'utf-8'
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  return {
+    name: 'evogex-version-manifest',
+    buildStart() {
+      syncManifest();
+    },
+    configureServer(server) {
+      syncManifest();
+      server.middlewares.use('/version.json', (_req, res) => {
+        syncManifest();
+        const p = path.resolve(process.cwd(), './public/version.json');
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '{}');
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), gexcelMotorPlugin()],
+  plugins: [react(), gexcelMotorPlugin(), evogexVersionManifestPlugin()],
 });
