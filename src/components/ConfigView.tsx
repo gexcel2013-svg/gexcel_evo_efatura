@@ -14,15 +14,18 @@ import {
   User, 
   RefreshCw,
   LogOut,
-  Radio,
   FolderOpen,
   Copy,
-  HardDrive
+  HardDrive,
+  Plus,
+  Download,
+  Building2,
+  Check
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import type { AppUser } from '../types/auth';
+import type { AppUser, CentroDadosItem } from '../types/auth';
 
-type UserSortColumn = 'nome' | 'email' | 'role' | 'ativo' | 'ultimo_login';
+type UserSortColumn = 'nome' | 'email' | 'role' | 'centros' | 'ativo' | 'ultimo_login';
 
 export function ConfigView() {
   const { 
@@ -39,7 +42,7 @@ export function ConfigView() {
   const isSub = currentUser?.role === 'subutilizador';
   const isAdm = currentUser?.role === 'admin';
   const isSuper = currentUser?.role === 'superadmin';
-  const canManage = isAdm || isSuper;
+  const canManage = isAdm || isSuper || !currentUser;
 
   const getHeaders = useCallback((): HeadersInit => {
     const h: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -50,9 +53,6 @@ export function ConfigView() {
     return h;
   }, [token]);
 
-  const [centroHostnameInput, setCentroHostnameInput] = useState<string>(
-    appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO'
-  );
   const [alimentarXmlLegado, setAlimentarXmlLegado] = useState<boolean>(() => {
     const saved = localStorage.getItem('gexcel_alimentar_xml_legado');
     return saved !== null ? saved === 'true' : true;
@@ -61,14 +61,26 @@ export function ConfigView() {
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
 
+  // Modal de criação / edição de Centro de Dados Nomeado
+  const [modalCentroAberto, setModalCentroAberto] = useState<boolean>(false);
+  const [centroEmEdicao, setCentroEmEdicao] = useState<CentroDadosItem | null>(null);
+  const [formCentroNome, setFormCentroNome] = useState<string>('');
+  const [formCentroHost, setFormCentroHost] = useState<string>('');
+  const [formCentroPastaEvogex, setFormCentroPastaEvogex] = useState<string>('');
+  const [formCentroPastaAntiga, setFormCentroPastaAntiga] = useState<string>('');
+
   // Pastas locais resolvidas pela API
   const [pastasLocais, setPastasLocais] = useState<{
+    pasta_evogex: string;
+    pasta_motor: string;
     pasta_v4: string;
     pasta_v3: string;
     pasta_bdsrv: string;
     pasta_pdfs: string;
     db_path: string;
   }>({
+    pasta_evogex: appConfig?.centro_dados_pasta_evogex || '',
+    pasta_motor: appConfig?.centro_dados_pasta_motor || '',
     pasta_v4: appConfig?.pasta_v4 || '',
     pasta_v3: appConfig?.pasta_v3 || '',
     pasta_bdsrv: appConfig?.pasta_bdsrv || '',
@@ -91,14 +103,33 @@ export function ConfigView() {
   const [formRole, setFormRole] = useState<'admin' | 'subutilizador' | 'superadmin'>('subutilizador');
   const [formPassword, setFormPassword] = useState<string>('');
   const [formAtivo, setFormAtivo] = useState<boolean>(true);
+  const [formTodosCentros, setFormTodosCentros] = useState<boolean>(true);
+  const [formCentrosSelecionados, setFormCentrosSelecionados] = useState<string[]>([]);
   const [salvandoUser, setSalvandoUser] = useState<boolean>(false);
   const [erroFormUser, setErroFormUser] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (appConfig?.centro_dados_hostname) {
-      setCentroHostnameInput(appConfig.centro_dados_hostname);
+  const centrosDadosLista = useMemo<CentroDadosItem[]>(() => {
+    if (appConfig?.centros_dados && appConfig.centros_dados.length > 0) {
+      return appConfig.centros_dados;
     }
+    return [
+      {
+        id: appConfig?.centro_dados_ativo_id || 'escritorio-principal',
+        nome: appConfig?.centro_dados_nome || 'Escritório Principal',
+        hostname: appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO',
+        pasta_evogex: appConfig?.centro_dados_pasta_evogex || 'C:\\Dados_evoGex',
+        pasta_motor: appConfig?.centro_dados_pasta_motor || 'C:\\Dados_evoGex\\motor',
+        pasta_gexcel_antiga: appConfig?.centro_dados_pasta_gexcel_antiga || '',
+        ativo: true,
+        selecionado: true,
+      },
+    ];
+  }, [appConfig]);
+
+  useEffect(() => {
     setPastasLocais(prev => ({
+      pasta_evogex: appConfig?.centro_dados_pasta_evogex || prev.pasta_evogex,
+      pasta_motor: appConfig?.centro_dados_pasta_motor || prev.pasta_motor,
       pasta_v4: appConfig?.pasta_v4 || prev.pasta_v4,
       pasta_v3: appConfig?.pasta_v3 || prev.pasta_v3,
       pasta_bdsrv: appConfig?.pasta_bdsrv || prev.pasta_bdsrv,
@@ -147,6 +178,17 @@ export function ConfigView() {
     }
   };
 
+  const formatarCentrosUser = useCallback((u: AppUser): string => {
+    if (u.role === 'admin' || u.role === 'superadmin') return 'Todos os Centros';
+    const perms = u.centros_permitidos || ['*'];
+    if (perms.includes('*')) return 'Todos os Centros';
+    const nomes = perms.map(cid => {
+      const found = centrosDadosLista.find(c => c.id === cid);
+      return found ? found.nome : cid;
+    });
+    return nomes.join(', ') || 'Todos os Centros';
+  }, [centrosDadosLista]);
+
   const utilizadoresOrdenados = useMemo(() => {
     const arr = [...utilizadores];
     arr.sort((a, b) => {
@@ -157,6 +199,8 @@ export function ConfigView() {
         cmp = (a.email || '').localeCompare(b.email || '', 'pt');
       } else if (sortCol === 'role') {
         cmp = a.role.localeCompare(b.role, 'pt');
+      } else if (sortCol === 'centros') {
+        cmp = formatarCentrosUser(a).localeCompare(formatarCentrosUser(b), 'pt');
       } else if (sortCol === 'ativo') {
         cmp = (a.ativo === b.ativo) ? 0 : a.ativo ? -1 : 1;
       } else if (sortCol === 'ultimo_login') {
@@ -167,7 +211,7 @@ export function ConfigView() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return arr;
-  }, [utilizadores, sortCol, sortDir]);
+  }, [utilizadores, sortCol, sortDir, formatarCentrosUser]);
 
   const handleCopiarCaminho = async (caminho: string, label: string) => {
     if (!caminho) return;
@@ -215,35 +259,108 @@ export function ConfigView() {
     } catch {}
   };
 
-  const handleGuardarCentroDados = async () => {
+  const abrirModalNovoCentro = () => {
     if (!canManage) {
-      setMensagemErro('Permissão negada. É obrigatório iniciar sessão como Administrador para alterar o Centro de Dados do escritório.');
+      setMensagemErro('Permissão negada. É obrigatório ser Administrador para adicionar Centros de Dados.');
       return;
     }
-    const nomeLimpo = centroHostnameInput.trim() || 'SERVIDOR-ESCRITORIO';
+    const num = centrosDadosLista.length + 1;
+    setCentroEmEdicao(null);
+    setFormCentroNome(`Escritório ${num}`);
+    setFormCentroHost(appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO');
+    setFormCentroPastaEvogex(`C:\\Dados_evoGex_${num}`);
+    setFormCentroPastaAntiga('');
+    setModalCentroAberto(true);
+  };
+
+  const abrirModalEditarCentro = (centro: CentroDadosItem) => {
+    if (!canManage) {
+      setMensagemErro('Permissão negada. É obrigatório ser Administrador para editar Centros de Dados.');
+      return;
+    }
+    setCentroEmEdicao(centro);
+    setFormCentroNome(centro.nome);
+    setFormCentroHost(centro.hostname || 'SERVIDOR-ESCRITORIO');
+    setFormCentroPastaEvogex(centro.pasta_evogex || 'C:\\Dados_evoGex');
+    setFormCentroPastaAntiga(centro.pasta_gexcel_antiga || '');
+    setModalCentroAberto(true);
+  };
+
+  const handleGuardarCentroModal = async (e: React.FormEvent) => {
+    e.preventDefault();
     setSalvandoCentro(true);
     setMensagemSucesso(null);
     setMensagemErro(null);
-
     try {
-      const res = await fetch('http://127.0.0.1:8015/api/app/config/centro-dados', {
+      const res = await fetch('http://127.0.0.1:8015/api/app/centros-dados', {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ hostname: nomeLimpo })
+        body: JSON.stringify({
+          centro_id: centroEmEdicao?.id,
+          nome: formCentroNome.trim() || 'Escritório Principal',
+          hostname: formCentroHost.trim() || 'SERVIDOR-ESCRITORIO',
+          pasta_evogex: formCentroPastaEvogex.trim() || 'C:\\Dados_evoGex',
+          pasta_gexcel_antiga: formCentroPastaAntiga.trim(),
+          tornar_ativo: true,
+        }),
       });
-
       if (res.ok) {
+        setModalCentroAberto(false);
         await refreshConfig();
-        setMensagemSucesso(`Centro de Dados Único do escritório registado em: ${nomeLimpo}`);
+        setMensagemSucesso(`Centro de Dados '${formCentroNome.trim()}' guardado e ativado com sucesso.`);
       } else {
         const err = await res.json();
-        setMensagemErro(`Falha ao registar Centro de Dados: ${err.detail || 'Erro na API'}`);
+        setMensagemErro(err.detail || 'Falha ao guardar Centro de Dados.');
       }
     } catch (e: any) {
-      setMensagemErro(`Erro de ligação: ${e.message}`);
+      setMensagemErro(`Erro de comunicação: ${e.message}`);
     } finally {
       setSalvandoCentro(false);
     }
+  };
+
+  const handleSelecionarCentro = async (centro: CentroDadosItem) => {
+    try {
+      const res = await fetch('http://127.0.0.1:8015/api/app/centros-dados/selecionar', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ centro_id: centro.id }),
+      });
+      if (res.ok) {
+        await refreshConfig();
+        setMensagemSucesso(`Centro de Dados ativo alterado para: ${centro.nome}`);
+      }
+    } catch {}
+  };
+
+  const handleEliminarCentro = async (centro: CentroDadosItem) => {
+    if (centrosDadosLista.length <= 1) {
+      setMensagemErro('Não é possível eliminar o único Centro de Dados registado.');
+      return;
+    }
+    if (!window.confirm(`Deseja remover o Centro de Dados '${centro.nome}' da lista da plataforma? (Os ficheiros no disco não são apagados)`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`http://127.0.0.1:8015/api/app/centros-dados/${encodeURIComponent(centro.id)}`, {
+        method: 'DELETE',
+        headers: getHeaders(),
+      });
+      if (res.ok) {
+        await refreshConfig();
+        setMensagemSucesso(`Centro de Dados '${centro.nome}' removido.`);
+      } else {
+        const err = await res.json();
+        setMensagemErro(err.detail || 'Não foi possível remover o Centro de Dados.');
+      }
+    } catch {}
+  };
+
+  const handleDescarregarInstalador = (centro: CentroDadosItem) => {
+    const n = encodeURIComponent(centro.nome || 'Escritório Principal');
+    const pEvo = encodeURIComponent(centro.pasta_evogex || 'C:\\Dados_evoGex');
+    const pAnt = encodeURIComponent(centro.pasta_gexcel_antiga || '');
+    window.open(`http://127.0.0.1:8015/api/sistema/instalador-centro-dados?nome=${n}&pasta_evogex=${pEvo}&pasta_gexcel_antiga=${pAnt}`, '_blank');
   };
 
   const abrirCriacaoUser = (rolePredefinido: 'subutilizador' | 'admin' = 'subutilizador') => {
@@ -262,6 +379,8 @@ export function ConfigView() {
     setFormRole(rolePredefinido);
     setFormPassword('');
     setFormAtivo(true);
+    setFormTodosCentros(true);
+    setFormCentrosSelecionados(centrosDadosLista.map(c => c.id));
     setErroFormUser(null);
     setModalUserAberto(true);
   };
@@ -283,6 +402,9 @@ export function ConfigView() {
       return;
     }
 
+    const perms = user.centros_permitidos || ['*'];
+    const isAll = perms.includes('*') || user.role === 'admin' || user.role === 'superadmin';
+
     setUserEmEdicao(user);
     setFormNome(user.nome);
     setFormUsername(user.username);
@@ -290,14 +412,29 @@ export function ConfigView() {
     setFormRole(user.role as any);
     setFormPassword('');
     setFormAtivo(user.ativo);
+    setFormTodosCentros(isAll);
+    setFormCentrosSelecionados(isAll ? centrosDadosLista.map(c => c.id) : perms);
     setErroFormUser(null);
     setModalUserAberto(true);
+  };
+
+  const toggleCentroUserCheckbox = (cid: string) => {
+    setFormCentrosSelecionados(prev =>
+      prev.includes(cid) ? prev.filter(x => x !== cid) : [...prev, cid]
+    );
   };
 
   const handleGuardarUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvandoUser(true);
     setErroFormUser(null);
+
+    const centrosPayload =
+      formRole === 'admin' || formTodosCentros
+        ? ['*']
+        : formCentrosSelecionados.length > 0
+        ? formCentrosSelecionados
+        : ['*'];
 
     try {
       if (userEmEdicao) {
@@ -313,7 +450,8 @@ export function ConfigView() {
           nome: formNome.trim(),
           email: formEmail.trim(),
           role: isSub ? 'subutilizador' : formRole,
-          ativo: isSub ? true : formAtivo
+          ativo: isSub ? true : formAtivo,
+          centros_permitidos: isSub ? undefined : centrosPayload,
         };
         if (formPassword.trim()) {
           body.nova_password = formPassword.trim();
@@ -361,7 +499,8 @@ export function ConfigView() {
             username: formUsername.trim(),
             email: formEmail.trim(),
             role: formRole,
-            password: formPassword.trim()
+            password: formPassword.trim(),
+            centros_permitidos: centrosPayload,
           })
         });
 
@@ -428,6 +567,18 @@ export function ConfigView() {
 
   const itensPastas = [
     {
+      id: 'evogex_raiz',
+      titulo: 'Pasta Unificada do Centro de Dados (Dados evoGex)',
+      subtitulo: 'Diretório central onde residem o Motor, SafeDrive, PocketBase e Bases SQLite',
+      caminho: pastasLocais.pasta_evogex || 'C:\\Dados_evoGex',
+    },
+    {
+      id: 'evogex_motor',
+      titulo: 'Motor Local & Ponte do Centro de Dados (Dados_evoGex\\motor)',
+      subtitulo: 'Motor instalado junto ao Centro de Dados (usado localmente e pelos portáteis em casa)',
+      caminho: pastasLocais.pasta_motor || (pastasLocais.pasta_evogex ? `${pastasLocais.pasta_evogex}\\motor` : 'C:\\Dados_evoGex\\motor'),
+    },
+    {
       id: 'v4',
       titulo: 'Bases SQLite Modernas (BdsefaturaV4)',
       subtitulo: 'Faturas de compras, vendas, anuladas, recibos verdes e controlo geral',
@@ -435,8 +586,8 @@ export function ConfigView() {
     },
     {
       id: 'v3',
-      titulo: 'Ficheiros XML e-Fatura (BdsefaturaV3)',
-      subtitulo: 'Alimentação paralela de compatibilidade com os mapas Excel',
+      titulo: 'Ficheiros XML e-Fatura Antigos (BdsefaturaV3)',
+      subtitulo: 'Alimentação paralela de compatibilidade com os mapas Excel (Dados GexcelApps)',
       caminho: pastasLocais.pasta_v3 || (pastasLocais.pasta_v4 ? pastasLocais.pasta_v4.replace(/BdsefaturaV4$/i, 'BdsefaturaV3') : ''),
     },
     {
@@ -451,12 +602,6 @@ export function ConfigView() {
       subtitulo: 'Pasta destino dos documentos PDF oficiais descarregados da AT',
       caminho: pastasLocais.pasta_pdfs,
     },
-    {
-      id: 'db_app',
-      titulo: 'Catálogo Local de Utilizadores & Preferências',
-      subtitulo: 'Base SQLite dedicada à gestão de utilizadores, sessões e estado local',
-      caminho: pastasLocais.db_path,
-    },
   ];
 
   return (
@@ -469,10 +614,10 @@ export function ConfigView() {
             Painel de Controlo · evoGex.com
           </span>
           <h1 className="page-title text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center">
-            Configurações do Sistema
+            Configurações do Sistema & Centros de Dados
           </h1>
           <p className="page-description text-slate-700 dark:text-slate-300 text-[11.5px] font-mono tracking-[0.03em] mt-0.5">
-            Modo de ligação, diretórios locais de armazenamento e gestão de utilizadores da empresa.
+            Centros de Dados nomeados (Dados evoGex + Motor unificado), diretórios locais e acessos da equipa.
           </p>
         </div>
 
@@ -480,7 +625,7 @@ export function ConfigView() {
           <div className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs">
             <SlidersHorizontal className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
             <span className="text-slate-700 dark:text-slate-300">
-              Centro de Dados: <strong className="text-foreground uppercase">{appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO'}</strong>
+              Centro Ativo: <strong className="text-foreground">{appConfig?.centro_dados_nome || 'Escritório Principal'}</strong>
             </span>
           </div>
         </div>
@@ -514,51 +659,133 @@ export function ConfigView() {
       {/* Grid de Configurações */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         
-        {/* Card 1: Centro de Dados Único do Escritório (100% Opaco) */}
+        {/* Card 1: Catálogo de Centros de Dados Nomeados & Instalador Unificado (100% Opaco) */}
         <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] before:z-20">
           <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
             <div className="flex items-center space-x-2">
               <Database className="w-4 h-4 text-[#0284c7] dark:text-sky-400" />
               <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
-                Centro de Dados Único do Escritório
+                Centros de Dados do Escritório ({centrosDadosLista.length})
               </span>
             </div>
-            <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center space-x-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Posto Central Ligado</span>
-            </span>
+            {canManage && (
+              <button
+                type="button"
+                onClick={abrirModalNovoCentro}
+                className="px-2.5 py-1 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-[11px] font-semibold flex items-center space-x-1 cursor-pointer transition"
+                title="Criar um novo Centro de Dados isolado (ex: Escritório da Maia, Porto, Empresas PHC / Sage)"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Novo Centro de Dados</span>
+              </button>
+            )}
           </div>
 
-          <div className="p-3 rounded-md bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] space-y-2">
-            <div className="flex items-center space-x-2">
-              <Radio className="w-4 h-4 text-[#0284c7] fill-current shrink-0" />
-              <span className="font-semibold font-mono text-xs text-foreground">
-                Computador / Servidor Principal Designado
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
-              Toda a informação fiscal da empresa reside exclusivamente neste computador ou servidor do escritório. Qualquer utilizador autenticado (noutro PC do escritório ou num portátil em casa) transmite e consulta dados diretamente nesta máquina, desde que ela se encontre ligada.
-            </p>
-            <div className="flex items-center space-x-2 pt-1">
-              <input
-                type="text"
-                value={centroHostnameInput}
-                onChange={e => setCentroHostnameInput(e.target.value)}
-                disabled={!canManage || salvandoCentro}
-                placeholder="Nome do Computador ou Servidor do Escritório"
-                className="flex-1 h-8 px-2.5 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] font-mono text-xs text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7] disabled:opacity-60"
-              />
-              {canManage && (
-                <button
-                  type="button"
-                  onClick={handleGuardarCentroDados}
-                  disabled={salvandoCentro}
-                  className="px-3 h-8 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-xs font-semibold cursor-pointer transition shrink-0 disabled:opacity-50"
-                >
-                  {salvandoCentro ? 'A guardar...' : 'Registar Posto'}
-                </button>
-              )}
-            </div>
+          <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
+            Cada Centro de Dados nomeado cria uma pasta nova unificada (<strong className="text-foreground">Dados evoGex</strong> com Motor, SafeDrive, PocketBase e SQLite juntos) e liga-se à respetiva pasta antiga (<strong className="text-foreground">Dados GexcelApps</strong>) sem misturar empresas.
+          </p>
+
+          <div className="space-y-2 max-h-64 overflow-y-auto pr-0.5">
+            {centrosDadosLista.map(centro => (
+              <div
+                key={centro.id}
+                className={`p-3 rounded-md border space-y-2 font-mono text-xs transition ${
+                  centro.selecionado
+                    ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7]'
+                    : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center space-x-2 min-w-0">
+                    <Building2 className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                    <span className="font-bold text-foreground truncate">{centro.nome}</span>
+                    <span className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
+                      ({centro.hostname})
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-1.5 shrink-0">
+                    {centro.selecionado ? (
+                      <span className="text-[9.5px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center space-x-1">
+                        <Check className="w-3 h-3" />
+                        <span>EM USO</span>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleSelecionarCentro(centro)}
+                        className="px-2 py-0.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[10px] font-semibold cursor-pointer transition"
+                      >
+                        Ativar
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDescarregarInstalador(centro)}
+                      className="px-2 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] hover:bg-emerald-100 dark:hover:bg-[#0e2d27] border border-emerald-400 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold flex items-center space-x-1 cursor-pointer transition"
+                      title="Descarregar instalador de 1 clique (cria Dados evoGex + instala Motor, SafeDrive, PocketBase e SQLite)"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Instalador</span>
+                    </button>
+                    {canManage && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => abrirModalEditarCentro(centro)}
+                          className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
+                          title="Editar nome e pastas deste Centro de Dados"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                        {centrosDadosLista.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleEliminarCentro(centro)}
+                            className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-rose-50 dark:hover:bg-[#290f14] border border-slate-300 dark:border-[#222f3e] text-rose-600 dark:text-rose-400 cursor-pointer"
+                            title="Remover Centro de Dados"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1 text-[10.5px]">
+                  <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
+                    <span className="break-all text-slate-800 dark:text-slate-200">
+                      <strong>Dados evoGex (Novo + Motor):</strong> {centro.pasta_evogex || 'C:\\Dados_evoGex'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleAbrirNoWindows(centro.pasta_evogex)}
+                      className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
+                      title="Abrir no Explorador do Windows"
+                    >
+                      <FolderOpen className="w-3 h-3" />
+                      <span>Abrir</span>
+                    </button>
+                  </div>
+                  {centro.pasta_gexcel_antiga && (
+                    <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
+                      <span className="break-all text-slate-700 dark:text-slate-300">
+                        <strong>Dados GexcelApps (Excel Antigo):</strong> {centro.pasta_gexcel_antiga}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleAbrirNoWindows(centro.pasta_gexcel_antiga)}
+                        className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
+                        title="Abrir no Explorador do Windows"
+                      >
+                        <FolderOpen className="w-3 h-3" />
+                        <span>Abrir</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="space-y-2.5 pt-0.5">
@@ -580,7 +807,7 @@ export function ConfigView() {
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
-                  Grava nas bases SQLite (<code className="text-[10.5px]">BdsefaturaV4/{'{NIF}'}</code>) e atualiza em simultâneo os ficheiros XML para os livros Excel (<code className="text-[10.5px]">BdsefaturaV3</code> e <code className="text-[10.5px]">BdsRV</code>) no Centro de Dados.
+                  Grava nas bases SQLite (<code className="text-[10.5px]">BdsefaturaV4/{'{NIF}'}</code>) e atualiza em simultâneo os ficheiros XML na pasta antiga (<code className="text-[10.5px]">BdsefaturaV3</code> e <code className="text-[10.5px]">BdsRV</code>).
                 </p>
               </div>
             </label>
@@ -825,6 +1052,12 @@ export function ConfigView() {
                     Perfil {renderSortIndicator('role')}
                   </th>
                   <th
+                    onClick={() => handleSortUsers('centros')}
+                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
+                  >
+                    Centros Autorizados {renderSortIndicator('centros')}
+                  </th>
+                  <th
                     onClick={() => handleSortUsers('ativo')}
                     className="py-2 px-3 cursor-pointer hover:text-foreground transition"
                   >
@@ -842,7 +1075,7 @@ export function ConfigView() {
               <tbody className="divide-y divide-slate-200 dark:divide-[#1b2b3d] bg-white dark:bg-[#0c1520]">
                 {utilizadoresOrdenados.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-6 text-center text-slate-600 dark:text-slate-400">
+                    <td colSpan={7} className="py-6 text-center text-slate-600 dark:text-slate-400">
                       Nenhum operador adicional registado. Clique em &ldquo;+ Adicionar Operador&rdquo; para criar acessos para a sua equipa.
                     </td>
                   </tr>
@@ -865,6 +1098,11 @@ export function ConfigView() {
                             : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#222f3e]'
                         }`}>
                           {u.role === 'admin' ? 'ADMINISTRADOR' : 'OPERADOR'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-sky-50 dark:bg-[#0a1929] text-slate-800 dark:text-slate-200 border border-sky-200 dark:border-sky-900">
+                          {formatarCentrosUser(u)}
                         </span>
                       </td>
                       <td className="py-2.5 px-3">
@@ -942,6 +1180,109 @@ export function ConfigView() {
         </div>
 
       </div>
+
+      {/* Modal de Criação / Edição de Centro de Dados Nomeado */}
+      {modalCentroAberto && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in select-none">
+          <div className="bg-white dark:bg-[#0c1520] w-full max-w-lg rounded-lg border border-slate-300 dark:border-[#222f3e] shadow-2xl p-5 space-y-4 relative text-foreground">
+            <button
+              type="button"
+              onClick={() => setModalCentroAberto(false)}
+              className="absolute right-3.5 top-3.5 text-slate-600 dark:text-slate-400 hover:text-foreground cursor-pointer transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center space-x-3 border-b border-slate-200 dark:border-[#222f3e] pb-3">
+              <div className="w-9 h-9 rounded-lg bg-sky-100 dark:bg-[#0a1929] flex items-center justify-center text-[#0284c7] dark:text-sky-400 shrink-0 border border-sky-300 dark:border-sky-800">
+                <Building2 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-base font-display font-light text-foreground tracking-tight">
+                  {centroEmEdicao ? `Editar Centro de Dados: ${centroEmEdicao.nome}` : 'Novo Centro de Dados Nomeado'}
+                </h3>
+                <p className="text-[11px] font-mono text-slate-700 dark:text-slate-300">
+                  Isole escritórios ou grupos de empresas (ex: Escritório da Maia, Porto, Empresas PHC, Empresas Sage)
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleGuardarCentroModal} className="space-y-3 font-mono text-xs">
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                  Nome do Centro de Dados (Visível no Topo da Plataforma)
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Escritório da Maia, Escritório do Porto, Empresas PHC..."
+                  value={formCentroNome}
+                  onChange={e => setFormCentroNome(e.target.value)}
+                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                  Computador ou Servidor onde Reside
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: SERVIDOR-MAIA ou PC-ESCRITORIO"
+                  value={formCentroHost}
+                  onChange={e => setFormCentroHost(e.target.value)}
+                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                  Pasta Nova Unificada — Dados evoGex (Motor + SafeDrive + PocketBase + SQLite)
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: C:\Dados_evoGex_Maia"
+                  value={formCentroPastaEvogex}
+                  onChange={e => setFormCentroPastaEvogex(e.target.value)}
+                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                  Pasta Antiga do Excel — Dados GexcelApps (Opcional, para carregar empresas/XMLs)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: C:\Dados_GexcelApps_Maia"
+                  value={formCentroPastaAntiga}
+                  onChange={e => setFormCentroPastaAntiga(e.target.value)}
+                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                />
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-200 dark:border-[#222f3e]">
+                <button
+                  type="button"
+                  onClick={() => setModalCentroAberto(false)}
+                  className="px-3 py-1.5 rounded border border-slate-300 dark:border-[#222f3e] text-foreground hover:bg-slate-100 dark:hover:bg-[#132233] font-mono text-xs cursor-pointer transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={salvandoCentro}
+                  className="px-4 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-xs font-semibold shadow-xs flex items-center space-x-1.5 cursor-pointer transition disabled:opacity-50"
+                >
+                  {salvandoCentro ? 'A guardar...' : 'Guardar Centro de Dados'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal de Criação / Edição de Utilizador */}
       {modalUserAberto && (
@@ -1055,6 +1396,42 @@ export function ConfigView() {
                   </select>
                 </div>
               </div>
+
+              {/* Centros de Dados Autorizados para este Utilizador */}
+              {!isSub && formRole === 'subutilizador' && (
+                <div className="p-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-2">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formTodosCentros}
+                      onChange={e => setFormTodosCentros(e.target.checked)}
+                      className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7]"
+                    />
+                    <span className="font-semibold text-foreground text-[11px]">
+                      Acesso a Todos os Centros de Dados da Empresa
+                    </span>
+                  </label>
+
+                  {!formTodosCentros && (
+                    <div className="pl-5 space-y-1.5 pt-1 border-t border-slate-200 dark:border-[#222f3e]">
+                      <span className="block text-[10px] text-slate-600 dark:text-slate-400">
+                        Selecione os Centros de Dados que este operador pode aceder:
+                      </span>
+                      {centrosDadosLista.map(c => (
+                        <label key={c.id} className="flex items-center space-x-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formCentrosSelecionados.includes(c.id)}
+                            onChange={() => toggleCentroUserCheckbox(c.id)}
+                            className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7]"
+                          />
+                          <span className="text-[11px] text-foreground">{c.nome}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">

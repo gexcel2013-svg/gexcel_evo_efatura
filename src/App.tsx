@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { Building2, ChevronDown, Check, Plus, Download, HardDrive } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import CommandCenter from './components/CommandCenter';
 import { RecibosVerdesView } from './components/RecibosVerdesView';
@@ -13,7 +14,58 @@ import { AuthProvider, useAuth } from './lib/auth';
 import { EvoLoginGate, type AuthenticatedEvoUser } from './components/EvoLoginGate';
 
 function AppContent() {
-  const { currentUser, showLoginModal, showSetupWizard, setShowLoginModal, setExternalSession } = useAuth();
+  const { currentUser, appConfig, refreshConfig, showLoginModal, showSetupWizard, setShowLoginModal, setExternalSession } = useAuth();
+  const [dropdownCentroAberto, setDropdownCentroAberto] = useState<boolean>(false);
+  const [trocandoCentro, setTrocandoCentro] = useState<boolean>(false);
+  const [centroKey, setCentroKey] = useState<number>(0);
+
+  const centrosDisponiveis = useMemo(() => {
+    const todos = appConfig?.centros_dados || [];
+    const perms = currentUser?.centros_permitidos || ['*'];
+    if (perms.includes('*') || currentUser?.role === 'admin' || currentUser?.role === 'superadmin') {
+      return todos;
+    }
+    const filtrados = todos.filter(c => perms.includes(c.id));
+    return filtrados.length > 0 ? filtrados : todos;
+  }, [appConfig?.centros_dados, currentUser]);
+
+  const centroAtivo = useMemo(() => {
+    return centrosDisponiveis.find(c => c.selecionado) || centrosDisponiveis[0] || {
+      id: appConfig?.centro_dados_ativo_id || 'escritorio-principal',
+      nome: appConfig?.centro_dados_nome || 'Escritório Principal',
+      hostname: appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO',
+      pasta_evogex: appConfig?.centro_dados_pasta_evogex || 'C:\\Dados_evoGex',
+      pasta_gexcel_antiga: appConfig?.centro_dados_pasta_gexcel_antiga || '',
+      ativo: true,
+      selecionado: true,
+    };
+  }, [centrosDisponiveis, appConfig]);
+
+  const handleSelecionarCentro = async (centroId: string) => {
+    setDropdownCentroAberto(false);
+    if (centroId === centroAtivo.id) return;
+    setTrocandoCentro(true);
+    try {
+      const res = await fetch('http://127.0.0.1:8015/api/app/centros-dados/selecionar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ centro_id: centroId }),
+      });
+      if (res.ok) {
+        await refreshConfig();
+        setCentroKey(prev => prev + 1);
+      }
+    } catch {} finally {
+      setTrocandoCentro(false);
+    }
+  };
+
+  const handleDescarregarInstaladorCentro = (nome?: string, pastaEvogex?: string, pastaAntiga?: string) => {
+    const n = encodeURIComponent(nome || centroAtivo.nome || 'Escritório Principal');
+    const pEvo = encodeURIComponent(pastaEvogex || centroAtivo.pasta_evogex || 'C:\\Dados_evoGex');
+    const pAnt = encodeURIComponent(pastaAntiga ?? centroAtivo.pasta_gexcel_antiga ?? '');
+    window.open(`http://127.0.0.1:8015/api/sistema/instalador-centro-dados?nome=${n}&pasta_evogex=${pEvo}&pasta_gexcel_antiga=${pAnt}`, '_blank');
+  };
   const [authUser, setAuthUser] = useState<AuthenticatedEvoUser | null>(() => {
     try {
       const saved = sessionStorage.getItem('gexcel_evo06_auth_session');
@@ -230,53 +282,173 @@ function AppContent() {
       </div>
 
       {/* Área Principal de Trabalho Delimitada (z-10) */}
-      <main className="flex-1 flex flex-col p-3.5 min-h-0 overflow-hidden relative z-10">
-        {activeTab === 'recibos' ? (
-          <RecibosVerdesView
-            ano={anoGlobal}
-            onAnoChange={setAnoGlobal}
-            onApiStatusChange={setApiOnline}
-            modoPrivacidade={modoPrivacidade}
-          />
-        ) : activeTab === 'anulados' ? (
-          <InconformidadesView
-            onApiStatusChange={setApiOnline}
-            modoPrivacidade={modoPrivacidade}
-          />
-        ) : activeTab === 'faturas' ? (
-          <FaturasView 
-            onApiStatusChange={setApiOnline} 
-            modoPrivacidade={modoPrivacidade}
-            filtroInicial={faturasFiltroInicial}
-          />
-        ) : activeTab === 'agendador' ? (
-          <AgendadorView 
-            onApiStatusChange={setApiOnline}
-            modoPrivacidade={modoPrivacidade}
-          />
-        ) : activeTab === 'config' ? (
-          <ConfigView />
-        ) : activeTab === 'dev' ? (
-          <DevView 
-            onApiStatusChange={setApiOnline}
-            versaoMotor={versaoMotor}
-          />
-        ) : (
-          <CommandCenter 
-            ano={anoGlobal}
-            onAnoChange={setAnoGlobal}
-            onSelectionChange={(selected, total) => {
-              setSelectedCount(selected);
-              setTotalCount(total);
-            }}
-            onApiStatusChange={(online, versao) => {
-              setApiOnline(online);
-              if (versao) setVersaoMotor(versao);
-            }}
-            modoPrivacidade={modoPrivacidade}
-            onNavegarParaDados={handleNavegarParaDados}
-          />
-        )}
+      <main
+        className="flex-1 flex flex-col p-3.5 min-h-0 overflow-hidden relative z-10"
+        onClick={() => dropdownCentroAberto && setDropdownCentroAberto(false)}
+      >
+        {/* Barra Universal de Identificação e Troca Rápida de Centro de Dados (Transversal a todas as vistas) */}
+        <div className="mb-2.5 px-3 py-1.5 rounded-md bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] shadow-2xs flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="relative" onClick={e => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() => setDropdownCentroAberto(prev => !prev)}
+                disabled={trocandoCentro}
+                className="flex items-center space-x-2 px-2.5 py-1 rounded bg-sky-50 dark:bg-[#0a1929] hover:bg-sky-100 dark:hover:bg-[#11263d] border border-[#0284c7] text-xs font-mono text-foreground cursor-pointer transition"
+                title="Clique para trocar de Centro de Dados (ex: Escritório da Maia, Porto, Empresas PHC / Sage)"
+              >
+                <Building2 className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                <span className="text-slate-700 dark:text-slate-300">Centro de Dados:</span>
+                <strong className="text-[#0284c7] dark:text-sky-300 font-bold">
+                  {centroAtivo.nome}
+                </strong>
+                <ChevronDown className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+              </button>
+
+              {dropdownCentroAberto && (
+                <div className="absolute left-0 mt-1.5 w-88 bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded-md shadow-xl p-2 z-50 font-mono text-xs space-y-1.5">
+                  <div className="px-2 py-1 border-b border-slate-200 dark:border-[#222f3e] flex items-center justify-between">
+                    <span className="font-bold text-[10.5px] uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                      Selecionar Centro de Dados
+                    </span>
+                    <span className="text-[10px] text-[#0284c7] dark:text-sky-400 font-semibold">
+                      {centrosDisponiveis.length} disponível(eis)
+                    </span>
+                  </div>
+
+                  <div className="max-h-56 overflow-y-auto space-y-1">
+                    {centrosDisponiveis.map(c => {
+                      const isSel = c.id === centroAtivo.id;
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => handleSelecionarCentro(c.id)}
+                          className={`w-full text-left px-2.5 py-2 rounded border transition cursor-pointer flex items-start justify-between gap-2 ${
+                            isSel
+                              ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] text-foreground'
+                              : 'bg-slate-50 dark:bg-[#132233] hover:bg-slate-100 dark:hover:bg-[#1c314a] border-slate-200 dark:border-[#222f3e] text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="font-bold text-xs text-foreground truncate">
+                              {c.nome}
+                            </div>
+                            <div className="text-[10px] text-slate-700 dark:text-slate-300 break-all">
+                              Dados evoGex: {c.pasta_evogex || 'C:\\Dados_evoGex'}
+                            </div>
+                            {c.pasta_gexcel_antiga && (
+                              <div className="text-[10px] text-slate-600 dark:text-slate-400 break-all">
+                                Dados Antigos: {c.pasta_gexcel_antiga}
+                              </div>
+                            )}
+                          </div>
+                          {isSel && (
+                            <Check className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0 mt-0.5" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-1 border-t border-slate-200 dark:border-[#222f3e] flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDropdownCentroAberto(false);
+                        setActiveTab('config');
+                      }}
+                      className="flex-1 px-2.5 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-semibold text-[11px] flex items-center justify-center space-x-1 cursor-pointer transition"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Novo / Gerir Centros</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDropdownCentroAberto(false);
+                        handleDescarregarInstaladorCentro();
+                      }}
+                      className="px-2.5 py-1.5 rounded bg-emerald-50 dark:bg-[#091e1a] hover:bg-emerald-100 dark:hover:bg-[#0e2d27] border border-emerald-400 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-semibold text-[11px] flex items-center space-x-1 cursor-pointer transition"
+                      title="Descarregar instalador único (Centro de Dados + Motor) para um computador novo ou servidor"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Instalador PC Novo</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="hidden lg:flex items-center space-x-2 text-[11px] font-mono text-slate-700 dark:text-slate-300 truncate">
+              <HardDrive className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span className="truncate" title={centroAtivo.pasta_evogex}>
+                Pasta Unificada (Motor + SafeDrive + Bases): <strong className="text-foreground">{centroAtivo.pasta_evogex || 'C:\\Dados_evoGex'}</strong>
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-2 shrink-0 font-mono text-[11px]">
+            <button
+              type="button"
+              onClick={() => handleDescarregarInstaladorCentro()}
+              className="px-2.5 py-1 rounded bg-emerald-50 dark:bg-[#091e1a] hover:bg-emerald-100 dark:hover:bg-[#0e2d27] border border-emerald-400 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-semibold flex items-center space-x-1.5 cursor-pointer transition"
+              title="Instalar a pasta Dados evoGex com Motor, SafeDrive, PocketBase e Bases SQLite num computador novo ou servidor"
+            >
+              <Download className="w-3 h-3 shrink-0" />
+              <span>Instalar Centro + Motor</span>
+            </button>
+          </div>
+        </div>
+
+        <div key={centroKey} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {activeTab === 'recibos' ? (
+            <RecibosVerdesView
+              ano={anoGlobal}
+              onAnoChange={setAnoGlobal}
+              onApiStatusChange={setApiOnline}
+              modoPrivacidade={modoPrivacidade}
+            />
+          ) : activeTab === 'anulados' ? (
+            <InconformidadesView
+              onApiStatusChange={setApiOnline}
+              modoPrivacidade={modoPrivacidade}
+            />
+          ) : activeTab === 'faturas' ? (
+            <FaturasView 
+              onApiStatusChange={setApiOnline} 
+              modoPrivacidade={modoPrivacidade}
+              filtroInicial={faturasFiltroInicial}
+            />
+          ) : activeTab === 'agendador' ? (
+            <AgendadorView 
+              onApiStatusChange={setApiOnline}
+              modoPrivacidade={modoPrivacidade}
+            />
+          ) : activeTab === 'config' ? (
+            <ConfigView />
+          ) : activeTab === 'dev' ? (
+            <DevView 
+              onApiStatusChange={setApiOnline}
+              versaoMotor={versaoMotor}
+            />
+          ) : (
+            <CommandCenter 
+              ano={anoGlobal}
+              onAnoChange={setAnoGlobal}
+              onSelectionChange={(selected, total) => {
+                setSelectedCount(selected);
+                setTotalCount(total);
+              }}
+              onApiStatusChange={(online, versao) => {
+                setApiOnline(online);
+                if (versao) setVersaoMotor(versao);
+              }}
+              modoPrivacidade={modoPrivacidade}
+              onNavegarParaDados={handleNavegarParaDados}
+            />
+          )}
+        </div>
       </main>
 
       {/* Modais Globais de Autenticação e Configuração Inicial */}

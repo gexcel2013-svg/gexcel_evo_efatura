@@ -1800,22 +1800,32 @@ export default function CommandCenter({
         </div>
       </header>
 
-      {/* Aviso Claro quando o Computador / Servidor do Centro de Dados no Escritório está Desligado */}
+      {/* Aviso Claro quando o Computador / Servidor do Centro de Dados no Escritório está Desligado ou PC Novo */}
       {apiOnline === false && !aLigarMotor && (
-        <div className="p-3 bg-rose-50 dark:bg-[#290f14] border border-rose-400 dark:border-rose-800 rounded-md text-rose-800 dark:text-rose-200 font-mono text-xs flex items-center justify-between shrink-0">
+        <div className="p-3 bg-rose-50 dark:bg-[#290f14] border border-rose-400 dark:border-rose-800 rounded-md text-rose-800 dark:text-rose-200 font-mono text-xs flex flex-wrap items-center justify-between gap-2 shrink-0">
           <div className="flex items-center space-x-2.5">
             <ServerCrash className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
             <span>
-              <strong>Centro de Dados do Escritório Desligado:</strong> Para consultar ou importar faturas a partir deste computador, o computador ou servidor principal do escritório onde reside o Centro de Dados tem de estar ligado.
+              <strong>Centro de Dados do Escritório Desligado (ou Computador Novo):</strong> Ligue o computador/servidor do escritório onde reside o Centro de Dados ou, se quiser criar o Centro de Dados neste computador, instale o pacote unificado (Dados evoGex + Motor).
             </span>
           </div>
-          <button
-            type="button"
-            onClick={ligarMotorAutomatico}
-            className="px-3 py-1 rounded bg-rose-700 hover:bg-rose-600 text-white font-semibold text-[11px] cursor-pointer transition shrink-0 ml-3"
-          >
-            Tentar Novamente
-          </button>
+          <div className="flex items-center space-x-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => window.open('http://127.0.0.1:8015/api/sistema/instalador-centro-dados', '_blank')}
+              className="px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-semibold text-[11px] cursor-pointer transition shrink-0"
+              title="Cria a pasta única Dados_evoGex e instala automaticamente o Motor, SafeDrive, PocketBase e Bases SQLite neste computador"
+            >
+              Instalar Centro + Motor neste PC
+            </button>
+            <button
+              type="button"
+              onClick={ligarMotorAutomatico}
+              className="px-3 py-1 rounded bg-rose-700 hover:bg-rose-600 text-white font-semibold text-[11px] cursor-pointer transition shrink-0"
+            >
+              Tentar Novamente
+            </button>
+          </div>
         </div>
       )}
 
