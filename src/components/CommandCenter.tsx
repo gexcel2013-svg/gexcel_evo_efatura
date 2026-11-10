@@ -178,9 +178,6 @@ export default function CommandCenter({
     hardware_tier: 'A detetar...',
     strategy: 'SJF (Shortest Job First)'
   });
-  const [perfMenuAberto, setPerfMenuAberto] = useState<boolean>(false);
-  const perfPopoverRef = useRef<HTMLDivElement>(null);
-
   // Estimativas de volume de documentos para ordenação inteligente SJF
   const [estimativasVolume, setEstimativasVolume] = useState<Record<string, { volume_estimado: number; origem: string; ano_dados: number }>>({});
 
@@ -190,16 +187,16 @@ export default function CommandCenter({
       if (res.ok) {
         const data = await res.json();
         setPerfConfig({
-          mode: data.mode || 'auto',
-          current_limit: data.current_limit || 4,
+          mode: 'auto',
+          current_limit: data.current_limit || 8,
           active_workers: data.active_workers || 0,
           queue_waiting: data.queue_waiting || 0,
-          max_allowed: data.max_allowed || 6,
+          max_allowed: data.max_allowed || 8,
           cpu_percent: data.cpu_percent || 0,
           ram_percent: data.ram_percent || 0,
           cpu_cores: data.cpu_cores || 4,
           total_ram_gb: data.total_ram_gb || 8,
-          hardware_tier: data.hardware_tier || 'Padrão',
+          hardware_tier: data.hardware_tier || 'Cloud Automático',
           strategy: data.strategy || 'SJF (Shortest Job First)'
         });
       }
@@ -207,45 +204,6 @@ export default function CommandCenter({
       // API offline
     }
   }, []);
-
-
-  useEffect(() => {
-    function handleClickOutsidePerf(e: MouseEvent) {
-      if (perfPopoverRef.current && !perfPopoverRef.current.contains(e.target as Node)) {
-        setPerfMenuAberto(false);
-      }
-    }
-    if (perfMenuAberto) {
-      document.addEventListener("mousedown", handleClickOutsidePerf);
-    }
-    return () => document.removeEventListener("mousedown", handleClickOutsidePerf);
-  }, [perfMenuAberto]);
-
-  const alterarModoPerformance = async (novoModo: 'auto' | 'manual', novoLimite?: number) => {
-    try {
-      const payload = {
-        mode: novoModo,
-        manual_limit: novoLimite ?? perfConfig.current_limit
-      };
-      const res = await fetch("http://127.0.0.1:8015/api/config/performance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setPerfConfig(prev => ({
-          ...prev,
-          mode: data.mode,
-          current_limit: data.current_limit,
-          active_workers: data.active_workers,
-          max_allowed: data.max_allowed
-        }));
-      }
-    } catch (e) {
-      console.error("Erro ao alterar performance:", e);
-    }
-  };
   
   // Controlo Temporal Fiscal (Ano e Meses)
   const hoje = new Date();
@@ -1626,174 +1584,20 @@ export default function CommandCenter({
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
-          {/* Indicador e Seletor de Performance / Concorrência Adaptativa */}
-          {apiOnline && (
-            <div className="relative" ref={perfPopoverRef}>
-              <button
-                type="button"
-                onClick={() => setPerfMenuAberto(v => !v)}
-                className="flex items-center space-x-2 bg-card hover:bg-muted border border-border px-3 py-1.5 rounded-full text-xs font-mono transition cursor-pointer shadow-2xs select-none"
-                title="Gestor de Concorrência e Recursos da Máquina (Clique para configurar)"
-              >
-                <Zap className={`w-3.5 h-3.5 ${perfConfig.mode === 'auto' ? 'text-amber-500 fill-amber-500/20' : 'text-[#0284c7] dark:text-sky-400'}`} />
-                <span className="font-semibold text-foreground">
-                  {perfConfig.current_limit} Workers
-                </span>
-                <span className="text-muted-foreground/40 text-[10px]">·</span>
-                <span className="text-muted-foreground text-[11px]">
-                  {perfConfig.mode === 'auto' 
-                    ? `Auto (${perfConfig.cpu_percent}% CPU)` 
-                    : 'Manual'}
-                </span>
-              </button>
-
-              {/* Popover de Configuração de Performance */}
-              {perfMenuAberto && (
-                <div className="absolute right-0 mt-2 w-96 bg-card dark:bg-[#0c1520] border border-border dark:border-[#222f3e] rounded-lg shadow-2xl z-50 p-3.5 space-y-3 font-sans text-xs">
-                  {/* Cabeçalho */}
-                  <div className="flex items-center justify-between border-b border-border/70 pb-2">
-                    <div className="flex items-center space-x-1.5">
-                      <Zap className="w-4 h-4 text-amber-500" />
-                      <span className="font-semibold text-foreground text-xs">Concorrência e Recursos</span>
-                    </div>
-                    <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-muted text-muted-foreground font-semibold">
-                      {perfConfig.cpu_cores} Cores · {perfConfig.total_ram_gb} GB RAM
-                    </span>
-                  </div>
-
-                  {/* Telemetria do Computador em Tempo Real */}
-                  <div className="bg-slate-50 dark:bg-[#07121c] p-2.5 rounded border border-border/60 space-y-2 font-mono text-[11px]">
-                    <div className="flex justify-between items-center text-muted-foreground">
-                      <span className="shrink-0 mr-2">Patamar da Máquina:</span>
-                      <span className="font-bold text-foreground text-[10px] text-right">{perfConfig.hardware_tier}</span>
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[10.5px]">
-                        <span className="text-muted-foreground">Carga do Processador (CPU):</span>
-                        <span className={`font-semibold ${perfConfig.cpu_percent > 75 ? 'text-amber-500' : 'text-foreground'}`}>
-                          {perfConfig.cpu_percent}%
-                        </span>
-                      </div>
-                      <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full transition-all duration-500 rounded-full ${
-                            perfConfig.cpu_percent > 75 ? 'bg-amber-500' : perfConfig.cpu_percent > 40 ? 'bg-sky-500' : 'bg-emerald-500'
-                          }`}
-                          style={{ width: `${Math.min(100, Math.max(4, perfConfig.cpu_percent))}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[10.5px]">
-                        <span className="text-muted-foreground">Memória RAM Utilizada:</span>
-                        <span className="text-foreground font-semibold">{perfConfig.ram_percent}%</span>
-                      </div>
-                      <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-sky-500/70 rounded-full transition-all duration-500"
-                          style={{ width: `${Math.min(100, Math.max(4, perfConfig.ram_percent))}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between pt-1 border-t border-border/40 text-[10px] text-muted-foreground">
-                      <span>Extrações ativas agora:</span>
-                      <span className="font-bold text-[#0284c7] dark:text-sky-400">
-                        {perfConfig.active_workers} de {perfConfig.current_limit} em paralelo
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between text-[10px] text-muted-foreground">
-                      <span>Estratégia de Fila:</span>
-                      <span className="font-mono text-emerald-600 dark:text-emerald-400 font-medium">
-                        SJF (Menor Volume Primeiro)
-                      </span>
-                    </div>
-
-                    {perfConfig.queue_waiting !== undefined && perfConfig.queue_waiting > 0 && (
-                      <div className="flex justify-between text-[10px] text-muted-foreground">
-                        <span>Tarefas em espera:</span>
-                        <span className="font-mono text-amber-500 font-semibold">
-                          {perfConfig.queue_waiting} na fila
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Seletor de Modo: Auto vs Manual */}
-                  <div className="space-y-1.5">
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground font-semibold">
-                      Modo de Gestão
-                    </span>
-                    
-                    {/* Botão Modo Automático */}
-                    <button
-                      type="button"
-                      onClick={() => alterarModoPerformance('auto')}
-                      className={`w-full p-2 rounded border text-left transition cursor-pointer flex flex-col space-y-0.5 ${
-                        perfConfig.mode === 'auto'
-                          ? 'border-amber-500/60 bg-amber-500/10 text-foreground'
-                          : 'border-border/60 hover:bg-muted/50 text-muted-foreground'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-xs text-foreground flex items-center space-x-1.5">
-                          <Zap className="w-3.5 h-3.5 text-amber-500" />
-                          <span>Automático Adaptativo (Recomendado)</span>
-                        </span>
-                        {perfConfig.mode === 'auto' && (
-                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                        )}
-                      </div>
-                      <p className="text-[10px] text-muted-foreground font-mono leading-tight">
-                        Ajusta a velocidade em tempo real: acelera para {perfConfig.max_allowed} workers com PC livre e abranda se abrir tarefas pesadas.
-                      </p>
-                    </button>
-
-                    {/* Botão Modo Manual com Seletor Numérico */}
-                    <div className={`p-2 rounded border transition ${
-                      perfConfig.mode === 'manual'
-                        ? 'border-sky-500/60 bg-sky-500/10 text-foreground'
-                        : 'border-border/60 bg-card text-muted-foreground'
-                    }`}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <button
-                          type="button"
-                          onClick={() => alterarModoPerformance('manual', perfConfig.current_limit)}
-                          className="font-semibold text-xs text-foreground flex items-center space-x-1.5 cursor-pointer text-left"
-                        >
-                          <SlidersHorizontal className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
-                          <span>Manual (Limite Fixo)</span>
-                        </button>
-                        {perfConfig.mode === 'manual' && (
-                          <span className="w-2 h-2 rounded-full bg-sky-500" />
-                        )}
-                      </div>
-
-                      <div className="flex items-center space-x-1 pt-1 font-mono">
-                        {Array.from({ length: perfConfig.max_allowed }, (_, i) => i + 1).map(num => (
-                          <button
-                            key={num}
-                            type="button"
-                            onClick={() => alterarModoPerformance('manual', num)}
-                            className={`flex-1 py-1 rounded text-xs font-semibold transition cursor-pointer ${
-                              perfConfig.mode === 'manual' && perfConfig.current_limit === num
-                                ? 'bg-[#0284c7] text-white shadow-2xs'
-                                : 'bg-muted/70 hover:bg-muted text-foreground'
-                            }`}
-                          >
-                            {num}
-                          </button>
-                        ))}
-                      </div>
-                      <p className="text-[9.5px] text-muted-foreground mt-1.5 font-mono">
-                        Fixa exatamente {perfConfig.current_limit} empresas em simultâneo contra a AT.
-                      </p>
-                    </div>
-                  </div>
-                </div>
+          {/* Indicador Automático de Processamento Paralelo (100% Autónomo na Cloud) */}
+          {apiOnline && (perfConfig.active_workers > 0 || (perfConfig.queue_waiting || 0) > 0) && (
+            <div className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs select-none">
+              <Zap className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+              <span className="font-semibold text-foreground">
+                {perfConfig.active_workers} em paralelo
+              </span>
+              {(perfConfig.queue_waiting || 0) > 0 && (
+                <>
+                  <span className="text-muted-foreground/40 text-[10px]">·</span>
+                  <span className="text-amber-500 text-[11px]">
+                    {perfConfig.queue_waiting} na fila
+                  </span>
+                </>
               )}
             </div>
           )}
