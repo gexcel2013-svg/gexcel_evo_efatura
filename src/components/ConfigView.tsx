@@ -906,7 +906,7 @@ export function ConfigView() {
             </div>
           </div>
           {localFsCfg?.evogex_confirmado ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 ml-2" title="Pasta ligada e gravada" />
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 ml-2" />
           ) : (
             <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-bold shrink-0 ml-2">
               Ligar Pasta
