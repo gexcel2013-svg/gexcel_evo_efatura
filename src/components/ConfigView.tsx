@@ -205,6 +205,42 @@ export function ConfigView() {
       pasta_pdfs: isWindowsPath(appConfig?.pasta_pdfs) ? (appConfig?.pasta_pdfs || '') : prev.pasta_pdfs,
       db_path: isWindowsPath(appConfig?.db_path) ? (appConfig?.db_path || '') : prev.db_path,
     }));
+
+    // Restaurar automaticamente do servidor se o browser tiver sido limpo ou reaberto
+    const srvAntiga = isWindowsPath(appConfig?.centro_dados_pasta_gexcel_antiga)
+      ? (appConfig?.centro_dados_pasta_gexcel_antiga || '')
+      : '';
+    const srvEvo = isWindowsPath(appConfig?.centro_dados_pasta_evogex) && !/dados_gexcelapps/i.test(appConfig?.centro_dados_pasta_evogex || '')
+      ? (appConfig?.centro_dados_pasta_evogex || 'C:\\Dados_evoGex')
+      : 'C:\\Dados_evoGex';
+
+    const atual = obterLocalFsCentroConfig();
+    if (!atual && (srvAntiga || srvEvo)) {
+      const recuperado: LocalFsCentroConfig = {
+        id: appConfig?.centro_dados_ativo_id || 'escritorio-principal',
+        nome: appConfig?.centro_dados_nome || 'Escritório Principal',
+        hostname: appConfig?.centro_dados_hostname || 'COMPUTADOR-LOCAL',
+        pasta_evogex_display: srvEvo,
+        pasta_motor_display: `${srvEvo}\\motor`,
+        pasta_v4_display: `${srvEvo}\\BdsefaturaV4`,
+        pasta_v3_display: `${srvAntiga || 'C:\\Dados_GexcelApps'}\\BdsefaturaV3`,
+        pasta_bdsrv_display: `${srvAntiga || 'C:\\Dados_GexcelApps'}\\BdsRV`,
+        pasta_pdfs_display: `${srvEvo}\\PDFs_Recibos`,
+        pasta_gexcel_antiga_display: srvAntiga,
+        ligado: true,
+        antiga_confirmada: Boolean(srvAntiga),
+        updated_at: new Date().toISOString(),
+      };
+      setLocalFsCfg(recuperado);
+      setCaminhoPropostoEvogex(srvEvo);
+      if (srvAntiga) setCaminhoPropostoAntiga(srvAntiga);
+    } else if (atual && !atual.pasta_gexcel_antiga_display && srvAntiga) {
+      atual.pasta_gexcel_antiga_display = srvAntiga;
+      atual.antiga_confirmada = true;
+      guardarLocalFsCentroConfig(atual);
+      setLocalFsCfg({ ...atual });
+      setCaminhoPropostoAntiga(srvAntiga);
+    }
   }, [appConfig]);
 
   const carregarListaUtilizadores = useCallback(async () => {
@@ -292,7 +328,11 @@ export function ConfigView() {
     }
   };
 
-  const handleAbrirNoWindows = async (caminho: string, subpasta?: string) => {
+  const handleAbrirNoWindows = async (
+    caminho: string,
+    subpasta?: string,
+    origem: 'evogex' | 'antiga' = 'evogex'
+  ) => {
     if (!caminho) return;
     setMensagemErro(null);
     try {
@@ -310,10 +350,40 @@ export function ConfigView() {
     } catch {
       // Fallback para o seletor nativo do Windows Explorer no browser
     }
-    const abriu = await abrirPastaNoExploradorNativo(subpasta);
+    const abriu = await abrirPastaNoExploradorNativo(subpasta, origem);
     if (!abriu) {
       await handleCopiarCaminho(caminho, 'Pasta Local');
     }
+  };
+
+  const handleGuardarFixarConfiguracao = async () => {
+    setMensagemErro(null);
+    const evoLimpo = (caminhoPropostoEvogex || 'C:\\Dados_evoGex').trim();
+    const antLimpo = (localFsCfg?.pasta_gexcel_antiga_display || caminhoPropostoAntiga || '').trim();
+    const novoCfg: LocalFsCentroConfig = {
+      id: localFsCfg?.id || 'escritorio-principal',
+      nome: localFsCfg?.nome || 'Escritório Principal',
+      hostname: localFsCfg?.hostname || 'COMPUTADOR-LOCAL',
+      pasta_evogex_display: evoLimpo,
+      pasta_motor_display: `${evoLimpo}\\motor`,
+      pasta_v4_display: `${evoLimpo}\\BdsefaturaV4`,
+      pasta_v3_display: `${antLimpo || 'C:\\Dados_GexcelApps'}\\BdsefaturaV3`,
+      pasta_bdsrv_display: `${antLimpo || 'C:\\Dados_GexcelApps'}\\BdsRV`,
+      pasta_pdfs_display: `${evoLimpo}\\PDFs_Recibos`,
+      pasta_gexcel_antiga_display: antLimpo,
+      ligado: true,
+      evogex_confirmado: Boolean(localFsCfg?.evogex_confirmado || true),
+      antiga_confirmada: Boolean(localFsCfg?.antiga_confirmada || antLimpo),
+      total_entidades_carregadas: localFsCfg?.total_entidades_carregadas,
+      total_sqlites_gravados: localFsCfg?.total_sqlites_gravados,
+      updated_at: new Date().toISOString(),
+    };
+    guardarLocalFsCentroConfig(novoCfg);
+    setLocalFsCfg(novoCfg);
+    await refreshConfig();
+    setMensagemSucesso(
+      `Configuração gravada permanentemente! Ao fechar e voltar a abrir a aplicação, as pastas (${evoLimpo}${antLimpo ? ` e ${antLimpo}` : ''}) mantêm-se ligadas.`
+    );
   };
 
   const handleEscolherPastaEvogexDireto = async (customCaminhoProposto?: string, paraModal = false) => {
@@ -835,7 +905,13 @@ export function ConfigView() {
               </span>
             </div>
           </div>
-          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 ml-2" />
+          {localFsCfg?.evogex_confirmado ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 ml-2" title="Pasta ligada e gravada" />
+          ) : (
+            <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-bold shrink-0 ml-2">
+              Ligar Pasta
+            </span>
+          )}
         </button>
 
         <button
@@ -940,21 +1016,42 @@ export function ConfigView() {
                 className="h-9 px-4 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-xs font-semibold flex items-center space-x-2 shrink-0 cursor-pointer transition shadow-2xs"
               >
                 <FolderOpen className="w-4 h-4" />
-                <span>Escolher Pasta no Computador / Servidor</span>
+                <span>Escolher / Ligar Pasta no Computador</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleGuardarFixarConfiguracao}
+                className="h-9 px-3.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold flex items-center space-x-1.5 shrink-0 cursor-pointer transition shadow-2xs"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Guardar Configuração</span>
               </button>
               <button
                 type="button"
                 onClick={handleSincronizarSqlitesAgora}
                 disabled={sincronizandoSqlites}
-                className="h-9 px-3.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold flex items-center space-x-1.5 shrink-0 cursor-pointer transition disabled:opacity-50"
+                className="h-9 px-3.5 rounded bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold flex items-center space-x-1.5 shrink-0 cursor-pointer transition disabled:opacity-50"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${sincronizandoSqlites ? 'animate-spin' : ''}`} />
                 <span>{sincronizandoSqlites ? 'A gravar SQLites...' : 'Atualizar Bases SQLite na Pasta'}</span>
               </button>
             </div>
-            <p className="text-[11px] text-slate-600 dark:text-slate-400">
-              Ao escolher a pasta, a plataforma cria automaticamente as subpastas necessárias (<code className="text-foreground">BdsefaturaV4</code>, <code className="text-foreground">BdsRV</code>, <code className="text-foreground">PDFs_Recibos</code>) e grava aí as bases SQLite das empresas importadas.
-            </p>
+
+            {localFsCfg?.evogex_confirmado ? (
+              <div className="p-2.5 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-400 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 flex items-center space-x-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                <span>
+                  <strong>Pasta ligada e gravada permanentemente:</strong> {baseEvogexAtiva} (mantém-se ativa ao fechar e reabrir a aplicação).
+                </span>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded bg-amber-50 dark:bg-[#241a08] border border-amber-400 dark:border-amber-700 text-amber-900 dark:text-amber-200 flex items-center space-x-2">
+                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>
+                  Clique no botão azul <strong>"Escolher / Ligar Pasta no Computador"</strong> e selecione <code>C:\Dados_evoGex</code> para o navegador abrir diretamente essa pasta e gravar aí os ficheiros SQLite.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Resumo Limpo da Pasta Ativa */}
@@ -1028,7 +1125,7 @@ export function ConfigView() {
                       <div className="flex items-center space-x-1 shrink-0">
                         <button
                           type="button"
-                          onClick={() => handleAbrirNoWindows(item.caminho, item.subpasta)}
+                          onClick={() => handleAbrirNoWindows(item.caminho, item.subpasta, item.tipoSelecao)}
                           className="px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-[10px] font-mono text-foreground flex items-center space-x-1 cursor-pointer"
                         >
                           <FolderOpen className="w-3 h-3 text-amber-500" />
@@ -1097,6 +1194,14 @@ export function ConfigView() {
                 <FolderOpen className="w-4 h-4" />
                 <span>Escolher Pasta Antiga e Carregar Empresas</span>
               </button>
+              <button
+                type="button"
+                onClick={handleGuardarFixarConfiguracao}
+                className="h-9 px-3.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-xs font-semibold flex items-center space-x-1.5 shrink-0 cursor-pointer transition shadow-2xs"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Guardar e Fixar Ligação</span>
+              </button>
             </div>
 
             {localFsCfg?.pasta_gexcel_antiga_display && (
@@ -1104,15 +1209,15 @@ export function ConfigView() {
                 <div className="flex items-center space-x-2 min-w-0">
                   <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
                   <span className="truncate">
-                    Pasta antiga ativa: <strong>{localFsCfg.pasta_gexcel_antiga_display}</strong>
+                    <strong>Gravado permanentemente:</strong> {localFsCfg.pasta_gexcel_antiga_display}
                     {localFsCfg.total_entidades_carregadas
-                      ? ` (${localFsCfg.total_entidades_carregadas} empresas carregadas)`
-                      : ''}
+                      ? ` (${localFsCfg.total_entidades_carregadas} empresas carregadas — mantém-se ligado ao fechar e reabrir a aplicação)`
+                      : ' (mantém-se ligado ao fechar e reabrir a aplicação)'}
                   </span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleAbrirNoWindows(localFsCfg.pasta_gexcel_antiga_display)}
+                  onClick={() => handleAbrirNoWindows(localFsCfg.pasta_gexcel_antiga_display, undefined, 'antiga')}
                   className="px-2.5 py-1 rounded bg-white dark:bg-[#0c1520] border border-emerald-400 dark:border-emerald-800 text-xs flex items-center space-x-1 shrink-0 cursor-pointer"
                 >
                   <FolderOpen className="w-3.5 h-3.5 text-amber-500" />

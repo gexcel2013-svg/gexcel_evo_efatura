@@ -17,6 +17,8 @@ export interface LocalFsCentroConfig {
   pasta_pdfs_display: string;
   pasta_gexcel_antiga_display: string;
   ligado: boolean;
+  evogex_confirmado?: boolean;
+  antiga_confirmada?: boolean;
   total_entidades_carregadas?: number;
   total_sqlites_gravados?: number;
   updated_at: string;
@@ -96,6 +98,43 @@ export function obterLocalFsCentroConfig(): LocalFsCentroConfig | null {
 export function guardarLocalFsCentroConfig(cfg: LocalFsCentroConfig): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
   window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: cfg }));
+  // Persistir também no servidor central para nunca se perder ao fechar/reabrir a aplicação
+  void fetch('/api/app/centros-dados/registar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      centro_id: cfg.id || 'escritorio-principal',
+      nome: cfg.nome || 'Escritório Principal',
+      hostname: cfg.hostname || 'COMPUTADOR-LOCAL',
+      ip_local: '127.0.0.1:8015',
+      pasta_evogex: cfg.pasta_evogex_display || 'C:\\Dados_evoGex',
+      pasta_gexcel_antiga: cfg.pasta_gexcel_antiga_display || '',
+    }),
+  }).catch(() => {});
+}
+
+async function limparMotorDescompiladoSeExistir(evogexHandle: any): Promise<void> {
+  if (!evogexHandle) return;
+  try {
+    const motorHandle = await evogexHandle.getDirectoryHandle('motor', { create: false });
+    // Segurança Industrial Gexcel: elimina imediatamente qualquer pasta 'app' descompilada com ficheiros .py
+    for (const dirLegado of ['app', 'venv', 'libs', 'python_engine']) {
+      try {
+        await motorHandle.removeEntry(dirLegado, { recursive: true });
+      } catch {
+        // já limpo
+      }
+    }
+    for (const fichLegado of ['uv.exe', 'iniciar_motor_evogex.bat', 'pacote-motor.zip']) {
+      try {
+        await motorHandle.removeEntry(fichLegado);
+      } catch {
+        // já limpo
+      }
+    }
+  } catch {
+    // pasta motor ainda não existe
+  }
 }
 
 async function garantirPermissaoHandle(handle: any, mode: 'read' | 'readwrite' = 'readwrite'): Promise<boolean> {
@@ -192,25 +231,49 @@ export async function sincronizarSqlitesParaPastaLocal(nif?: string, pedirPermis
   }
 }
 
-export async function abrirPastaNoExploradorNativo(subpasta?: string): Promise<boolean> {
+export async function abrirPastaNoExploradorNativo(
+  subpasta?: string,
+  origem: 'evogex' | 'antiga' = 'evogex'
+): Promise<boolean> {
   const win = window as any;
   if (typeof win.showDirectoryPicker !== 'function') return false;
   try {
-    const rootHandle = await obterHandleEvogexAtivo(true);
-    let startHandle = rootHandle || activeAntigaHandle || (await loadHandleIdb('gexcel_antiga_root'));
-    if (rootHandle && subpasta) {
-      try {
-        startHandle = await rootHandle.getDirectoryHandle(subpasta, { create: true });
-      } catch {
-        startHandle = rootHandle;
+    if (origem === 'antiga') {
+      const antHandle = activeAntigaHandle || (await loadHandleIdb('gexcel_antiga_root'));
+      if (antHandle) {
+        let targetHandle = antHandle;
+        if (subpasta) {
+          try {
+            targetHandle = await antHandle.getDirectoryHandle(subpasta, { create: true });
+          } catch {
+            targetHandle = antHandle;
+          }
+        }
+        await win.showDirectoryPicker({ mode: 'readwrite', startIn: targetHandle });
+        return true;
       }
+      const resAnt = await escolherPastaDadosGexcelAntigos();
+      return resAnt.ok;
     }
-    const opts: any = { mode: 'readwrite' };
-    if (startHandle) {
-      opts.startIn = startHandle;
+
+    const rootHandle = await obterHandleEvogexAtivo(true);
+    if (rootHandle) {
+      await limparMotorDescompiladoSeExistir(rootHandle);
+      let startHandle = rootHandle;
+      if (subpasta) {
+        try {
+          startHandle = await rootHandle.getDirectoryHandle(subpasta, { create: true });
+        } catch {
+          startHandle = rootHandle;
+        }
+      }
+      await win.showDirectoryPicker({ mode: 'readwrite', startIn: startHandle });
+      return true;
     }
-    await win.showDirectoryPicker(opts);
-    return true;
+
+    // Se a pasta Dados_evoGex ainda não tinha sido ligada no Passo 1, ao selecioná-la aqui fica imediatamente ligada e gravada!
+    const resEvo = await escolherEInstalarPastaDadosEvogex();
+    return resEvo.ok;
   } catch {
     return false;
   }
@@ -317,6 +380,9 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
       await evogexHandle.getDirectoryHandle(sub, { create: true });
     }
 
+    // Limpar de imediato qualquer pasta 'motor\app' descompilada (.py) se tiver ficado de testes anteriores
+    await limparMotorDescompiladoSeExistir(evogexHandle);
+
     const cfgAtual = obterLocalFsCentroConfig();
     const nomeFinal = opcoes?.nomeCentro?.trim() || cfgAtual?.nome || 'Escritório Principal';
     const hostFinal = opcoes?.hostname?.trim() || cfgAtual?.hostname || 'COMPUTADOR-LOCAL';
@@ -336,6 +402,8 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
       pasta_pdfs_display: `${displayRoot}\\PDFs_Recibos`,
       pasta_gexcel_antiga_display: pastaAntigaDisplay,
       ligado: true,
+      evogex_confirmado: true,
+      antiga_confirmada: Boolean(cfgAtual?.antiga_confirmada || pastaAntigaDisplay),
       total_entidades_carregadas: totalEntidades,
       updated_at: new Date().toISOString(),
     };
@@ -419,6 +487,8 @@ export async function escolherPastaDadosGexcelAntigos(
       pasta_pdfs_display: `${evoPath}\\PDFs_Recibos`,
       pasta_gexcel_antiga_display: displayAntiga,
       ligado: true,
+      evogex_confirmado: Boolean(cfgAtual?.evogex_confirmado),
+      antiga_confirmada: true,
       total_entidades_carregadas: totalEntidades || cfgAtual?.total_entidades_carregadas,
       updated_at: new Date().toISOString(),
     };

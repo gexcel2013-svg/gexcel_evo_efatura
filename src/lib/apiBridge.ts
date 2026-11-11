@@ -155,8 +155,7 @@ if (typeof window !== 'undefined') {
 
       setMotorSource('cloud');
       const cloudUrl = pathPart === '/' ? '/api/efatura/health' : pathPart;
-      const safeInit: RequestInit | undefined =
-        init?.signal && init.signal.aborted ? { ...init, signal: undefined } : init;
+      const safeInit: RequestInit | undefined = init ? { ...init, signal: undefined } : undefined;
       const cloudRes = await origFetch(cloudUrl, safeInit);
       inspecionarRespostaESincronizarSqlite(pathPart, cloudRes);
       return cloudRes;
