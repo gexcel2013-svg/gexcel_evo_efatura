@@ -1,18 +1,58 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-PT">
   <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <script>
+      (function () {
+        try {
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function (regs) {
+              for (var i = 0; i < regs.length; i++) regs[i].unregister();
+            });
+          }
+          if ('caches' in window) {
+            caches.keys().then(function (names) {
+              for (var i = 0; i < names.length; i++) caches.delete(names[i]);
+            });
+          }
+          var reloadOnce = function () {
+            var lastReload = Number(sessionStorage.getItem('gexcel_evo06_cb_ts') || '0');
+            if (Date.now() - lastReload < 15000) return;
+            sessionStorage.setItem('gexcel_evo06_cb_ts', String(Date.now()));
+            var u = new URL(window.location.href);
+            u.searchParams.set('_cb', String(Date.now()));
+            window.location.replace(u.toString());
+          };
+          window.addEventListener(
+            'error',
+            function (e) {
+              var t = e && e.target;
+              if (t && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) {
+                var assetUrl = String(t.src || t.href || '');
+                if (assetUrl.indexOf('/assets/') !== -1) {
+                  reloadOnce();
+                }
+              }
+            },
+            true
+          );
+          window.addEventListener('vite:preloadError', function () {
+            reloadOnce();
+          });
+        } catch (err) {}
+      })();
+    </script>
     <link rel="icon" type="image/png" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="shortcut icon" href="/favicon.ico?v=20261108" />
+    <link rel="shortcut icon" href="/favicon.ico?v=20261111" />
     <title>evoGex.com · Importador e-Fatura & Recibos</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/assets/index-CT8CFLMY.js"></script>
+    <script type="module" crossorigin src="/assets/index-D_Cy6oPa.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DIkRk84D.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"></div>
   </body>
 </html>

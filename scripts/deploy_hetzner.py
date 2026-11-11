@@ -66,9 +66,17 @@ def upload_dir_filtered(sftp, local_dir, remote_dir, skip_dirs=None, allowed_ext
             sftp.put(local_path, remote_path)
 
 
-def build_caddy_site_block(domain: str, web_root: str) -> str:
+def build_caddy_site_block(domain: str, web_root: str, on_demand_tls: bool = True) -> str:
+    tls_block = "    tls {\n        on_demand\n    }\n" if on_demand_tls else ""
     return f"""{domain} {{
-    encode zstd gzip
+{tls_block}    encode zstd gzip
+    header Alt-Svc "clear"
+    @html_or_ver {{
+        path / /index.html /version.json
+    }}
+    header @html_or_ver Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+    header @html_or_ver Pragma "no-cache"
+    header @html_or_ver Expires "0"
 
     handle /api/collections/* {{
         reverse_proxy 127.0.0.1:8090
@@ -91,12 +99,71 @@ def build_caddy_site_block(domain: str, web_root: str) -> str:
     handle /api/* {{
         reverse_proxy 127.0.0.1:8015
     }}
+    handle /assets/* {{
+        root * {web_root}
+        file_server
+    }}
     handle {{
         root * {web_root}
         try_files {{path}} /index.html
         file_server
     }}
 }}"""
+
+
+def ensure_caddy_tcp_and_nocache(sftp):
+    import re
+    caddy_path = '/etc/caddy/Caddyfile'
+    with sftp.open(caddy_path, 'r') as f:
+        content = f.read().decode('utf-8', errors='replace')
+
+    # 1. Forçar HTTP/1.1 e HTTP/2 (TCP puro, desativando QUIC/HTTP3 UDP que encrava browsers após suspensão)
+    if 'protocols h1 h2' not in content:
+        content = content.replace(
+            '    on_demand_tls {\n        ask http://127.0.0.1:8010/health\n    }\n}',
+            '    on_demand_tls {\n        ask http://127.0.0.1:8010/health\n    }\n    servers {\n        protocols h1 h2\n    }\n}',
+            1,
+        )
+
+    # 2. Garantir header Alt-Svc "clear" também na Conciliação Bancária para limpar cache UDP antiga dos browsers
+    if 'conciliacao.evogex.com, dev.conciliacao.evogex.com, beta.conciliacao.evogex.com {' in content:
+        old_conc = """conciliacao.evogex.com, dev.conciliacao.evogex.com, beta.conciliacao.evogex.com {
+    tls {
+        on_demand
+    }
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8000
+}"""
+        new_conc = """conciliacao.evogex.com, dev.conciliacao.evogex.com, beta.conciliacao.evogex.com {
+    tls {
+        on_demand
+    }
+    header Alt-Svc "clear"
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8000
+}"""
+        if old_conc in content:
+            content = content.replace(old_conc, new_conc, 1)
+
+    # 3. Atualizar blocos dev.efatura.gexcelapps.com e dev.efatura.evogex.com com no-cache e /assets/* 404 real
+    block_gexcel = build_caddy_site_block('dev.efatura.gexcelapps.com', '/opt/gexcel/evo06/dev/dist', on_demand_tls=False)
+    block_evogex = build_caddy_site_block('dev.efatura.evogex.com', '/opt/gexcel/evo06/dev/dist', on_demand_tls=True)
+
+    content = re.sub(
+        r'dev\.efatura\.gexcelapps\.com\s*\{.*?\n\}',
+        block_gexcel,
+        content,
+        flags=re.DOTALL,
+    )
+    content = re.sub(
+        r'dev\.efatura\.evogex\.com\s*\{.*?\n\}',
+        block_evogex,
+        content,
+        flags=re.DOTALL,
+    )
+
+    with sftp.open(caddy_path, 'w') as f:
+        f.write(content)
 
 
 def main():
@@ -194,6 +261,8 @@ WantedBy=multi-user.target
 """
     with sftp.open('/etc/systemd/system/gevo-evo05-efatura.service', 'w') as f:
         f.write(service_unit)
+
+    ensure_caddy_tcp_and_nocache(sftp)
 
     run_ssh(ssh, "systemctl daemon-reload && systemctl enable gevo-evo05-efatura.service && systemctl restart gevo-evo05-efatura.service")
 

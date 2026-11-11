@@ -33,6 +33,7 @@ const origFetch = window.fetch.bind(window);
 let localMotorAvailable = !isCloudHost;
 let currentMotorSource: MotorSourceType = isCloudHost ? 'cloud' : 'local';
 let lastSyncedJobId = '';
+let consecutiveLocalFailures = 0;
 
 function setMotorSource(source: MotorSourceType) {
   if (typeof window === 'undefined') return;
@@ -54,7 +55,7 @@ export function getMotorSource(): MotorSourceType {
 async function probeLocalMotor(): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), 800);
+  const timer = window.setTimeout(() => controller.abort(), 700);
   try {
     const res = await origFetch('http://127.0.0.1:8015/', {
       method: 'GET',
@@ -63,6 +64,7 @@ async function probeLocalMotor(): Promise<boolean> {
     if (res.ok) {
       const text = await res.text();
       if (text.includes('API Importador e-Fatura Gexcel')) {
+        consecutiveLocalFailures = 0;
         localMotorAvailable = true;
         setMotorSource('local');
         return true;
@@ -73,6 +75,7 @@ async function probeLocalMotor(): Promise<boolean> {
   } finally {
     window.clearTimeout(timer);
   }
+  consecutiveLocalFailures += 1;
   localMotorAvailable = false;
   if (isCloudHost) {
     setMotorSource('cloud');
@@ -82,10 +85,17 @@ async function probeLocalMotor(): Promise<boolean> {
 
 if (typeof window !== 'undefined') {
   window.__GEXCEL_MOTOR_SOURCE__ = currentMotorSource;
-  void probeLocalMotor();
-  window.setInterval(() => {
+  // Adia a sondagem local para depois do arranque inicial da página não bloquear o browser
+  window.setTimeout(() => {
     void probeLocalMotor();
-  }, 10000);
+  }, 2500);
+  window.setInterval(() => {
+    // Se já falhou 3 vezes seguidas num portátil sem motor local, reduz a frequência para não saturar sockets do browser
+    if (isCloudHost && !localMotorAvailable && consecutiveLocalFailures >= 3) {
+      return;
+    }
+    void probeLocalMotor();
+  }, 15000);
 }
 
 function inspecionarRespostaESincronizarSqlite(pathPart: string, res: Response) {
