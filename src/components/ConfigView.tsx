@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   SlidersHorizontal, 
-  Database, 
   Users, 
   UserPlus, 
   ShieldCheck, 
@@ -16,10 +15,8 @@ import {
   LogOut,
   FolderOpen,
   Copy,
-  HardDrive,
   Plus,
-  Building2,
-  Check
+  Building2
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import type { AppUser, CentroDadosItem } from '../types/auth';
@@ -74,6 +71,8 @@ export function ConfigView() {
   const [sincronizandoSqlites, setSincronizandoSqlites] = useState<boolean>(false);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
+  const [passoAtivo, setPassoAtivo] = useState<1 | 2 | 3>(1);
+  const [mostrarPastasTecnicas, setMostrarPastasTecnicas] = useState<boolean>(false);
 
   const [localFsCfg, setLocalFsCfg] = useState<LocalFsCentroConfig | null>(() => obterLocalFsCentroConfig());
   const [caminhoPropostoEvogex, setCaminhoPropostoEvogex] = useState<string>(
@@ -490,43 +489,6 @@ export function ConfigView() {
     }
   };
 
-  const handleSelecionarCentro = async (centro: CentroDadosItem) => {
-    try {
-      const res = await fetch('http://127.0.0.1:8015/api/app/centros-dados/selecionar', {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({ centro_id: centro.id }),
-      });
-      if (res.ok) {
-        await refreshConfig();
-        setMensagemSucesso(`Centro de Dados ativo alterado para: ${centro.nome}`);
-      }
-    } catch {}
-  };
-
-  const handleEliminarCentro = async (centro: CentroDadosItem) => {
-    if (centrosDadosLista.length <= 1) {
-      setMensagemErro('Não é possível eliminar o único Centro de Dados registado.');
-      return;
-    }
-    if (!window.confirm(`Deseja remover o Centro de Dados '${centro.nome}' da lista da plataforma? (Os ficheiros no disco não são apagados)`)) {
-      return;
-    }
-    try {
-      const res = await fetch(`http://127.0.0.1:8015/api/app/centros-dados/${encodeURIComponent(centro.id)}`, {
-        method: 'DELETE',
-        headers: getHeaders(),
-      });
-      if (res.ok) {
-        await refreshConfig();
-        setMensagemSucesso(`Centro de Dados '${centro.nome}' removido.`);
-      } else {
-        const err = await res.json();
-        setMensagemErro(err.detail || 'Não foi possível remover o Centro de Dados.');
-      }
-    } catch {}
-  };
-
   const abrirCriacaoUser = (rolePredefinido: 'subutilizador' | 'admin' = 'subutilizador') => {
     if (!canManage) {
       setMensagemErro('Permissão negada. É obrigatório iniciar sessão como Administrador para criar utilizadores.');
@@ -845,220 +807,368 @@ export function ConfigView() {
         </div>
       )}
 
-      {/* Grid de Configurações */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        
-        {/* Card 1: Catálogo de Centros de Dados Nomeados & Seleção Direta de Pastas (100% Opaco) */}
-        <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] before:z-20">
-          <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
-            <div className="flex items-center space-x-2">
-              <Database className="w-4 h-4 text-[#0284c7] dark:text-sky-400" />
-              <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
-                Centros de Dados do Escritório ({centrosDadosLista.length})
+      {/* Barra de Navegação Passo a Passo (1 passo de cada vez, ultra-limpo) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 shrink-0 font-mono text-xs">
+        <button
+          type="button"
+          onClick={() => setPassoAtivo(1)}
+          className={`p-3 rounded-md border text-left transition flex items-center justify-between cursor-pointer ${
+            passoAtivo === 1
+              ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-2xs'
+              : 'bg-white dark:bg-[#0c1520] border-[#d7e0ea] dark:border-[#222f3e] hover:border-slate-400'
+          }`}
+        >
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <span
+              className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                passoAtivo === 1
+                  ? 'bg-[#0284c7] text-white'
+                  : 'bg-slate-200 dark:bg-[#132233] text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              1
+            </span>
+            <div className="min-w-0">
+              <span className="font-bold text-foreground block truncate">Onde Instalar Dados evoGex</span>
+              <span className="text-[10.5px] text-slate-600 dark:text-slate-400 block truncate">
+                {baseEvogexAtiva}
               </span>
             </div>
+          </div>
+          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 ml-2" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setPassoAtivo(2)}
+          className={`p-3 rounded-md border text-left transition flex items-center justify-between cursor-pointer ${
+            passoAtivo === 2
+              ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-2xs'
+              : 'bg-white dark:bg-[#0c1520] border-[#d7e0ea] dark:border-[#222f3e] hover:border-slate-400'
+          }`}
+        >
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <span
+              className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                passoAtivo === 2
+                  ? 'bg-[#0284c7] text-white'
+                  : 'bg-slate-200 dark:bg-[#132233] text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              2
+            </span>
+            <div className="min-w-0">
+              <span className="font-bold text-foreground block truncate">Carregar Empresas do Excel Antigo</span>
+              <span className="text-[10.5px] text-slate-600 dark:text-slate-400 block truncate">
+                {localFsCfg?.pasta_gexcel_antiga_display || 'Selecionar pasta antiga (GexcelApps)'}
+              </span>
+            </div>
+          </div>
+          {localFsCfg?.pasta_gexcel_antiga_display && (
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 ml-2" />
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setPassoAtivo(3)}
+          className={`p-3 rounded-md border text-left transition flex items-center justify-between cursor-pointer ${
+            passoAtivo === 3
+              ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-2xs'
+              : 'bg-white dark:bg-[#0c1520] border-[#d7e0ea] dark:border-[#222f3e] hover:border-slate-400'
+          }`}
+        >
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <span
+              className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                passoAtivo === 3
+                  ? 'bg-[#0284c7] text-white'
+                  : 'bg-slate-200 dark:bg-[#132233] text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              3
+            </span>
+            <div className="min-w-0">
+              <span className="font-bold text-foreground block truncate">Utilizadores & Acessos da Equipa</span>
+              <span className="text-[10.5px] text-slate-600 dark:text-slate-400 block truncate">
+                {lugaresOcupados} / {maxUsers} lugares ativos
+              </span>
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* PASSO 1: ONDE INSTALAR OS NOVOS DADOS EVOGEX */}
+      {passoAtivo === 1 && (
+        <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-5 space-y-5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] before:z-20">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-3">
+            <div>
+              <span className="text-[10px] font-mono uppercase tracking-wider text-[#0284c7] dark:text-sky-400 font-bold block">
+                Passo 1 de 3 · Instalação Principal
+              </span>
+              <h2 className="text-base font-display font-light text-foreground mt-0.5">
+                Onde pretende instalar e guardar os novos dados (Dados_evoGex)?
+              </h2>
+            </div>
             {canManage && (
-              <div className="flex items-center space-x-1.5">
-                <button
-                  type="button"
-                  onClick={handleSincronizarSqlitesAgora}
-                  disabled={sincronizandoSqlites}
-                  className="px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-mono text-[11px] font-semibold flex items-center space-x-1 cursor-pointer transition disabled:opacity-50"
-                  title="Gravar / atualizar imediatamente todas as bases SQLite (.db) na pasta BdsefaturaV4 local"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${sincronizandoSqlites ? 'animate-spin' : ''}`} />
-                  <span>{sincronizandoSqlites ? 'A gravar SQLites...' : 'Gravar SQLites na Pasta'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={abrirModalNovoCentro}
-                  className="px-2.5 py-1 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-[11px] font-semibold flex items-center space-x-1 cursor-pointer transition"
-                  title="Criar ou personalizar um Centro de Dados (ex: Escritório da Maia, Porto, Servidor)"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Novo Centro</span>
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={abrirModalNovoCentro}
+                className="px-3 py-1.5 rounded bg-slate-100 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-foreground font-mono text-xs font-semibold flex items-center space-x-1.5 cursor-pointer transition"
+              >
+                <Plus className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+                <span>+ Outro Escritório / Servidor</span>
+              </button>
             )}
           </div>
 
-          {/* Seleção Direta de Pastas no Computador ou Servidor (Com Caminho Padrão Proposto) */}
-          <div className="p-3 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-2.5 font-mono text-xs">
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                1. Onde instalar os novos Dados evoGex (PC ou Servidor — endereço proposto editável):
-              </label>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="text"
-                  value={caminhoPropostoEvogex}
-                  onChange={e => setCaminhoPropostoEvogex(e.target.value)}
-                  placeholder="Ex: C:\Dados_evoGex ou \\Servidor\Dados_evoGex"
-                  className="flex-1 h-8 px-2.5 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-foreground text-[11px] outline-hidden focus:ring-1 focus:ring-[#0284c7]"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleEscolherPastaEvogexDireto()}
-                  className="h-8 px-3 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[11px] font-semibold flex items-center space-x-1.5 shrink-0 cursor-pointer transition"
-                  title="Escolher pasta no Explorador do Windows e criar automaticamente a estrutura Dados_evoGex + SQLite"
-                >
-                  <FolderOpen className="w-3.5 h-3.5" />
-                  <span>Escolher Pasta</span>
-                </button>
-              </div>
+          <div className="p-4 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-3 font-mono text-xs">
+            <label className="block text-xs font-bold text-foreground">
+              Pasta principal onde ficam as novas bases de dados SQLite (padrão recomendado: <code className="text-[#0284c7] dark:text-sky-400">C:\Dados_evoGex</code>):
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={caminhoPropostoEvogex}
+                onChange={e => setCaminhoPropostoEvogex(e.target.value)}
+                placeholder="C:\Dados_evoGex"
+                className="flex-1 min-w-[240px] h-9 px-3 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-foreground text-xs outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+              />
+              <button
+                type="button"
+                onClick={() => handleEscolherPastaEvogexDireto()}
+                className="h-9 px-4 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-xs font-semibold flex items-center space-x-2 shrink-0 cursor-pointer transition shadow-2xs"
+              >
+                <FolderOpen className="w-4 h-4" />
+                <span>Escolher Pasta no Computador / Servidor</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSincronizarSqlitesAgora}
+                disabled={sincronizandoSqlites}
+                className="h-9 px-3.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold flex items-center space-x-1.5 shrink-0 cursor-pointer transition disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${sincronizandoSqlites ? 'animate-spin' : ''}`} />
+                <span>{sincronizandoSqlites ? 'A gravar SQLites...' : 'Atualizar Bases SQLite na Pasta'}</span>
+              </button>
             </div>
-
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                2. Onde estão os Dados GexcelApps antigos (Carregar empresas e XMLs — endereço proposto):
-              </label>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="text"
-                  value={caminhoPropostoAntiga}
-                  onChange={e => setCaminhoPropostoAntiga(e.target.value)}
-                  placeholder="Ex: C:\Dados_GexcelApps ou \\Servidor\Dados_GexcelApps"
-                  className="flex-1 h-8 px-2.5 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-foreground text-[11px] outline-hidden focus:ring-1 focus:ring-[#0284c7]"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleEscolherPastaAntigaDireto()}
-                  className="h-8 px-3 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-semibold flex items-center space-x-1.5 shrink-0 cursor-pointer transition"
-                  title="Escolher a pasta antiga Dados_GexcelApps no Explorador do Windows para carregar todas as empresas automaticamente"
-                >
-                  <FolderOpen className="w-3.5 h-3.5" />
-                  <span>Carregar Empresas</span>
-                </button>
-              </div>
-            </div>
+            <p className="text-[11px] text-slate-600 dark:text-slate-400">
+              Ao escolher a pasta, a plataforma cria automaticamente as subpastas necessárias (<code className="text-foreground">BdsefaturaV4</code>, <code className="text-foreground">BdsRV</code>, <code className="text-foreground">PDFs_Recibos</code>) e grava aí as bases SQLite das empresas importadas.
+            </p>
           </div>
 
-          <div className="space-y-2 max-h-56 overflow-y-auto pr-0.5">
+          {/* Resumo Limpo da Pasta Ativa */}
+          <div className="space-y-2">
             {centrosDadosLista.map(centro => (
               <div
                 key={centro.id}
-                className={`p-3 rounded-md border space-y-2 font-mono text-xs transition ${
-                  centro.selecionado
-                    ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7]'
-                    : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e]'
-                }`}
+                className="p-3.5 rounded-md border bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] flex flex-wrap items-center justify-between gap-3 font-mono text-xs"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center space-x-2 min-w-0">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex items-center space-x-2">
                     <Building2 className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0" />
-                    <span className="font-bold text-foreground truncate">{centro.nome}</span>
-                    <span className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
-                      ({centro.hostname})
+                    <span className="font-bold text-foreground">{centro.nome}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800">
+                      ATIVO
                     </span>
                   </div>
-                  <div className="flex items-center space-x-1.5 shrink-0">
-                    {centro.selecionado ? (
-                      <span className="text-[9.5px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center space-x-1">
-                        <Check className="w-3 h-3" />
-                        <span>ATIVO</span>
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleSelecionarCentro(centro)}
-                        className="px-2 py-0.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[10px] font-semibold cursor-pointer transition"
-                      >
-                        Ativar
-                      </button>
-                    )}
-                    {canManage && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => abrirModalEditarCentro(centro)}
-                          className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
-                          title="Editar nome e pastas deste Centro de Dados"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                        {centrosDadosLista.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleEliminarCentro(centro)}
-                            className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-rose-50 dark:hover:bg-[#290f14] border border-slate-300 dark:border-[#222f3e] text-rose-600 dark:text-rose-400 cursor-pointer"
-                            title="Remover Centro de Dados"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        )}
-                      </>
-                    )}
+                  <div className="text-slate-700 dark:text-slate-300 break-all">
+                    Pasta Dados evoGex: <strong className="text-foreground">{centro.pasta_evogex || baseEvogexAtiva}</strong>
                   </div>
                 </div>
-
-                <div className="space-y-1 text-[10.5px]">
-                  <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
-                    <span className="break-all text-slate-800 dark:text-slate-200">
-                      <strong>Dados evoGex (SQLite V4 + Motor):</strong> {centro.pasta_evogex || baseEvogexAtiva}
-                    </span>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleAbrirNoWindows(`${centro.pasta_evogex || baseEvogexAtiva}\\BdsefaturaV4`, 'BdsefaturaV4')}
+                    className="px-3 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground text-xs flex items-center space-x-1.5 cursor-pointer transition"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Abrir Pasta SQLites (BdsefaturaV4)</span>
+                  </button>
+                  {canManage && (
                     <button
                       type="button"
-                      onClick={() => handleAbrirNoWindows(centro.pasta_evogex || baseEvogexAtiva)}
-                      className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
-                      title="Abrir no Explorador do Windows"
+                      onClick={() => abrirModalEditarCentro(centro)}
+                      className="p-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
+                      title="Editar nome do escritório"
                     >
-                      <FolderOpen className="w-3 h-3" />
-                      <span>Abrir</span>
+                      <Edit2 className="w-3.5 h-3.5" />
                     </button>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
-                    <span className="break-all text-slate-700 dark:text-slate-300">
-                      <strong>Dados GexcelApps (Empresas / XMLs):</strong> {centro.pasta_gexcel_antiga || baseAntigaAtiva}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleAbrirNoWindows(centro.pasta_gexcel_antiga || baseAntigaAtiva)}
-                      className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
-                      title="Abrir no Explorador do Windows"
-                    >
-                      <FolderOpen className="w-3 h-3" />
-                      <span>Abrir</span>
-                    </button>
-                  </div>
+                  )}
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="space-y-2.5 pt-0.5">
-            {/* Compatibilidade Paralela com Excel Apps (XML BdsefaturaV3 + BdsRV) */}
-            <label className="p-3 rounded-md border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-[#091e1a] flex items-start space-x-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={alimentarXmlLegado}
-                onChange={e => handleToggleXmlLegado(e.target.checked)}
-                className="mt-0.5 rounded border-emerald-500 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
-              />
-              <div className="space-y-0.5">
-                <div className="flex items-center space-x-2">
-                  <span className="font-semibold font-mono text-xs text-emerald-950 dark:text-emerald-200">
-                    Alimentar Dados Atuais do Excel Apps (XML Legado)
-                  </span>
-                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200 font-bold">
-                    Dual-Write
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
-                  Grava nas bases SQLite (<code className="text-[10.5px]">BdsefaturaV4/{'{NIF}'}</code>) e atualiza em simultâneo os ficheiros XML na pasta antiga (<code className="text-[10.5px]">BdsefaturaV3</code> e <code className="text-[10.5px]">BdsRV</code>).
-                </p>
+          {/* Subpastas Técnicas Opcionais (Recolhidas por defeito para não poluir a vista) */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setMostrarPastasTecnicas(prev => !prev)}
+              className="text-xs font-mono text-slate-600 dark:text-slate-400 hover:text-foreground underline cursor-pointer"
+            >
+              {mostrarPastasTecnicas
+                ? 'Ocultar detalhe das 6 subpastas técnicas ▲'
+                : 'Ver detalhe das 6 subpastas técnicas criadas automaticamente ▼'}
+            </button>
+
+            {mostrarPastasTecnicas && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 mt-3">
+                {itensPastas.map(item => (
+                  <div
+                    key={item.id}
+                    className="p-2.5 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] flex flex-col justify-between space-y-1.5"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="font-mono font-semibold text-xs text-foreground block">
+                          {item.titulo}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleAbrirNoWindows(item.caminho, item.subpasta)}
+                          className="px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-[10px] font-mono text-foreground flex items-center space-x-1 cursor-pointer"
+                        >
+                          <FolderOpen className="w-3 h-3 text-amber-500" />
+                          <span>Abrir</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCopiarCaminho(item.caminho, item.titulo)}
+                          className="px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-[10px] font-mono text-foreground flex items-center space-x-1 cursor-pointer"
+                        >
+                          <Copy className="w-3 h-3 text-[#0284c7] dark:text-sky-400" />
+                          <span>Copiar</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="font-mono text-[11px] text-slate-800 dark:text-slate-200 bg-white dark:bg-[#0c1520] px-2.5 py-1 rounded border border-slate-200 dark:border-[#222f3e] break-all select-text">
+                      {item.caminho}
+                    </div>
+                  </div>
+                ))}
               </div>
-            </label>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end pt-3 border-t border-slate-200 dark:border-[#222f3e]">
+            <button
+              type="button"
+              onClick={() => setPassoAtivo(2)}
+              className="px-4 py-2 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-xs font-semibold cursor-pointer transition shadow-2xs"
+            >
+              Passo Seguinte: 2. Carregar Empresas do Excel Antigo →
+            </button>
           </div>
         </div>
+      )}
 
-        {/* Card 2: Sessão Ativa & Quota da Licença da Empresa (100% Opaco) */}
-        <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col justify-between before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-emerald-500 before:z-20">
-          <div className="space-y-3.5">
+      {/* PASSO 2: CARREGAR EMPRESAS E DADOS ANTIGOS DO EXCEL (GEXCELAPPS) */}
+      {passoAtivo === 2 && (
+        <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-5 space-y-5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-emerald-500 before:z-20">
+          <div className="border-b border-slate-200 dark:border-[#222f3e] pb-3">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-600 dark:text-emerald-400 font-bold block">
+              Passo 2 de 3 · Ligação aos Dados Antigos do Excel
+            </span>
+            <h2 className="text-base font-display font-light text-foreground mt-0.5">
+              Onde estão os dados antigos do Excel (GexcelApps / MultiIntegrador)?
+            </h2>
+          </div>
+
+          <div className="p-4 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-3 font-mono text-xs">
+            <label className="block text-xs font-bold text-foreground">
+              Selecione a pasta antiga onde reside o ficheiro de empresas (<code className="text-emerald-600 dark:text-emerald-400">tCredenciais.xml</code>):
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={caminhoPropostoAntiga}
+                onChange={e => setCaminhoPropostoAntiga(e.target.value)}
+                placeholder="Ex: C:\Users\...\Dropbox\AA_MultiIntegrador ou C:\Dados_GexcelApps"
+                className="flex-1 min-w-[240px] h-9 px-3 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-foreground text-xs outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+              />
+              <button
+                type="button"
+                onClick={() => handleEscolherPastaAntigaDireto()}
+                className="h-9 px-4 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold flex items-center space-x-2 shrink-0 cursor-pointer transition shadow-2xs"
+              >
+                <FolderOpen className="w-4 h-4" />
+                <span>Escolher Pasta Antiga e Carregar Empresas</span>
+              </button>
+            </div>
+
+            {localFsCfg?.pasta_gexcel_antiga_display && (
+              <div className="p-3 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-400 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 flex items-center justify-between gap-2">
+                <div className="flex items-center space-x-2 min-w-0">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span className="truncate">
+                    Pasta antiga ativa: <strong>{localFsCfg.pasta_gexcel_antiga_display}</strong>
+                    {localFsCfg.total_entidades_carregadas
+                      ? ` (${localFsCfg.total_entidades_carregadas} empresas carregadas)`
+                      : ''}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleAbrirNoWindows(localFsCfg.pasta_gexcel_antiga_display)}
+                  className="px-2.5 py-1 rounded bg-white dark:bg-[#0c1520] border border-emerald-400 dark:border-emerald-800 text-xs flex items-center space-x-1 shrink-0 cursor-pointer"
+                >
+                  <FolderOpen className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Abrir</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          <label className="p-3.5 rounded-md border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-[#091e1a] flex items-start space-x-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={alimentarXmlLegado}
+              onChange={e => handleToggleXmlLegado(e.target.checked)}
+              className="mt-0.5 rounded border-emerald-500 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+            />
+            <div className="space-y-0.5 font-mono">
+              <div className="flex items-center space-x-2">
+                <span className="font-semibold text-xs text-emerald-950 dark:text-emerald-200">
+                  Alimentar em simultâneo os ficheiros antigos do Excel (BdsefaturaV3 e BdsRV)
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
+                Mantém os mapas Excel antigos atualizados ao mesmo tempo que grava nas novas bases SQLite (<code className="text-[10.5px]">C:\Dados_evoGex\BdsefaturaV4</code>).
+              </p>
+            </div>
+          </label>
+
+          <div className="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-[#222f3e]">
+            <button
+              type="button"
+              onClick={() => setPassoAtivo(1)}
+              className="px-4 py-2 rounded bg-slate-100 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-foreground font-mono text-xs font-semibold cursor-pointer transition"
+            >
+              ← Passo Anterior: 1. Pasta Dados evoGex
+            </button>
+            <button
+              type="button"
+              onClick={() => setPassoAtivo(3)}
+              className="px-4 py-2 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-xs font-semibold cursor-pointer transition shadow-2xs"
+            >
+              Passo Seguinte: 3. Utilizadores & Acessos →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* PASSO 3: UTILIZADORES E ACESSOS DA EQUIPA */}
+      {passoAtivo === 3 && (
+        <div className="space-y-4">
+          <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col justify-between before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-emerald-500 before:z-20">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
               <div className="flex items-center space-x-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-500" />
                 <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
-                  Sessão Ativa & Quota de Utilizadores
+                  Passo 3 de 3 · Sessão Ativa & Quota de Utilizadores ({lugaresOcupados} / {maxUsers})
                 </span>
               </div>
               <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800">
@@ -1066,38 +1176,31 @@ export function ConfigView() {
               </span>
             </div>
 
-            {currentUser ? (
-              <div className="space-y-3 pt-1">
-                <div className="p-3 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-9 h-9 rounded-full bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-400 flex items-center justify-center font-mono font-bold text-sm border border-sky-300 dark:border-sky-800">
-                      {currentUser.nome.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <span className="font-semibold font-mono text-xs block text-foreground">
-                        {currentUser.nome}
-                      </span>
-                      <span className="text-[10px] font-mono text-slate-700 dark:text-slate-300 block">
-                        @{currentUser.username} {currentUser.email && `· ${currentUser.email}`}
-                      </span>
-                    </div>
+            {currentUser && (
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e]">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 rounded-full bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-400 flex items-center justify-center font-mono font-bold text-sm border border-sky-300 dark:border-sky-800">
+                    {currentUser.nome.charAt(0).toUpperCase()}
                   </div>
-
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border-sky-300 dark:border-sky-800">
-                    {currentUser.role === 'subutilizador' ? 'OPERADOR' : 'ADMIN'}
-                  </span>
+                  <div>
+                    <span className="font-semibold font-mono text-xs block text-foreground">
+                      {currentUser.nome}
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-700 dark:text-slate-300 block">
+                      @{currentUser.username} {currentUser.email && `· ${currentUser.email}`}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="flex items-center space-x-2">
                   <button
                     type="button"
                     onClick={() => setShowLoginModal(true)}
-                    className="flex-1 px-3 py-1.5 rounded bg-slate-50 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-xs font-mono transition cursor-pointer flex items-center justify-center space-x-1.5"
+                    className="px-3 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-xs font-mono transition cursor-pointer flex items-center space-x-1.5"
                   >
                     <User className="w-3.5 h-3.5 text-slate-700 dark:text-slate-300" />
                     <span>Trocar de Operador</span>
                   </button>
-
                   <button
                     type="button"
                     onClick={logout}
@@ -1108,328 +1211,181 @@ export function ConfigView() {
                   </button>
                 </div>
               </div>
-            ) : (
-              <div className="p-4 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-center space-y-2.5">
-                <p className="text-xs font-mono text-slate-700 dark:text-slate-300">
-                  Inicie sessão com a sua conta de Administrador ou Operador para gerir permissões.
-                </p>
-                <div className="flex items-center justify-center">
-                  <button
-                    type="button"
-                    onClick={() => setShowLoginModal(true)}
-                    className="px-4 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-xs font-semibold shadow-xs cursor-pointer transition flex items-center space-x-1.5"
-                  >
-                    <User className="w-3.5 h-3.5" />
-                    <span>Iniciar Sessão</span>
-                  </button>
-                </div>
-              </div>
             )}
           </div>
 
-          {/* Resumo de Quota Contratada da Empresa */}
-          <div className="p-3 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-2">
-            <div className="flex items-center justify-between font-mono text-xs">
-              <span className="font-semibold text-foreground">Lugares de Utilizador Ativos</span>
-              <span className="font-bold text-[#0284c7] dark:text-sky-400">
-                {lugaresOcupados} / {maxUsers} utilizados
-              </span>
-            </div>
-            <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-[#0c1520] overflow-hidden border border-slate-300 dark:border-[#222f3e]">
-              <div
-                className={`h-full transition-all ${lugaresOcupados >= maxUsers ? 'bg-amber-500' : 'bg-[#0284c7]'}`}
-                style={{ width: `${Math.min(100, Math.round((lugaresOcupados / Math.max(1, maxUsers)) * 100))}%` }}
-              />
-            </div>
-            <p className="text-[11px] font-mono text-slate-700 dark:text-slate-300">
-              O Administrador da empresa pode adicionar ou remover operadores a qualquer momento dentro do limite de lugares da assinatura.
-            </p>
-          </div>
-        </div>
-
-        {/* Card 3: Pastas Locais & Transparência de Armazenamento (100% Opaco + Alterar + Abrir no Windows + Copiar) */}
-        <div className="md:col-span-2 relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-amber-500 before:z-20">
-          <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
-            <div className="flex items-center space-x-2">
-              <HardDrive className="w-4 h-4 text-amber-500" />
-              <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
-                Diretórios Locais de Dados & Ficheiros Fiscais
-              </span>
-            </div>
-            <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800">
-              Leitura Completa
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-            {itensPastas.map(item => (
-              <div
-                key={item.id}
-                className="p-2.5 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] flex flex-col justify-between space-y-1.5"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <span className="font-mono font-semibold text-xs text-foreground block">
-                      {item.titulo}
-                    </span>
-                    <span className="font-mono text-[10.5px] text-slate-700 dark:text-slate-300 block">
-                      {item.subtitulo}
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        item.tipoSelecao === 'antiga'
-                          ? handleEscolherPastaAntigaDireto()
-                          : handleEscolherPastaEvogexDireto()
-                      }
-                      className="px-2 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-sky-50 dark:hover:bg-[#0a1929] border border-slate-300 dark:border-[#222f3e] text-[10.5px] font-mono text-[#0284c7] dark:text-sky-400 font-semibold flex items-center space-x-1 cursor-pointer transition"
-                      title="Escolher ou alterar pasta no computador / servidor"
-                    >
-                      <Edit2 className="w-3 h-3" />
-                      <span>Escolher</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleAbrirNoWindows(item.caminho, item.subpasta)}
-                      disabled={!item.caminho}
-                      className="px-2 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-sky-50 dark:hover:bg-[#0a1929] border border-slate-300 dark:border-[#222f3e] text-[10.5px] font-mono text-foreground flex items-center space-x-1 cursor-pointer transition disabled:opacity-40"
-                      title="Abrir diretamente no Explorador do Windows (📂)"
-                    >
-                      <FolderOpen className="w-3 h-3 text-amber-500" />
-                      <span>Abrir</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleCopiarCaminho(item.caminho, item.titulo)}
-                      disabled={!item.caminho}
-                      className="px-2 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-sky-50 dark:hover:bg-[#0a1929] border border-slate-300 dark:border-[#222f3e] text-[10.5px] font-mono text-foreground flex items-center space-x-1 cursor-pointer transition disabled:opacity-40"
-                      title="Copiar endereço completo (📋)"
-                    >
-                      <Copy className="w-3 h-3 text-[#0284c7] dark:text-sky-400" />
-                      <span>Copiar</span>
-                    </button>
-                  </div>
-                </div>
-                <div
-                  className="font-mono text-[11px] text-slate-800 dark:text-slate-200 bg-white dark:bg-[#0c1520] px-2.5 py-1.5 rounded border border-slate-200 dark:border-[#222f3e] break-all select-text"
-                  title={item.caminho}
-                >
-                  {item.caminho}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Card 4: Gestão de Utilizadores da Empresa (RBAC + Ordenação Universal) */}
-        <div className="md:col-span-2 relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-purple-500 before:z-20">
-          <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
-            <div className="flex items-center space-x-2">
-              <Users className="w-4 h-4 text-purple-500" />
-              <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
-                Utilizadores da Empresa & Perfis de Acesso ({lugaresOcupados}/{maxUsers})
-              </span>
-            </div>
-            
-            <div className="flex items-center space-x-2">
-              <button
-                type="button"
-                onClick={carregarListaUtilizadores}
-                disabled={carregandoUsers}
-                className="p-1.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200 dark:hover:bg-[#1c314a] transition cursor-pointer"
-                title="Atualizar lista de utilizadores"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${carregandoUsers ? 'animate-spin' : ''}`} />
-              </button>
-
-              {!isSub ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => abrirCriacaoUser('subutilizador')}
-                    className="px-3 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-xs font-semibold shadow-xs flex items-center space-x-1.5 cursor-pointer transition"
-                    title="Adicionar um novo subutilizador / operador diário"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span>+ Adicionar Operador</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => abrirCriacaoUser('admin')}
-                    className="px-3 py-1.5 rounded bg-slate-50 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-foreground font-mono text-xs font-semibold shadow-xs flex items-center space-x-1.5 cursor-pointer transition"
-                    title="Adicionar um novo administrador da empresa"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
-                    <span>+ Novo Administrador</span>
-                  </button>
-                </>
-              ) : (
-                <span className="text-[10px] font-mono text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e]">
-                  Operador (Apenas Leitura)
+          <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-purple-500 before:z-20">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
+              <div className="flex items-center space-x-2">
+                <Users className="w-4 h-4 text-purple-500" />
+                <span className="font-semibold text-xs font-mono uppercase tracking-wider text-foreground">
+                  Utilizadores da Empresa & Perfis de Acesso ({lugaresOcupados}/{maxUsers})
                 </span>
-              )}
-            </div>
-          </div>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={carregarListaUtilizadores}
+                  disabled={carregandoUsers}
+                  className="p-1.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200 dark:hover:bg-[#1c314a] transition cursor-pointer"
+                  title="Atualizar lista de utilizadores"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${carregandoUsers ? 'animate-spin' : ''}`} />
+                </button>
 
-          <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
-            Perfis disponíveis na empresa: <strong className="text-foreground">Administrador</strong> (gestão de utilizadores, configurações e retenção) e <strong className="text-foreground">Operador / Subutilizador</strong> (importação e consulta diária).
-          </p>
+                {!isSub ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => abrirCriacaoUser('subutilizador')}
+                      className="px-3 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-xs font-semibold shadow-xs flex items-center space-x-1.5 cursor-pointer transition"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span>+ Adicionar Operador</span>
+                    </button>
 
-          {/* Tabela de Utilizadores com Ordenação Universal */}
-          <div className="overflow-x-auto rounded border border-slate-300 dark:border-[#222f3e]">
-            <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-b border-slate-300 dark:border-[#222f3e] select-none">
-                <tr>
-                  <th
-                    onClick={() => handleSortUsers('nome')}
-                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
-                  >
-                    Nome / Utilizador {renderSortIndicator('nome')}
-                  </th>
-                  <th
-                    onClick={() => handleSortUsers('email')}
-                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
-                  >
-                    Email {renderSortIndicator('email')}
-                  </th>
-                  <th
-                    onClick={() => handleSortUsers('role')}
-                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
-                  >
-                    Perfil {renderSortIndicator('role')}
-                  </th>
-                  <th
-                    onClick={() => handleSortUsers('centros')}
-                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
-                  >
-                    Centros Autorizados {renderSortIndicator('centros')}
-                  </th>
-                  <th
-                    onClick={() => handleSortUsers('ativo')}
-                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
-                  >
-                    Estado {renderSortIndicator('ativo')}
-                  </th>
-                  <th
-                    onClick={() => handleSortUsers('ultimo_login')}
-                    className="py-2 px-3 cursor-pointer hover:text-foreground transition"
-                  >
-                    Último Acesso {renderSortIndicator('ultimo_login')}
-                  </th>
-                  <th className="py-2 px-3 text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-[#1b2b3d] bg-white dark:bg-[#0c1520]">
-                {utilizadoresOrdenados.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-6 text-center text-slate-600 dark:text-slate-400">
-                      Nenhum operador adicional registado. Clique em &ldquo;+ Adicionar Operador&rdquo; para criar acessos para a sua equipa.
-                    </td>
-                  </tr>
+                    <button
+                      type="button"
+                      onClick={() => abrirCriacaoUser('admin')}
+                      className="px-3 py-1.5 rounded bg-slate-50 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-foreground font-mono text-xs font-semibold shadow-xs flex items-center space-x-1.5 cursor-pointer transition"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+                      <span>+ Novo Administrador</span>
+                    </button>
+                  </>
                 ) : (
-                  utilizadoresOrdenados.map(u => (
-                    <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-[#132233] transition">
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-semibold text-foreground">{u.nome}</span>
-                          <span className="text-[10px] text-slate-600 dark:text-slate-400">@{u.username}</span>
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">
-                        {u.email || '—'}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                          u.role === 'admin'
-                            ? 'bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border-sky-300 dark:border-sky-800'
-                            : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#222f3e]'
-                        }`}>
-                          {u.role === 'admin' ? 'ADMINISTRADOR' : 'OPERADOR'}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-sky-50 dark:bg-[#0a1929] text-slate-800 dark:text-slate-200 border border-sky-200 dark:border-sky-900">
-                          {formatarCentrosUser(u)}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span className={`text-[10px] font-semibold flex items-center space-x-1 ${
-                          u.ativo ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${u.ativo ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                          <span>{u.ativo ? 'Ativo' : 'Inativo'}</span>
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-[11px] text-slate-700 dark:text-slate-300">
-                        {u.ultimo_login ? new Date(u.ultimo_login).toLocaleDateString('pt-PT') : 'Nunca'}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <div className="flex items-center justify-end space-x-1">
-                          {(() => {
-                            const isSelf = currentUser && u.id === currentUser.id;
-                            const podeEditar = isSuper || isAdm || (isSub && isSelf) || !currentUser;
+                  <span className="text-[10px] font-mono text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e]">
+                    Operador (Apenas Leitura)
+                  </span>
+                )}
+              </div>
+            </div>
 
-                            if (podeEditar) {
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => abrirEdicaoUser(u)}
-                                  className="p-1 rounded text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200 dark:hover:bg-[#1c314a] cursor-pointer transition"
-                                  title={isSelf ? "Alterar a minha palavra-passe / perfil" : "Editar Utilizador / Alterar Palavra-passe"}
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                              );
-                            }
-
-                            return (
-                              <span className="text-[9.5px] text-slate-600 dark:text-slate-400 font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#132233]">
-                                Bloqueado
-                              </span>
-                            );
-                          })()}
-
-                          {(() => {
-                            const isSelf = currentUser && u.id === currentUser.id;
-                            const podeEliminar = !isSelf && !isSub && (isSuper || (isAdm && u.role === 'subutilizador'));
-
-                            if (podeEliminar) {
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => handleEliminarUser(u)}
-                                  className="p-1 rounded text-slate-700 dark:text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-[#290f14] cursor-pointer transition"
-                                  title="Eliminar Utilizador"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              );
-                            }
-
-                            if (isSelf) {
-                              return (
-                                <span className="text-[9px] text-[#0284c7] dark:text-sky-300 font-mono px-1.5 py-0.5 rounded bg-sky-100 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800" title="Sua sessão ativa atual (auto-eliminação bloqueada)">
-                                  Conta Ativa
-                                </span>
-                              );
-                            }
-
-                            return null;
-                          })()}
-                        </div>
+            <div className="overflow-x-auto rounded border border-slate-300 dark:border-[#222f3e]">
+              <table className="w-full text-left text-xs font-mono">
+                <thead className="bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-b border-slate-300 dark:border-[#222f3e] select-none">
+                  <tr>
+                    <th onClick={() => handleSortUsers('nome')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
+                      Nome / Utilizador {renderSortIndicator('nome')}
+                    </th>
+                    <th onClick={() => handleSortUsers('email')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
+                      Email {renderSortIndicator('email')}
+                    </th>
+                    <th onClick={() => handleSortUsers('role')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
+                      Perfil {renderSortIndicator('role')}
+                    </th>
+                    <th onClick={() => handleSortUsers('centros')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
+                      Centros Autorizados {renderSortIndicator('centros')}
+                    </th>
+                    <th onClick={() => handleSortUsers('ativo')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
+                      Estado {renderSortIndicator('ativo')}
+                    </th>
+                    <th onClick={() => handleSortUsers('ultimo_login')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
+                      Último Acesso {renderSortIndicator('ultimo_login')}
+                    </th>
+                    <th className="py-2 px-3 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-[#1b2b3d] bg-white dark:bg-[#0c1520]">
+                  {utilizadoresOrdenados.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-6 text-center text-slate-600 dark:text-slate-400">
+                        Nenhum operador adicional registado. Clique em &ldquo;+ Adicionar Operador&rdquo; para criar acessos para a sua equipa.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    utilizadoresOrdenados.map(u => (
+                      <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-[#132233] transition">
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center space-x-2">
+                            <span className="font-semibold text-foreground">{u.nome}</span>
+                            <span className="text-[10px] text-slate-600 dark:text-slate-400">@{u.username}</span>
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">
+                          {u.email || '—'}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                            u.role === 'admin'
+                              ? 'bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border-sky-300 dark:border-sky-800'
+                              : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#222f3e]'
+                          }`}>
+                            {u.role === 'admin' ? 'ADMINISTRADOR' : 'OPERADOR'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-sky-50 dark:bg-[#0a1929] text-slate-800 dark:text-slate-200 border border-sky-200 dark:border-sky-900">
+                            {formatarCentrosUser(u)}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className={`text-[10px] font-semibold flex items-center space-x-1 ${
+                            u.ativo ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${u.ativo ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                            <span>{u.ativo ? 'Ativo' : 'Inativo'}</span>
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-[11px] text-slate-700 dark:text-slate-300">
+                          {u.ultimo_login ? new Date(u.ultimo_login).toLocaleDateString('pt-PT') : 'Nunca'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <div className="flex items-center justify-end space-x-1">
+                            {(() => {
+                              const isSelf = currentUser && u.id === currentUser.id;
+                              const podeEditar = isSuper || isAdm || (isSub && isSelf) || !currentUser;
+                              if (podeEditar) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => abrirEdicaoUser(u)}
+                                    className="p-1 rounded text-slate-700 dark:text-slate-300 hover:text-foreground hover:bg-slate-200 dark:hover:bg-[#1c314a] cursor-pointer transition"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                );
+                              }
+                              return null;
+                            })()}
+                            {(() => {
+                              const isSelf = currentUser && u.id === currentUser.id;
+                              const podeEliminar = !isSelf && !isSub && (isSuper || (isAdm && u.role === 'subutilizador'));
+                              if (podeEliminar) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEliminarUser(u)}
+                                    className="p-1 rounded text-slate-700 dark:text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-[#290f14] cursor-pointer transition"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={() => setPassoAtivo(2)}
+                className="px-4 py-2 rounded bg-slate-100 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-foreground font-mono text-xs font-semibold cursor-pointer transition"
+              >
+                ← Passo Anterior: 2. Carregar Empresas do Excel
+              </button>
+            </div>
           </div>
         </div>
-
-      </div>
+      )}
 
       {/* Modal de Criação / Edição de Centro de Dados Nomeado */}
       {modalCentroAberto && (

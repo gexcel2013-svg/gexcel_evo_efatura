@@ -75,7 +75,19 @@ export function obterLocalFsCentroConfig(): LocalFsCentroConfig | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as LocalFsCentroConfig;
+    const parsed = JSON.parse(raw) as LocalFsCentroConfig;
+    // Corrige configurações antigas onde Dados_evoGex ficou dentro de Dados_GexcelApps por defeito
+    if (
+      parsed.pasta_evogex_display &&
+      /dados_gexcelapps[\\/]dados_evogex/i.test(parsed.pasta_evogex_display)
+    ) {
+      parsed.pasta_evogex_display = 'C:\\Dados_evoGex';
+      parsed.pasta_motor_display = 'C:\\Dados_evoGex\\motor';
+      parsed.pasta_v4_display = 'C:\\Dados_evoGex\\BdsefaturaV4';
+      parsed.pasta_pdfs_display = 'C:\\Dados_evoGex\\PDFs_Recibos';
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -227,6 +239,36 @@ async function tentarLerTCredenciaisDeHandle(dirHandle: any): Promise<string | n
   return null;
 }
 
+function inferirCaminhoCompletoAntiga(pickedName: string, xmlContent: string | null, caminhoProposto?: string): string {
+  const cleanPicked = (pickedName || 'Dados_GexcelApps').trim();
+  const prop = (caminhoProposto || '').trim();
+
+  // 1. Se o utilizador escreveu manualmente um caminho que já termina com o nome da pasta escolhida, preserva-o
+  if (prop && prop.toLowerCase().endsWith(cleanPicked.toLowerCase())) {
+    return prop;
+  }
+
+  // 2. Tenta inferir a pasta pai real (ex: C:\Users\...\Dropbox) a partir do próprio tCredenciais.xml
+  if (xmlContent) {
+    const matchDropbox = xmlContent.match(/([A-Za-z]:\\[^<>"]*?\\Dropbox)(?:\\|<)/i);
+    if (matchDropbox && matchDropbox[1]) {
+      return `${matchDropbox[1]}\\${cleanPicked}`;
+    }
+    const matchUser = xmlContent.match(/([A-Za-z]:\\Users\\[^\\<>"]+)/i);
+    if (matchUser && matchUser[1] && /dropbox|onedrive|desktop|document/i.test(xmlContent)) {
+      if (/dropbox/i.test(xmlContent)) {
+        return `${matchUser[1]}\\Dropbox\\${cleanPicked}`;
+      }
+    }
+  }
+
+  // 3. Caso contrário, mostra diretamente o nome real da pasta selecionada pelo utilizador no Windows Explorer
+  if (/^[A-Za-z]:\\?$/i.test(cleanPicked)) {
+    return 'C:\\Dados_GexcelApps';
+  }
+  return `C:\\${cleanPicked}`;
+}
+
 /**
  * Abre a janela nativa do Windows Explorer para o utilizador escolher onde instalar/criar
  * a pasta Dados_evoGex (no computador ou servidor), cria imediatamente todas as subpastas
@@ -247,19 +289,27 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
 
   try {
     const pickedHandle = await win.showDirectoryPicker({ mode: 'readwrite' });
-    const pickedName: string = pickedHandle.name || 'Dados_evoGex';
+    const pickedName: string = (pickedHandle.name || 'Dados_evoGex').trim();
 
-    // Se o utilizador escolheu uma pasta que ainda não se chama Dados_evoGex (ex: C:\ ou uma pasta geral),
-    // verificar se ele escolheu a própria Dados_evoGex ou onde a quer criar:
     let evogexHandle = pickedHandle;
-    let displayRoot = opcoes?.caminhoProposto?.trim() || `C:\\${pickedName}`;
+    const prop = (opcoes?.caminhoProposto || '').trim();
+    let displayRoot = 'C:\\Dados_evoGex';
 
-    if (!/dados_evogex/i.test(pickedName)) {
+    if (/^dados_evogex$/i.test(pickedName)) {
+      evogexHandle = pickedHandle;
+      displayRoot = prop && /dados_evogex/i.test(prop) ? prop : 'C:\\Dados_evoGex';
+    } else if (/^[A-Za-z]:\\?$/i.test(pickedName) || pickedName.includes('(')) {
+      // Utilizador escolheu a raiz do disco (ex: "Disco Local (C:)")
       evogexHandle = await pickedHandle.getDirectoryHandle('Dados_evoGex', { create: true });
-      const baseClean = (opcoes?.caminhoProposto?.trim() || `C:\\${pickedName}`).replace(/[\\/]Dados_evoGex$/i, '');
-      displayRoot = `${baseClean}\\Dados_evoGex`;
-    } else if (!opcoes?.caminhoProposto) {
-      displayRoot = `C:\\${pickedName}`;
+      displayRoot = 'C:\\Dados_evoGex';
+    } else {
+      // Utilizador escolheu uma pasta específica onde quer criar Dados_evoGex
+      evogexHandle = await pickedHandle.getDirectoryHandle('Dados_evoGex', { create: true });
+      if (prop && prop.toLowerCase().endsWith(pickedName.toLowerCase())) {
+        displayRoot = `${prop}\\Dados_evoGex`;
+      } else {
+        displayRoot = `C:\\${pickedName}\\Dados_evoGex`;
+      }
     }
 
     // Criar toda a estrutura oficial automaticamente dentro de Dados_evoGex
@@ -271,26 +321,8 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
     const nomeFinal = opcoes?.nomeCentro?.trim() || cfgAtual?.nome || 'Escritório Principal';
     const hostFinal = opcoes?.hostname?.trim() || cfgAtual?.hostname || 'COMPUTADOR-LOCAL';
 
-    // Verificar se na pasta escolhida já existe tCredenciais.xml (caso tenha escolhido ao lado dos Dados_GexcelApps)
-    let totalEntidades = cfgAtual?.total_entidades_carregadas || 0;
-    let pastaAntigaDisplay = cfgAtual?.pasta_gexcel_antiga_display || '';
-    const xmlEncontrado = await tentarLerTCredenciaisDeHandle(pickedHandle);
-    if (xmlEncontrado) {
-      pastaAntigaDisplay = `C:\\${pickedName}`;
-      try {
-        const resXml = await fetch('/api/entidades/importar-tcredenciais', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ xml_content: xmlEncontrado, nome_pasta: pastaAntigaDisplay }),
-        });
-        if (resXml.ok) {
-          const dXml = await resXml.json();
-          totalEntidades = dXml.total_entidades || totalEntidades;
-        }
-      } catch {
-        // ignore
-      }
-    }
+    const totalEntidades = cfgAtual?.total_entidades_carregadas || 0;
+    const pastaAntigaDisplay = cfgAtual?.pasta_gexcel_antiga_display || '';
 
     const novoCfg: LocalFsCentroConfig = {
       id: 'escritorio-principal',
@@ -353,10 +385,10 @@ export async function escolherPastaDadosGexcelAntigos(
     activeAntigaHandle = pickedHandle;
     await saveHandleIdb('gexcel_antiga_root', pickedHandle);
 
-    const pickedName: string = pickedHandle.name || 'Dados_GexcelApps';
-    const displayAntiga = caminhoProposto?.trim() || `C:\\${pickedName}`;
-
+    const pickedName: string = (pickedHandle.name || 'Dados_GexcelApps').trim();
     const xmlContent = await tentarLerTCredenciaisDeHandle(pickedHandle);
+    const displayAntiga = inferirCaminhoCompletoAntiga(pickedName, xmlContent, caminhoProposto);
+
     let totalEntidades = 0;
 
     if (xmlContent) {
@@ -371,42 +403,25 @@ export async function escolherPastaDadosGexcelAntigos(
       }
     }
 
-    // Se ainda não tinha pasta Dados_evoGex definida, cria automaticamente Dados_evoGex ao lado / dentro
+    // NUNCA colocar Dados_evoGex dentro de Dados_GexcelApps por defeito: o padrão de Dados_evoGex é sempre C:\Dados_evoGex
     let cfgAtual = obterLocalFsCentroConfig();
-    if (!cfgAtual || !cfgAtual.pasta_evogex_display) {
-      const evogexSub = await pickedHandle.getDirectoryHandle('Dados_evoGex', { create: true });
-      for (const sub of ['BdsefaturaV4', 'BdsefaturaV3', 'BdsRV', 'PDFs_Recibos', 'safedrive', 'index_core', 'motor', 'logs']) {
-        await evogexSub.getDirectoryHandle(sub, { create: true });
-      }
-      activeEvogexHandle = evogexSub;
-      await saveHandleIdb('evogex_root', evogexSub);
-      const evoPath = `${displayAntiga}\\Dados_evoGex`;
-      cfgAtual = {
-        id: 'escritorio-principal',
-        nome: 'Escritório Principal',
-        hostname: 'COMPUTADOR-LOCAL',
-        pasta_evogex_display: evoPath,
-        pasta_motor_display: `${evoPath}\\motor`,
-        pasta_v4_display: `${evoPath}\\BdsefaturaV4`,
-        pasta_v3_display: `${displayAntiga}\\BdsefaturaV3`,
-        pasta_bdsrv_display: `${displayAntiga}\\BdsRV`,
-        pasta_pdfs_display: `${evoPath}\\PDFs_Recibos`,
-        pasta_gexcel_antiga_display: displayAntiga,
-        ligado: true,
-        total_entidades_carregadas: totalEntidades,
-        updated_at: new Date().toISOString(),
-      };
-    } else {
-      cfgAtual = {
-        ...cfgAtual,
-        pasta_gexcel_antiga_display: displayAntiga,
-        pasta_v3_display: `${displayAntiga}\\BdsefaturaV3`,
-        pasta_bdsrv_display: `${displayAntiga}\\BdsRV`,
-        ligado: true,
-        total_entidades_carregadas: totalEntidades || cfgAtual.total_entidades_carregadas,
-        updated_at: new Date().toISOString(),
-      };
-    }
+    const evoPath = cfgAtual?.pasta_evogex_display || 'C:\\Dados_evoGex';
+
+    cfgAtual = {
+      id: cfgAtual?.id || 'escritorio-principal',
+      nome: cfgAtual?.nome || 'Escritório Principal',
+      hostname: cfgAtual?.hostname || 'COMPUTADOR-LOCAL',
+      pasta_evogex_display: evoPath,
+      pasta_motor_display: `${evoPath}\\motor`,
+      pasta_v4_display: `${evoPath}\\BdsefaturaV4`,
+      pasta_v3_display: `${displayAntiga}\\BdsefaturaV3`,
+      pasta_bdsrv_display: `${displayAntiga}\\BdsRV`,
+      pasta_pdfs_display: `${evoPath}\\PDFs_Recibos`,
+      pasta_gexcel_antiga_display: displayAntiga,
+      ligado: true,
+      total_entidades_carregadas: totalEntidades || cfgAtual?.total_entidades_carregadas,
+      updated_at: new Date().toISOString(),
+    };
 
     guardarLocalFsCentroConfig(cfgAtual);
     await sincronizarSqlitesParaPastaLocal();
@@ -416,7 +431,7 @@ export async function escolherPastaDadosGexcelAntigos(
         ok: true,
         totalEntidades: 0,
         config: cfgAtual,
-        erro: 'Pasta ligada com sucesso (nota: não foi encontrado o ficheiro tCredenciais.xml nessa pasta; foram mantidas as empresas atuais).',
+        erro: `Pasta '${displayAntiga}' ligada (nota: não foi encontrado tCredenciais.xml nesta pasta; foram mantidas as empresas atuais).`,
       };
     }
 
@@ -425,6 +440,6 @@ export async function escolherPastaDadosGexcelAntigos(
     if (err?.name === 'AbortError') {
       return { ok: false, erro: 'Seleção de pasta cancelada.' };
     }
-    return { ok: false, erro: err?.message || 'Falha ao ler a pasta Dados GexcelApps.' };
+    return { ok: false, erro: err?.message || 'Falha ao ler a pasta antiga do Excel.' };
   }
 }
