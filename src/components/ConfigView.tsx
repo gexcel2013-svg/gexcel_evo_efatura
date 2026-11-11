@@ -18,14 +18,27 @@ import {
   Copy,
   HardDrive,
   Plus,
-  Download,
   Building2,
   Check
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import type { AppUser, CentroDadosItem } from '../types/auth';
+import {
+  obterLocalFsCentroConfig,
+  guardarLocalFsCentroConfig,
+  escolherEInstalarPastaDadosEvogex,
+  escolherPastaDadosGexcelAntigos,
+  sincronizarSqlitesParaPastaLocal,
+  abrirPastaNoExploradorNativo,
+  type LocalFsCentroConfig,
+} from '../lib/localFsBridge';
 
 type UserSortColumn = 'nome' | 'email' | 'role' | 'centros' | 'ativo' | 'ultimo_login';
+
+function isWindowsPath(p?: string): boolean {
+  if (!p) return false;
+  return /^[A-Za-z]:\\/.test(p) || /^\\\\/.test(p);
+}
 
 export function ConfigView() {
   const { 
@@ -58,8 +71,28 @@ export function ConfigView() {
     return saved !== null ? saved === 'true' : true;
   });
   const [salvandoCentro, setSalvandoCentro] = useState<boolean>(false);
+  const [sincronizandoSqlites, setSincronizandoSqlites] = useState<boolean>(false);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
+
+  const [localFsCfg, setLocalFsCfg] = useState<LocalFsCentroConfig | null>(() => obterLocalFsCentroConfig());
+  const [caminhoPropostoEvogex, setCaminhoPropostoEvogex] = useState<string>(
+    () => obterLocalFsCentroConfig()?.pasta_evogex_display || 'C:\\Dados_evoGex'
+  );
+  const [caminhoPropostoAntiga, setCaminhoPropostoAntiga] = useState<string>(
+    () => obterLocalFsCentroConfig()?.pasta_gexcel_antiga_display || 'C:\\Dados_GexcelApps'
+  );
+
+  useEffect(() => {
+    const onFsUpdated = (e: Event) => {
+      const detail = (e as CustomEvent<LocalFsCentroConfig>).detail || obterLocalFsCentroConfig();
+      setLocalFsCfg(detail);
+      if (detail?.pasta_evogex_display) setCaminhoPropostoEvogex(detail.pasta_evogex_display);
+      if (detail?.pasta_gexcel_antiga_display) setCaminhoPropostoAntiga(detail.pasta_gexcel_antiga_display);
+    };
+    window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
+    return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
+  }, []);
 
   // Modal de criação / edição de Centro de Dados Nomeado
   const [modalCentroAberto, setModalCentroAberto] = useState<boolean>(false);
@@ -79,13 +112,13 @@ export function ConfigView() {
     pasta_pdfs: string;
     db_path: string;
   }>({
-    pasta_evogex: appConfig?.centro_dados_pasta_evogex || '',
-    pasta_motor: appConfig?.centro_dados_pasta_motor || '',
-    pasta_v4: appConfig?.pasta_v4 || '',
-    pasta_v3: appConfig?.pasta_v3 || '',
-    pasta_bdsrv: appConfig?.pasta_bdsrv || '',
-    pasta_pdfs: appConfig?.pasta_pdfs || '',
-    db_path: appConfig?.db_path || '',
+    pasta_evogex: isWindowsPath(appConfig?.centro_dados_pasta_evogex) ? (appConfig?.centro_dados_pasta_evogex || '') : '',
+    pasta_motor: isWindowsPath(appConfig?.centro_dados_pasta_motor) ? (appConfig?.centro_dados_pasta_motor || '') : '',
+    pasta_v4: isWindowsPath(appConfig?.pasta_v4) ? (appConfig?.pasta_v4 || '') : '',
+    pasta_v3: isWindowsPath(appConfig?.pasta_v3) ? (appConfig?.pasta_v3 || '') : '',
+    pasta_bdsrv: isWindowsPath(appConfig?.pasta_bdsrv) ? (appConfig?.pasta_bdsrv || '') : '',
+    pasta_pdfs: isWindowsPath(appConfig?.pasta_pdfs) ? (appConfig?.pasta_pdfs || '') : '',
+    db_path: isWindowsPath(appConfig?.db_path) ? (appConfig?.db_path || '') : '',
   });
 
   // Lista de utilizadores e ordenação universal
@@ -109,14 +142,28 @@ export function ConfigView() {
   const [erroFormUser, setErroFormUser] = useState<string | null>(null);
 
   const pastaRaizRealMotor = useMemo(() => {
-    const pV4 = pastasLocais.pasta_v4 || appConfig?.pasta_v4 || '';
+    const pV4 = pastasLocais.pasta_v4 || (isWindowsPath(appConfig?.pasta_v4) ? (appConfig?.pasta_v4 || '') : '');
     if (pV4) return pV4.replace(/[\\/]BdsefaturaV4[\\/]?$/i, '');
-    const pV3 = pastasLocais.pasta_v3 || appConfig?.pasta_v3 || '';
+    const pV3 = pastasLocais.pasta_v3 || (isWindowsPath(appConfig?.pasta_v3) ? (appConfig?.pasta_v3 || '') : '');
     if (pV3) return pV3.replace(/[\\/]BdsefaturaV3[\\/]?$/i, '');
     return '';
   }, [pastasLocais.pasta_v4, pastasLocais.pasta_v3, appConfig?.pasta_v4, appConfig?.pasta_v3]);
 
   const centrosDadosLista = useMemo<CentroDadosItem[]>(() => {
+    if (localFsCfg && localFsCfg.pasta_evogex_display) {
+      return [
+        {
+          id: localFsCfg.id || 'escritorio-principal',
+          nome: localFsCfg.nome || 'Escritório Principal',
+          hostname: localFsCfg.hostname || 'COMPUTADOR-LOCAL',
+          pasta_evogex: localFsCfg.pasta_evogex_display,
+          pasta_motor: localFsCfg.pasta_motor_display,
+          pasta_gexcel_antiga: localFsCfg.pasta_gexcel_antiga_display || caminhoPropostoAntiga,
+          ativo: true,
+          selecionado: true,
+        },
+      ];
+    }
     if (appConfig?.centros_dados && appConfig.centros_dados.length > 0) {
       return appConfig.centros_dados;
     }
@@ -125,28 +172,39 @@ export function ConfigView() {
       return [
         {
           id: appConfig?.centro_dados_ativo_id || 'instalacao-local-atual',
-          nome: appConfig?.centro_dados_nome || 'Escritório Principal (Motor Local)',
+          nome: appConfig?.centro_dados_nome || 'Escritório Principal',
           hostname: appConfig?.centro_dados_hostname || 'COMPUTADOR-LOCAL',
-          pasta_evogex: isEvogexFolder ? pastaRaizRealMotor : (appConfig?.centro_dados_pasta_evogex || ''),
-          pasta_motor: isEvogexFolder ? `${pastaRaizRealMotor}\\motor` : (appConfig?.centro_dados_pasta_motor || ''),
+          pasta_evogex: isEvogexFolder ? pastaRaizRealMotor : (appConfig?.centro_dados_pasta_evogex || 'C:\\Dados_evoGex'),
+          pasta_motor: isEvogexFolder ? `${pastaRaizRealMotor}\\motor` : (appConfig?.centro_dados_pasta_motor || 'C:\\Dados_evoGex\\motor'),
           pasta_gexcel_antiga: isEvogexFolder ? (appConfig?.centro_dados_pasta_gexcel_antiga || '') : pastaRaizRealMotor,
           ativo: true,
           selecionado: true,
         },
       ];
     }
-    return [];
-  }, [appConfig, pastaRaizRealMotor]);
+    return [
+      {
+        id: 'escritorio-principal',
+        nome: 'Escritório Principal',
+        hostname: 'COMPUTADOR-LOCAL',
+        pasta_evogex: caminhoPropostoEvogex || 'C:\\Dados_evoGex',
+        pasta_motor: `${caminhoPropostoEvogex || 'C:\\Dados_evoGex'}\\motor`,
+        pasta_gexcel_antiga: caminhoPropostoAntiga || 'C:\\Dados_GexcelApps',
+        ativo: true,
+        selecionado: true,
+      },
+    ];
+  }, [localFsCfg, appConfig, pastaRaizRealMotor, caminhoPropostoEvogex, caminhoPropostoAntiga]);
 
   useEffect(() => {
     setPastasLocais(prev => ({
-      pasta_evogex: appConfig?.centro_dados_pasta_evogex || prev.pasta_evogex,
-      pasta_motor: appConfig?.centro_dados_pasta_motor || prev.pasta_motor,
-      pasta_v4: appConfig?.pasta_v4 || prev.pasta_v4,
-      pasta_v3: appConfig?.pasta_v3 || prev.pasta_v3,
-      pasta_bdsrv: appConfig?.pasta_bdsrv || prev.pasta_bdsrv,
-      pasta_pdfs: appConfig?.pasta_pdfs || prev.pasta_pdfs,
-      db_path: appConfig?.db_path || prev.db_path,
+      pasta_evogex: isWindowsPath(appConfig?.centro_dados_pasta_evogex) ? (appConfig?.centro_dados_pasta_evogex || '') : prev.pasta_evogex,
+      pasta_motor: isWindowsPath(appConfig?.centro_dados_pasta_motor) ? (appConfig?.centro_dados_pasta_motor || '') : prev.pasta_motor,
+      pasta_v4: isWindowsPath(appConfig?.pasta_v4) ? (appConfig?.pasta_v4 || '') : prev.pasta_v4,
+      pasta_v3: isWindowsPath(appConfig?.pasta_v3) ? (appConfig?.pasta_v3 || '') : prev.pasta_v3,
+      pasta_bdsrv: isWindowsPath(appConfig?.pasta_bdsrv) ? (appConfig?.pasta_bdsrv || '') : prev.pasta_bdsrv,
+      pasta_pdfs: isWindowsPath(appConfig?.pasta_pdfs) ? (appConfig?.pasta_pdfs || '') : prev.pasta_pdfs,
+      db_path: isWindowsPath(appConfig?.db_path) ? (appConfig?.db_path || '') : prev.db_path,
     }));
   }, [appConfig]);
 
@@ -169,9 +227,9 @@ export function ConfigView() {
           }
           setPastasLocais(prev => ({
             ...prev,
-            pasta_v4: cfg.pasta_v4 || prev.pasta_v4,
-            pasta_bdsrv: cfg.pasta_bdsrv || prev.pasta_bdsrv,
-            pasta_pdfs: cfg.pasta_pdfs || prev.pasta_pdfs,
+            pasta_v4: isWindowsPath(cfg.pasta_v4) ? cfg.pasta_v4 : prev.pasta_v4,
+            pasta_bdsrv: isWindowsPath(cfg.pasta_bdsrv) ? cfg.pasta_bdsrv : prev.pasta_bdsrv,
+            pasta_pdfs: isWindowsPath(cfg.pasta_pdfs) ? cfg.pasta_pdfs : prev.pasta_pdfs,
           }));
         }
       })
@@ -235,7 +293,7 @@ export function ConfigView() {
     }
   };
 
-  const handleAbrirNoWindows = async (caminho: string) => {
+  const handleAbrirNoWindows = async (caminho: string, subpasta?: string) => {
     if (!caminho) return;
     setMensagemErro(null);
     try {
@@ -244,11 +302,91 @@ export function ConfigView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caminho }),
       });
-      if (!res.ok) {
-        setMensagemErro('Para abrir pastas diretamente no Explorador do Windows, certifique-se de que o Motor Local está ativo neste computador.');
+      if (res.ok) {
+        const d = await res.json();
+        if (d.status === 'ok' && d.origem !== 'cloud') {
+          return;
+        }
       }
     } catch {
-      setMensagemErro('Para abrir pastas diretamente no Explorador do Windows, certifique-se de que o Motor Local está ativo neste computador.');
+      // Fallback para o seletor nativo do Windows Explorer no browser
+    }
+    const abriu = await abrirPastaNoExploradorNativo(subpasta);
+    if (!abriu) {
+      await handleCopiarCaminho(caminho, 'Pasta Local');
+    }
+  };
+
+  const handleEscolherPastaEvogexDireto = async (customCaminhoProposto?: string, paraModal = false) => {
+    setMensagemErro(null);
+    setMensagemSucesso(null);
+    const prop = (customCaminhoProposto ?? (paraModal ? formCentroPastaEvogex : caminhoPropostoEvogex)).trim() || 'C:\\Dados_evoGex';
+    const res = await escolherEInstalarPastaDadosEvogex({
+      nomeCentro: paraModal ? formCentroNome : (localFsCfg?.nome || 'Escritório Principal'),
+      hostname: paraModal ? formCentroHost : (localFsCfg?.hostname || 'COMPUTADOR-LOCAL'),
+      caminhoProposto: prop,
+    });
+    if (res.ok && res.config) {
+      setLocalFsCfg(res.config);
+      setCaminhoPropostoEvogex(res.config.pasta_evogex_display);
+      if (paraModal) {
+        setFormCentroPastaEvogex(res.config.pasta_evogex_display);
+        if (res.config.pasta_gexcel_antiga_display) {
+          setFormCentroPastaAntiga(res.config.pasta_gexcel_antiga_display);
+        }
+      }
+      await refreshConfig();
+      setMensagemSucesso(
+        `Pasta '${res.config.pasta_evogex_display}' criada e ligada com sucesso! Estrutura (BdsefaturaV4, SafeDrive, Motor) e bases SQLite gravadas no disco.`
+      );
+    } else if (res.erro && res.erro !== 'Seleção de pasta cancelada.') {
+      setMensagemErro(res.erro);
+    }
+  };
+
+  const handleEscolherPastaAntigaDireto = async (customCaminhoProposto?: string, paraModal = false) => {
+    setMensagemErro(null);
+    setMensagemSucesso(null);
+    const prop = (customCaminhoProposto ?? (paraModal ? formCentroPastaAntiga : caminhoPropostoAntiga)).trim() || 'C:\\Dados_GexcelApps';
+    const res = await escolherPastaDadosGexcelAntigos(prop);
+    if (res.ok && res.config) {
+      setLocalFsCfg(res.config);
+      setCaminhoPropostoAntiga(res.config.pasta_gexcel_antiga_display);
+      if (res.config.pasta_evogex_display) {
+        setCaminhoPropostoEvogex(res.config.pasta_evogex_display);
+      }
+      if (paraModal) {
+        setFormCentroPastaAntiga(res.config.pasta_gexcel_antiga_display);
+        if (res.config.pasta_evogex_display && !formCentroPastaEvogex) {
+          setFormCentroPastaEvogex(res.config.pasta_evogex_display);
+        }
+      }
+      await refreshConfig();
+      if (res.erro) {
+        setMensagemSucesso(res.erro);
+      } else {
+        setMensagemSucesso(
+          `Pasta antiga '${res.config.pasta_gexcel_antiga_display}' ligada! ${res.totalEntidades || 0} empresas carregadas automaticamente para o sistema.`
+        );
+      }
+    } else if (res.erro && res.erro !== 'Seleção de pasta cancelada.') {
+      setMensagemErro(res.erro);
+    }
+  };
+
+  const handleSincronizarSqlitesAgora = async () => {
+    setSincronizandoSqlites(true);
+    setMensagemErro(null);
+    setMensagemSucesso(null);
+    try {
+      const total = await sincronizarSqlitesParaPastaLocal(undefined, true);
+      if (total > 0) {
+        setMensagemSucesso(`${total} ficheiro(s) SQLite (.db) atualizados e gravados diretamente na sua pasta BdsefaturaV4 local.`);
+      } else {
+        await handleEscolherPastaEvogexDireto();
+      }
+    } finally {
+      setSincronizandoSqlites(false);
     }
   };
 
@@ -279,9 +417,9 @@ export function ConfigView() {
     const num = centrosDadosLista.length + 1;
     setCentroEmEdicao(null);
     setFormCentroNome(num === 1 ? 'Escritório Principal' : `Escritório ${num}`);
-    setFormCentroHost(appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO');
-    setFormCentroPastaEvogex(num === 1 ? 'C:\\Dados_evoGex' : `C:\\Dados_evoGex_${num}`);
-    setFormCentroPastaAntiga('');
+    setFormCentroHost(localFsCfg?.hostname || appConfig?.centro_dados_hostname || 'SERVIDOR-ESCRITORIO');
+    setFormCentroPastaEvogex(localFsCfg?.pasta_evogex_display || caminhoPropostoEvogex || 'C:\\Dados_evoGex');
+    setFormCentroPastaAntiga(localFsCfg?.pasta_gexcel_antiga_display || caminhoPropostoAntiga || 'C:\\Dados_GexcelApps');
     setModalCentroAberto(true);
   };
 
@@ -294,7 +432,7 @@ export function ConfigView() {
     setFormCentroNome(centro.nome);
     setFormCentroHost(centro.hostname || 'SERVIDOR-ESCRITORIO');
     setFormCentroPastaEvogex(centro.pasta_evogex || 'C:\\Dados_evoGex');
-    setFormCentroPastaAntiga(centro.pasta_gexcel_antiga || '');
+    setFormCentroPastaAntiga(centro.pasta_gexcel_antiga || 'C:\\Dados_GexcelApps');
     setModalCentroAberto(true);
   };
 
@@ -306,9 +444,31 @@ export function ConfigView() {
     const nomeLimpo = formCentroNome.trim() || 'Escritório Principal';
     const hostLimpo = formCentroHost.trim() || 'SERVIDOR-ESCRITORIO';
     const pastaEvoLimpa = formCentroPastaEvogex.trim() || 'C:\\Dados_evoGex';
-    const pastaAntLimpa = formCentroPastaAntiga.trim();
+    const pastaAntLimpa = formCentroPastaAntiga.trim() || 'C:\\Dados_GexcelApps';
+
+    const novoCfg: LocalFsCentroConfig = {
+      id: centroEmEdicao?.id || 'escritorio-principal',
+      nome: nomeLimpo,
+      hostname: hostLimpo,
+      pasta_evogex_display: pastaEvoLimpa,
+      pasta_motor_display: `${pastaEvoLimpa}\\motor`,
+      pasta_v4_display: `${pastaEvoLimpa}\\BdsefaturaV4`,
+      pasta_v3_display: `${pastaAntLimpa}\\BdsefaturaV3`,
+      pasta_bdsrv_display: `${pastaAntLimpa}\\BdsRV`,
+      pasta_pdfs_display: `${pastaEvoLimpa}\\PDFs_Recibos`,
+      pasta_gexcel_antiga_display: pastaAntLimpa,
+      ligado: true,
+      total_entidades_carregadas: localFsCfg?.total_entidades_carregadas,
+      total_sqlites_gravados: localFsCfg?.total_sqlites_gravados,
+      updated_at: new Date().toISOString(),
+    };
+    guardarLocalFsCentroConfig(novoCfg);
+    setLocalFsCfg(novoCfg);
+    setCaminhoPropostoEvogex(pastaEvoLimpa);
+    setCaminhoPropostoAntiga(pastaAntLimpa);
+
     try {
-      const res = await fetch('http://127.0.0.1:8015/api/app/centros-dados', {
+      await fetch('http://127.0.0.1:8015/api/app/centros-dados', {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
@@ -320,26 +480,13 @@ export function ConfigView() {
           tornar_ativo: true,
         }),
       });
-      if (res.ok) {
-        setModalCentroAberto(false);
-        await refreshConfig();
-        setMensagemSucesso(`Centro de Dados '${nomeLimpo}' guardado e ativado com sucesso.`);
-      } else {
-        const err = await res.json();
-        setMensagemErro(err.detail || 'Falha ao guardar Centro de Dados.');
-      }
+      await refreshConfig();
     } catch {
-      // Computador novo sem motor local ainda em execução: descarrega automaticamente o instalador configurado!
-      setModalCentroAberto(false);
-      const n = encodeURIComponent(nomeLimpo);
-      const pEvo = encodeURIComponent(pastaEvoLimpa);
-      const pAnt = encodeURIComponent(pastaAntLimpa);
-      window.open(`/api/sistema/instalador-centro-dados?nome=${n}&pasta_evogex=${pEvo}&pasta_gexcel_antiga=${pAnt}`, '_blank');
-      setMensagemSucesso(
-        `Instalador 'Instalar_Centro_Dados_evoGex.bat' transferido! Execute o ficheiro transferido para criar '${pastaEvoLimpa}' e ligar o Motor Local neste computador.`
-      );
+      // guardado localmente no posto
     } finally {
+      setModalCentroAberto(false);
       setSalvandoCentro(false);
+      setMensagemSucesso(`Centro de Dados '${nomeLimpo}' configurado em '${pastaEvoLimpa}'.`);
     }
   };
 
@@ -378,13 +525,6 @@ export function ConfigView() {
         setMensagemErro(err.detail || 'Não foi possível remover o Centro de Dados.');
       }
     } catch {}
-  };
-
-  const handleDescarregarInstalador = (centro: CentroDadosItem) => {
-    const n = encodeURIComponent(centro.nome || 'Escritório Principal');
-    const pEvo = encodeURIComponent(centro.pasta_evogex || 'C:\\Dados_evoGex');
-    const pAnt = encodeURIComponent(centro.pasta_gexcel_antiga || '');
-    window.open(`/api/sistema/instalador-centro-dados?nome=${n}&pasta_evogex=${pEvo}&pasta_gexcel_antiga=${pAnt}`, '_blank');
   };
 
   const abrirCriacaoUser = (rolePredefinido: 'subutilizador' | 'admin' = 'subutilizador') => {
@@ -589,42 +729,67 @@ export function ConfigView() {
     return <span className="ml-1 text-[#0284c7] dark:text-sky-400 text-[10px]">{sortDir === 'asc' ? '▲' : '▼'}</span>;
   };
 
+  const baseEvogexAtiva =
+    localFsCfg?.pasta_evogex_display ||
+    pastasLocais.pasta_evogex ||
+    (/dados_evogex/i.test(pastaRaizRealMotor) ? pastaRaizRealMotor : '') ||
+    caminhoPropostoEvogex ||
+    'C:\\Dados_evoGex';
+
+  const baseAntigaAtiva =
+    localFsCfg?.pasta_gexcel_antiga_display ||
+    (!/dados_evogex/i.test(pastaRaizRealMotor) && pastaRaizRealMotor ? pastaRaizRealMotor : '') ||
+    caminhoPropostoAntiga ||
+    'C:\\Dados_GexcelApps';
+
   const itensPastas = [
     {
       id: 'evogex_raiz',
+      subpasta: undefined as string | undefined,
+      tipoSelecao: 'evogex' as const,
       titulo: 'Pasta Unificada do Centro de Dados (Dados evoGex)',
       subtitulo: 'Diretório central onde residem o Motor, SafeDrive, PocketBase e Bases SQLite',
-      caminho: pastasLocais.pasta_evogex || (/dados_evogex/i.test(pastaRaizRealMotor) ? pastaRaizRealMotor : ''),
+      caminho: baseEvogexAtiva,
     },
     {
       id: 'evogex_motor',
+      subpasta: 'motor',
+      tipoSelecao: 'evogex' as const,
       titulo: 'Motor Local & Ponte do Centro de Dados (Dados_evoGex\\motor)',
       subtitulo: 'Motor instalado junto ao Centro de Dados (usado localmente e pelos portáteis em casa)',
-      caminho: pastasLocais.pasta_motor || (pastasLocais.pasta_evogex ? `${pastasLocais.pasta_evogex}\\motor` : ''),
+      caminho: localFsCfg?.pasta_motor_display || pastasLocais.pasta_motor || `${baseEvogexAtiva}\\motor`,
     },
     {
       id: 'v4',
+      subpasta: 'BdsefaturaV4',
+      tipoSelecao: 'evogex' as const,
       titulo: 'Bases SQLite Modernas (BdsefaturaV4)',
       subtitulo: 'Faturas de compras, vendas, anuladas, recibos verdes e controlo geral',
-      caminho: pastasLocais.pasta_v4 || (pastasLocais.pasta_bdsrv ? pastasLocais.pasta_bdsrv.replace(/BdsRV$/i, 'BdsefaturaV4') : ''),
+      caminho: localFsCfg?.pasta_v4_display || pastasLocais.pasta_v4 || `${baseEvogexAtiva}\\BdsefaturaV4`,
     },
     {
       id: 'v3',
+      subpasta: 'BdsefaturaV3',
+      tipoSelecao: 'antiga' as const,
       titulo: 'Ficheiros XML e-Fatura Antigos (BdsefaturaV3)',
       subtitulo: 'Alimentação paralela de compatibilidade com os mapas Excel (Dados GexcelApps)',
-      caminho: pastasLocais.pasta_v3 || (pastasLocais.pasta_v4 ? pastasLocais.pasta_v4.replace(/BdsefaturaV4$/i, 'BdsefaturaV3') : ''),
+      caminho: localFsCfg?.pasta_v3_display || pastasLocais.pasta_v3 || `${baseAntigaAtiva}\\BdsefaturaV3`,
     },
     {
       id: 'bdsrv',
+      subpasta: 'BdsRV',
+      tipoSelecao: 'antiga' as const,
       titulo: 'Ficheiros XML Recibos Verdes & Rendas (BdsRV)',
       subtitulo: 'Repositório estruturado de Recibos Verdes e Recibos de Renda por ano e NIF',
-      caminho: pastasLocais.pasta_bdsrv,
+      caminho: localFsCfg?.pasta_bdsrv_display || pastasLocais.pasta_bdsrv || `${baseAntigaAtiva}\\BdsRV`,
     },
     {
       id: 'pdfs',
+      subpasta: 'PDFs_Recibos',
+      tipoSelecao: 'evogex' as const,
       titulo: 'Comprovativos PDF de Recibos Verdes & Rendas',
       subtitulo: 'Pasta destino dos documentos PDF oficiais descarregados da AT',
-      caminho: pastasLocais.pasta_pdfs,
+      caminho: localFsCfg?.pasta_pdfs_display || pastasLocais.pasta_pdfs || `${baseEvogexAtiva}\\PDFs_Recibos`,
     },
   ];
 
@@ -649,7 +814,7 @@ export function ConfigView() {
           <div className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs">
             <SlidersHorizontal className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
             <span className="text-slate-700 dark:text-slate-300">
-              Centro Ativo: <strong className="text-foreground">{appConfig?.centro_dados_nome || 'Escritório Principal'}</strong>
+              Centro Ativo: <strong className="text-foreground">{localFsCfg?.nome || appConfig?.centro_dados_nome || 'Escritório Principal'}</strong>
             </span>
           </div>
         </div>
@@ -683,7 +848,7 @@ export function ConfigView() {
       {/* Grid de Configurações */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         
-        {/* Card 1: Catálogo de Centros de Dados Nomeados & Instalador Unificado (100% Opaco) */}
+        {/* Card 1: Catálogo de Centros de Dados Nomeados & Seleção Direta de Pastas (100% Opaco) */}
         <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3.5 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] before:z-20">
           <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
             <div className="flex items-center space-x-2">
@@ -693,171 +858,171 @@ export function ConfigView() {
               </span>
             </div>
             {canManage && (
-              <button
-                type="button"
-                onClick={abrirModalNovoCentro}
-                className="px-2.5 py-1 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-[11px] font-semibold flex items-center space-x-1 cursor-pointer transition"
-                title="Criar um novo Centro de Dados isolado (ex: Escritório da Maia, Porto, Empresas PHC / Sage)"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>+ Novo Centro de Dados</span>
-              </button>
+              <div className="flex items-center space-x-1.5">
+                <button
+                  type="button"
+                  onClick={handleSincronizarSqlitesAgora}
+                  disabled={sincronizandoSqlites}
+                  className="px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-mono text-[11px] font-semibold flex items-center space-x-1 cursor-pointer transition disabled:opacity-50"
+                  title="Gravar / atualizar imediatamente todas as bases SQLite (.db) na pasta BdsefaturaV4 local"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${sincronizandoSqlites ? 'animate-spin' : ''}`} />
+                  <span>{sincronizandoSqlites ? 'A gravar SQLites...' : 'Gravar SQLites na Pasta'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={abrirModalNovoCentro}
+                  className="px-2.5 py-1 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white font-mono text-[11px] font-semibold flex items-center space-x-1 cursor-pointer transition"
+                  title="Criar ou personalizar um Centro de Dados (ex: Escritório da Maia, Porto, Servidor)"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Novo Centro</span>
+                </button>
+              </div>
             )}
           </div>
 
-          <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed">
-            Cada Centro de Dados nomeado cria uma pasta nova unificada (<strong className="text-foreground">Dados evoGex</strong> com Motor, SafeDrive, PocketBase e SQLite juntos) e liga-se à respetiva pasta antiga (<strong className="text-foreground">Dados GexcelApps</strong>) sem misturar empresas.
-          </p>
-
-          <div className="space-y-2 max-h-64 overflow-y-auto pr-0.5">
-            {centrosDadosLista.length === 0 ? (
-              <div className="p-3 rounded-md border border-amber-400 dark:border-amber-800 bg-amber-50 dark:bg-[#241a08] space-y-2 font-mono text-xs text-amber-900 dark:text-amber-200">
-                <div className="flex items-center space-x-2 font-bold">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  <span>Nenhum Centro de Dados / Motor Local detetado neste computador</span>
-                </div>
-                <p className="text-[11px] leading-relaxed">
-                  Se está num computador novo ou ainda não instalou o Centro de Dados local, clique abaixo para criar/instalar o Centro de Dados e o Motor.
-                </p>
-                {canManage && (
-                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        window.open(
-                          '/api/sistema/instalador-centro-dados?nome=Escrit%C3%B3rio%20Principal&pasta_evogex=C%3A%5CDados_evoGex',
-                          '_blank'
-                        );
-                        setMensagemSucesso(
-                          "Instalador 'Instalar_Centro_Dados_evoGex.bat' transferido! Execute o ficheiro transferido para criar 'C:\\Dados_evoGex' e iniciar o Motor Local."
-                        );
-                      }}
-                      className="px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-semibold flex items-center space-x-1.5 cursor-pointer transition"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Instalar Já (C:\Dados_evoGex + Motor)</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={abrirModalNovoCentro}
-                      className="px-3 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[11px] font-semibold flex items-center space-x-1.5 cursor-pointer transition"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Personalizar Pasta / Nome e Instalar</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              centrosDadosLista.map(centro => (
-                <div
-                  key={centro.id}
-                  className={`p-3 rounded-md border space-y-2 font-mono text-xs transition ${
-                    centro.selecionado
-                      ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7]'
-                      : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e]'
-                  }`}
+          {/* Seleção Direta de Pastas no Computador ou Servidor (Com Caminho Padrão Proposto) */}
+          <div className="p-3 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-2.5 font-mono text-xs">
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                1. Onde instalar os novos Dados evoGex (PC ou Servidor — endereço proposto editável):
+              </label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={caminhoPropostoEvogex}
+                  onChange={e => setCaminhoPropostoEvogex(e.target.value)}
+                  placeholder="Ex: C:\Dados_evoGex ou \\Servidor\Dados_evoGex"
+                  className="flex-1 h-8 px-2.5 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-foreground text-[11px] outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleEscolherPastaEvogexDireto()}
+                  className="h-8 px-3 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[11px] font-semibold flex items-center space-x-1.5 shrink-0 cursor-pointer transition"
+                  title="Escolher pasta no Explorador do Windows e criar automaticamente a estrutura Dados_evoGex + SQLite"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center space-x-2 min-w-0">
-                      <Building2 className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0" />
-                      <span className="font-bold text-foreground truncate">{centro.nome}</span>
-                      <span className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
-                        ({centro.hostname})
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>Escolher Pasta</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                2. Onde estão os Dados GexcelApps antigos (Carregar empresas e XMLs — endereço proposto):
+              </label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={caminhoPropostoAntiga}
+                  onChange={e => setCaminhoPropostoAntiga(e.target.value)}
+                  placeholder="Ex: C:\Dados_GexcelApps ou \\Servidor\Dados_GexcelApps"
+                  className="flex-1 h-8 px-2.5 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-foreground text-[11px] outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleEscolherPastaAntigaDireto()}
+                  className="h-8 px-3 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-semibold flex items-center space-x-1.5 shrink-0 cursor-pointer transition"
+                  title="Escolher a pasta antiga Dados_GexcelApps no Explorador do Windows para carregar todas as empresas automaticamente"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>Carregar Empresas</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2 max-h-56 overflow-y-auto pr-0.5">
+            {centrosDadosLista.map(centro => (
+              <div
+                key={centro.id}
+                className={`p-3 rounded-md border space-y-2 font-mono text-xs transition ${
+                  centro.selecionado
+                    ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7]'
+                    : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center space-x-2 min-w-0">
+                    <Building2 className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                    <span className="font-bold text-foreground truncate">{centro.nome}</span>
+                    <span className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
+                      ({centro.hostname})
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-1.5 shrink-0">
+                    {centro.selecionado ? (
+                      <span className="text-[9.5px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center space-x-1">
+                        <Check className="w-3 h-3" />
+                        <span>ATIVO</span>
                       </span>
-                    </div>
-                    <div className="flex items-center space-x-1.5 shrink-0">
-                      {centro.selecionado ? (
-                        <span className="text-[9.5px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800 flex items-center space-x-1">
-                          <Check className="w-3 h-3" />
-                          <span>EM USO</span>
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleSelecionarCentro(centro)}
-                          className="px-2 py-0.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[10px] font-semibold cursor-pointer transition"
-                        >
-                          Ativar
-                        </button>
-                      )}
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => handleDescarregarInstalador(centro)}
-                        className="px-2 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] hover:bg-emerald-100 dark:hover:bg-[#0e2d27] border border-emerald-400 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold flex items-center space-x-1 cursor-pointer transition"
-                        title="Descarregar instalador de 1 clique (cria Dados evoGex + instala Motor, SafeDrive, PocketBase e SQLite)"
+                        onClick={() => handleSelecionarCentro(centro)}
+                        className="px-2 py-0.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[10px] font-semibold cursor-pointer transition"
                       >
-                        <Download className="w-3 h-3" />
-                        <span>Instalador</span>
+                        Ativar
                       </button>
-                      {canManage && (
-                        <>
+                    )}
+                    {canManage && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => abrirModalEditarCentro(centro)}
+                          className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
+                          title="Editar nome e pastas deste Centro de Dados"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                        {centrosDadosLista.length > 1 && (
                           <button
                             type="button"
-                            onClick={() => abrirModalEditarCentro(centro)}
-                            className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
-                            title="Editar nome e pastas deste Centro de Dados"
+                            onClick={() => handleEliminarCentro(centro)}
+                            className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-rose-50 dark:hover:bg-[#290f14] border border-slate-300 dark:border-[#222f3e] text-rose-600 dark:text-rose-400 cursor-pointer"
+                            title="Remover Centro de Dados"
                           >
-                            <Edit2 className="w-3 h-3" />
+                            <Trash2 className="w-3 h-3" />
                           </button>
-                          {centrosDadosLista.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => handleEliminarCentro(centro)}
-                              className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-rose-50 dark:hover:bg-[#290f14] border border-slate-300 dark:border-[#222f3e] text-rose-600 dark:text-rose-400 cursor-pointer"
-                              title="Remover Centro de Dados"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="space-y-1 text-[10.5px]">
-                    {centro.pasta_evogex ? (
-                      <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
-                        <span className="break-all text-slate-800 dark:text-slate-200">
-                          <strong>Dados evoGex (Novo + Motor):</strong> {centro.pasta_evogex}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleAbrirNoWindows(centro.pasta_evogex)}
-                          className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
-                          title="Abrir no Explorador do Windows"
-                        >
-                          <FolderOpen className="w-3 h-3" />
-                          <span>Abrir</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between gap-2 bg-amber-50 dark:bg-[#241a08] px-2 py-1 rounded border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200">
-                        <span>
-                          <strong>Dados evoGex (Novo):</strong> Ainda não instalado — a ler diretamente da pasta ativa abaixo
-                        </span>
-                      </div>
-                    )}
-                    {centro.pasta_gexcel_antiga && (
-                      <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
-                        <span className="break-all text-slate-700 dark:text-slate-300">
-                          <strong>Pasta Ativa / Dados GexcelApps:</strong> {centro.pasta_gexcel_antiga}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleAbrirNoWindows(centro.pasta_gexcel_antiga)}
-                          className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
-                          title="Abrir no Explorador do Windows"
-                        >
-                          <FolderOpen className="w-3 h-3" />
-                          <span>Abrir</span>
-                        </button>
-                      </div>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
-              ))
-            )}
+
+                <div className="space-y-1 text-[10.5px]">
+                  <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
+                    <span className="break-all text-slate-800 dark:text-slate-200">
+                      <strong>Dados evoGex (SQLite V4 + Motor):</strong> {centro.pasta_evogex || baseEvogexAtiva}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleAbrirNoWindows(centro.pasta_evogex || baseEvogexAtiva)}
+                      className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
+                      title="Abrir no Explorador do Windows"
+                    >
+                      <FolderOpen className="w-3 h-3" />
+                      <span>Abrir</span>
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#222f3e]">
+                    <span className="break-all text-slate-700 dark:text-slate-300">
+                      <strong>Dados GexcelApps (Empresas / XMLs):</strong> {centro.pasta_gexcel_antiga || baseAntigaAtiva}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleAbrirNoWindows(centro.pasta_gexcel_antiga || baseAntigaAtiva)}
+                      className="text-amber-600 dark:text-amber-400 hover:underline shrink-0 flex items-center space-x-0.5 cursor-pointer"
+                      title="Abrir no Explorador do Windows"
+                    >
+                      <FolderOpen className="w-3 h-3" />
+                      <span>Abrir</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="space-y-2.5 pt-0.5">
@@ -982,7 +1147,7 @@ export function ConfigView() {
           </div>
         </div>
 
-        {/* Card 3: Pastas Locais & Transparência de Armazenamento (100% Opaco + Abrir no Windows + Copiar) */}
+        {/* Card 3: Pastas Locais & Transparência de Armazenamento (100% Opaco + Alterar + Abrir no Windows + Copiar) */}
         <div className="md:col-span-2 relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-4 space-y-3 shadow-2xs text-foreground flex flex-col before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-amber-500 before:z-20">
           <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-2">
             <div className="flex items-center space-x-2">
@@ -1014,7 +1179,20 @@ export function ConfigView() {
                   <div className="flex items-center space-x-1 shrink-0">
                     <button
                       type="button"
-                      onClick={() => handleAbrirNoWindows(item.caminho)}
+                      onClick={() =>
+                        item.tipoSelecao === 'antiga'
+                          ? handleEscolherPastaAntigaDireto()
+                          : handleEscolherPastaEvogexDireto()
+                      }
+                      className="px-2 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-sky-50 dark:hover:bg-[#0a1929] border border-slate-300 dark:border-[#222f3e] text-[10.5px] font-mono text-[#0284c7] dark:text-sky-400 font-semibold flex items-center space-x-1 cursor-pointer transition"
+                      title="Escolher ou alterar pasta no computador / servidor"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      <span>Escolher</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAbrirNoWindows(item.caminho, item.subpasta)}
                       disabled={!item.caminho}
                       className="px-2 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-sky-50 dark:hover:bg-[#0a1929] border border-slate-300 dark:border-[#222f3e] text-[10.5px] font-mono text-foreground flex items-center space-x-1 cursor-pointer transition disabled:opacity-40"
                       title="Abrir diretamente no Explorador do Windows (📂)"
@@ -1036,9 +1214,9 @@ export function ConfigView() {
                 </div>
                 <div
                   className="font-mono text-[11px] text-slate-800 dark:text-slate-200 bg-white dark:bg-[#0c1520] px-2.5 py-1.5 rounded border border-slate-200 dark:border-[#222f3e] break-all select-text"
-                  title={item.caminho || 'A aguardar leitura do diretório...'}
+                  title={item.caminho}
                 >
-                  {item.caminho || '—'}
+                  {item.caminho}
                 </div>
               </div>
             ))}
@@ -1312,27 +1490,47 @@ export function ConfigView() {
                 <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
                   Pasta Nova Unificada — Dados evoGex (Motor + SafeDrive + PocketBase + SQLite)
                 </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: C:\Dados_evoGex_Maia"
-                  value={formCentroPastaEvogex}
-                  onChange={e => setFormCentroPastaEvogex(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
-                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: C:\Dados_evoGex ou \\Servidor\Dados_evoGex"
+                    value={formCentroPastaEvogex}
+                    onChange={e => setFormCentroPastaEvogex(e.target.value)}
+                    className="flex-1 h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleEscolherPastaEvogexDireto(formCentroPastaEvogex, true)}
+                    className="h-8 px-2.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-[11px] font-semibold flex items-center space-x-1 shrink-0 cursor-pointer transition"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                    <span>Escolher</span>
+                  </button>
+                </div>
               </div>
 
               <div>
                 <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
                   Pasta Antiga do Excel — Dados GexcelApps (Opcional, para carregar empresas/XMLs)
                 </label>
-                <input
-                  type="text"
-                  placeholder="Ex: C:\Dados_GexcelApps_Maia"
-                  value={formCentroPastaAntiga}
-                  onChange={e => setFormCentroPastaAntiga(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
-                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    placeholder="Ex: C:\Dados_GexcelApps ou \\Servidor\Dados_GexcelApps"
+                    value={formCentroPastaAntiga}
+                    onChange={e => setFormCentroPastaAntiga(e.target.value)}
+                    className="flex-1 h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleEscolherPastaAntigaDireto(formCentroPastaAntiga, true)}
+                    className="h-8 px-2.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-semibold flex items-center space-x-1 shrink-0 cursor-pointer transition"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                    <span>Escolher</span>
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-200 dark:border-[#222f3e]">

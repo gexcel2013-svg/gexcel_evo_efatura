@@ -10,6 +10,8 @@
  *    Motor Cloud Hetzner (`/api/...`), garantindo disponibilidade 24/7 sem qualquer espera.
  */
 
+import { sincronizarSqlitesParaPastaLocal } from './localFsBridge';
+
 export type MotorSourceType = 'local' | 'cloud';
 
 declare global {
@@ -28,7 +30,9 @@ const isCloudHost =
 
 const origFetch = window.fetch.bind(window);
 
-let currentMotorSource: MotorSourceType = 'local';
+let localMotorAvailable = !isCloudHost;
+let currentMotorSource: MotorSourceType = isCloudHost ? 'cloud' : 'local';
+let lastSyncedJobId = '';
 
 function setMotorSource(source: MotorSourceType) {
   if (typeof window === 'undefined') return;
@@ -59,6 +63,7 @@ async function probeLocalMotor(): Promise<boolean> {
     if (res.ok) {
       const text = await res.text();
       if (text.includes('API Importador e-Fatura Gexcel')) {
+        localMotorAvailable = true;
         setMotorSource('local');
         return true;
       }
@@ -67,6 +72,10 @@ async function probeLocalMotor(): Promise<boolean> {
     // Motor local não disponível neste posto
   } finally {
     window.clearTimeout(timer);
+  }
+  localMotorAvailable = false;
+  if (isCloudHost) {
+    setMotorSource('cloud');
   }
   return false;
 }
@@ -77,6 +86,31 @@ if (typeof window !== 'undefined') {
   window.setInterval(() => {
     void probeLocalMotor();
   }, 10000);
+}
+
+function inspecionarRespostaESincronizarSqlite(pathPart: string, res: Response) {
+  if (!res.ok) return;
+  if (pathPart.startsWith('/api/jobs/') || pathPart.startsWith('/api/sincronizar')) {
+    res
+      .clone()
+      .json()
+      .then((data) => {
+        if (pathPart.startsWith('/api/jobs/')) {
+          if (data && data.status === 'concluido') {
+            const jobId = data.job_id || pathPart;
+            if (lastSyncedJobId !== jobId) {
+              lastSyncedJobId = jobId;
+              void sincronizarSqlitesParaPastaLocal(data.nif || undefined);
+            }
+          }
+        } else if (pathPart.startsWith('/api/sincronizar')) {
+          void sincronizarSqlitesParaPastaLocal(data?.nif || undefined);
+        }
+      })
+      .catch(() => {
+        // ignore non-json
+      });
+  }
 }
 
 if (typeof window !== 'undefined') {
@@ -91,27 +125,31 @@ if (typeof window !== 'undefined') {
     const matchApi = rawUrl.match(LOCAL_API_PREFIX);
     if (matchApi) {
       const pathPart = matchApi[2] || '/';
-      const allowCloudFallback =
-        pathPart.startsWith('/api/auth/') ||
-        pathPart.startsWith('/api/sistema/instalador-centro-dados') ||
-        pathPart.startsWith('/api/sistema/pacote-motor.zip');
 
-      try {
-        const localRes = await origFetch(rawUrl, init);
-        if (localRes.ok || !allowCloudFallback) {
-          setMotorSource('local');
-          return localRes;
-        }
-      } catch (err) {
-        if (!allowCloudFallback) {
-          throw err;
+      if (localMotorAvailable || !isCloudHost) {
+        try {
+          const localRes = await origFetch(rawUrl, init);
+          if (localRes.ok || !isCloudHost) {
+            localMotorAvailable = true;
+            setMotorSource('local');
+            inspecionarRespostaESincronizarSqlite(pathPart, localRes);
+            return localRes;
+          }
+        } catch (err) {
+          localMotorAvailable = false;
+          if (!isCloudHost) {
+            throw err;
+          }
         }
       }
 
-      // Apenas autenticação SSO e download do instalador usam a Cloud quando o motor local ainda não está instalado
+      setMotorSource('cloud');
+      const cloudUrl = pathPart === '/' ? '/api/efatura/health' : pathPart;
       const safeInit: RequestInit | undefined =
         init?.signal && init.signal.aborted ? { ...init, signal: undefined } : init;
-      return origFetch(pathPart, safeInit);
+      const cloudRes = await origFetch(cloudUrl, safeInit);
+      inspecionarRespostaESincronizarSqlite(pathPart, cloudRes);
+      return cloudRes;
     }
 
     const matchPb = rawUrl.match(LOCAL_PB_PREFIX);
