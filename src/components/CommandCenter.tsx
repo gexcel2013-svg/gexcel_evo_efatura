@@ -283,6 +283,7 @@ export default function CommandCenter({
   // Tipo de Operação Fiscal: Compras (BdsefaturaV4/{NIF}/compras_{NIF}.db) vs Vendas (BdsefaturaV4/{NIF}/vendas_{NIF}.db)
   const [tipoOperacao, setTipoOperacao] = useState<'compras' | 'vendas'>('compras');
   const [motorSource, setMotorSource] = useState<MotorSourceType>(() => getMotorSource());
+  const [modoPortalWebForcado, setModoPortalWebForcado] = useState<boolean>(false);
 
   useEffect(() => {
     const onSourceChange = (ev: Event) => {
@@ -690,6 +691,9 @@ export default function CommandCenter({
             falhasConsecutivas = 0;
             setApiOnline(true);
             if (data.versao) setVersaoMotor(data.versao);
+            if (typeof data.modo_teste_scraper === 'boolean') {
+              setModoPortalWebForcado(data.modo_teste_scraper);
+            }
             return;
           }
         }
@@ -1394,8 +1398,14 @@ export default function CommandCenter({
   };
 
   // Iniciação individual resiliente com enriquecimento de tipos de erro
-  const iniciarExtracaoParaEntidade = async (ent: Entidade) => {
+  const iniciarExtracaoParaEntidade = async (
+    ent: Entidade,
+    opcoes?: { forcarScraper?: boolean; dataIni?: string; dataFim?: string }
+  ) => {
     const nifParaEnviar = (ent.nif || ent.nif_cc || '').trim();
+    const usarScraperDireto = Boolean(opcoes?.forcarScraper);
+    const dIniEnvio = opcoes?.dataIni || dataInicio;
+    const dFimEnvio = opcoes?.dataFim || dataFim;
 
     // Deteção prévia de senha inválida: ignora sem chamar a AT
     if (senhasInvalidas[nifParaEnviar]) {
@@ -1425,16 +1435,20 @@ export default function CommandCenter({
     setAlertasErro(prev => prev.filter(a => a.nif !== nifParaEnviar));
 
     const volEst = estimativasVolume[nifParaEnviar]?.volume_estimado ?? (matriz[nifParaEnviar]?.total_docs_ano ?? 0);
-    setSyncStatus(prev => ({ ...prev, [ent.id]: `Fila SJF (~${volEst} docs)...` }));
+    setSyncStatus(prev => ({
+      ...prev,
+      [ent.id]: usarScraperDireto || modoPortalWebForcado ? `[Portal Web] Na fila (~${volEst} docs)...` : `Fila SJF (~${volEst} docs)...`
+    }));
     
     try {
       const payload = {
         nif: nifParaEnviar,
         nome_entidade: ent.nomecli || '',
-        data_inicio: dataInicio,
-        data_fim: dataFim,
+        data_inicio: dIniEnvio,
+        data_fim: dFimEnvio,
         tipo: tipoOperacao, 
-        reimportar_tudo: reimportarTudo,
+        reimportar_tudo: usarScraperDireto ? true : reimportarTudo,
+        forcar_scraper: usarScraperDireto,
         volume_estimado: volEst,
         modo_saida: 'sqlite',
         gerar_xml_legado: gerarXmlLegado
@@ -1761,6 +1775,27 @@ export default function CommandCenter({
                 </div>
               )}
             </div>
+          )}
+
+          {apiOnline && modoPortalWebForcado && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const res = await fetch('http://127.0.0.1:8015/api/modo-teste-scraper', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ativo: false }),
+                  });
+                  if (res.ok) setModoPortalWebForcado(false);
+                } catch {}
+              }}
+              className="flex items-center space-x-1.5 bg-amber-100 dark:bg-[#241a08] hover:bg-amber-200 dark:hover:bg-[#33250c] border border-amber-400 dark:border-amber-700 px-3 py-1.5 rounded-full text-xs font-mono font-semibold text-amber-900 dark:text-amber-200 transition-colors cursor-pointer shadow-2xs"
+              title="Todas as extrações estão a recolher diretamente pelo Portal Web e-Fatura. Clique para voltar ao modo automático."
+            >
+              <Globe className="w-3.5 h-3.5 text-amber-700 dark:text-amber-300 shrink-0" />
+              <span>Portal Web Ativo</span>
+            </button>
           )}
 
           {apiOnline ? (
@@ -2333,6 +2368,15 @@ export default function CommandCenter({
                             : 'hover:bg-slate-100/60 dark:hover:bg-[#132233]'
                       }`}
                       onClick={() => toggleEntity(ent.id)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setContextMenu({
+                          x: e.clientX,
+                          y: e.clientY,
+                          entidade: ent,
+                          totalAno: totalAno
+                        });
+                      }}
                     >
                       <td className="py-2 px-2 text-center">
                         <input 
@@ -2460,7 +2504,22 @@ export default function CommandCenter({
                         }
 
                         return (
-                          <td key={m.num} className={`p-0 text-center font-mono text-[10.5px] ${colClasses} ${isSelected ? 'text-sky-500/60 dark:text-sky-400/60 font-semibold' : 'text-muted-foreground/40'}`}>
+                          <td
+                            key={m.num}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setContextMenu({
+                                x: e.clientX,
+                                y: e.clientY,
+                                entidade: ent,
+                                mes: m.num,
+                                docs: 0,
+                                totalAno: totalAno
+                              });
+                            }}
+                            className={`p-0 text-center font-mono text-[10.5px] ${colClasses} ${isSelected ? 'text-sky-500/60 dark:text-sky-400/60 font-semibold' : 'text-muted-foreground/40'}`}
+                          >
                             -
                           </td>
                         );
@@ -2847,16 +2906,16 @@ export default function CommandCenter({
       {/* Menu de Contexto para Ações Rápidas de Linha e Mês */}
       {contextMenu && (
         <div 
-          className="fixed z-50 min-w-[240px] bg-card text-card-foreground border border-border rounded-lg shadow-2xl py-1 text-xs font-mono animate-in fade-in zoom-in-95 duration-100 backdrop-blur-md"
+          className="fixed z-50 min-w-[250px] bg-white dark:bg-[#0c1520] text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-[#222f3e] rounded-lg shadow-2xl py-1 text-xs font-mono animate-in fade-in zoom-in-95 duration-100"
           style={{ 
-            top: Math.min(contextMenu.y, window.innerHeight - 220), 
-            left: Math.min(contextMenu.x, window.innerWidth - 260) 
+            top: Math.min(contextMenu.y, window.innerHeight - 250), 
+            left: Math.min(contextMenu.x, window.innerWidth - 270) 
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="px-3 py-1.5 border-b border-border text-[11px] font-semibold text-foreground truncate flex items-center justify-between bg-muted/40">
+          <div className="px-3 py-1.5 border-b border-slate-200 dark:border-[#222f3e] text-[11px] font-semibold text-slate-900 dark:text-slate-100 truncate flex items-center justify-between bg-slate-100 dark:bg-[#111e2e]">
             <span className="truncate max-w-[150px]">{contextMenu.entidade.nomecli}</span>
-            <span className="text-[10px] text-muted-foreground font-mono ml-2 shrink-0">{contextMenu.entidade.nif || contextMenu.entidade.nif_cc}</span>
+            <span className="text-[10px] text-slate-600 dark:text-slate-300 font-mono ml-2 shrink-0">{contextMenu.entidade.nif || contextMenu.entidade.nif_cc}</span>
           </div>
 
           {contextMenu.mes ? (
@@ -2864,10 +2923,31 @@ export default function CommandCenter({
               <button
                 type="button"
                 onClick={() => {
+                  const mAlvo = contextMenu.mes || 1;
+                  const dIniMes = `${ano}-${String(mAlvo).padStart(2, '0')}-01`;
+                  const dFimMes = (ano === anoAtual && mAlvo === mesAtual)
+                    ? `${ano}-${String(mAlvo).padStart(2, '0')}-${String(diaAtual).padStart(2, '0')}`
+                    : `${ano}-${String(mAlvo).padStart(2, '0')}-${String(new Date(ano, mAlvo, 0).getDate()).padStart(2, '0')}`;
+                  iniciarExtracaoParaEntidade(contextMenu.entidade, {
+                    forcarScraper: true,
+                    dataIni: dIniMes,
+                    dataFim: dFimMes,
+                  });
+                  setContextMenu(null);
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-sky-50 dark:hover:bg-[#13263a] text-[#0284c7] dark:text-sky-300 font-semibold flex items-center space-x-2 transition-colors cursor-pointer"
+              >
+                <Globe className="w-3.5 h-3.5 shrink-0" />
+                <span>Importar {MESES_NOMES[(contextMenu.mes || 1) - 1]?.nome} pelo Portal Web</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
                   onNavegarParaDados?.((contextMenu.entidade.nif || contextMenu.entidade.nif_cc || '').trim(), ano, contextMenu.mes, tipoOperacao);
                   setContextMenu(null);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-muted text-foreground flex items-center space-x-2 transition-colors cursor-pointer"
+                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-[#162436] text-slate-800 dark:text-slate-200 flex items-center space-x-2 transition-colors cursor-pointer"
               >
                 <ArrowUpRight className="w-3.5 h-3.5 text-primary shrink-0" />
                 <span>Ver faturas de {MESES_NOMES[(contextMenu.mes || 1) - 1]?.nome} ({contextMenu.docs || 0})</span>
@@ -2879,7 +2959,7 @@ export default function CommandCenter({
                   abrirModalLimpeza(contextMenu.entidade, ano, contextMenu.mes);
                   setContextMenu(null);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-destructive/15 text-destructive flex items-center space-x-2 transition-colors cursor-pointer"
+                className="w-full text-left px-3 py-1.5 hover:bg-rose-50 dark:hover:bg-[#290f14] text-rose-700 dark:text-rose-300 flex items-center space-x-2 transition-colors cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5 shrink-0" />
                 <span>Limpar dados de {MESES_NOMES[(contextMenu.mes || 1) - 1]?.nome} {ano}</span>
@@ -2891,7 +2971,7 @@ export default function CommandCenter({
                   abrirModalLimpeza(contextMenu.entidade, ano, undefined);
                   setContextMenu(null);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-destructive/15 text-destructive flex items-center space-x-2 transition-colors cursor-pointer"
+                className="w-full text-left px-3 py-1.5 hover:bg-rose-50 dark:hover:bg-[#290f14] text-rose-700 dark:text-rose-300 flex items-center space-x-2 transition-colors cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5 shrink-0" />
                 <span>Limpar todo o ano de {ano}</span>
@@ -2902,10 +2982,22 @@ export default function CommandCenter({
               <button
                 type="button"
                 onClick={() => {
+                  iniciarExtracaoParaEntidade(contextMenu.entidade, { forcarScraper: true });
+                  setContextMenu(null);
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-sky-50 dark:hover:bg-[#13263a] text-[#0284c7] dark:text-sky-300 font-semibold flex items-center space-x-2 transition-colors cursor-pointer"
+              >
+                <Globe className="w-3.5 h-3.5 shrink-0" />
+                <span>Importar pelo Portal Web</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
                   onNavegarParaDados?.((contextMenu.entidade.nif || contextMenu.entidade.nif_cc || '').trim(), ano, undefined, tipoOperacao);
                   setContextMenu(null);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-muted text-foreground flex items-center space-x-2 transition-colors cursor-pointer"
+                className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-[#162436] text-slate-800 dark:text-slate-200 flex items-center space-x-2 transition-colors cursor-pointer"
               >
                 <ArrowUpRight className="w-3.5 h-3.5 text-primary shrink-0" />
                 <span>Ver todas as faturas de {ano} ({contextMenu.totalAno || 0})</span>
@@ -2917,7 +3009,7 @@ export default function CommandCenter({
                   abrirModalLimpeza(contextMenu.entidade, ano, undefined);
                   setContextMenu(null);
                 }}
-                className="w-full text-left px-3 py-1.5 hover:bg-destructive/15 text-destructive flex items-center space-x-2 transition-colors cursor-pointer"
+                className="w-full text-left px-3 py-1.5 hover:bg-rose-50 dark:hover:bg-[#290f14] text-rose-700 dark:text-rose-300 flex items-center space-x-2 transition-colors cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5 shrink-0" />
                 <span>Limpar todo o ano de {ano}</span>
