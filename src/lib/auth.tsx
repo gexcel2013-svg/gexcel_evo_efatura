@@ -24,23 +24,92 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TOKEN_KEY = 'gexcel_app_auth_token';
 const USER_KEY = 'gexcel_app_auth_user';
+export const EVO_SESSION_KEY = 'gexcel_evo06_auth_session';
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
-    const saved = localStorage.getItem(USER_KEY);
-    if (!saved) return null;
-    try {
-      return JSON.parse(saved);
-    } catch {
+interface StoredEvoSession {
+  id?: string | number;
+  username: string;
+  nome: string;
+  role: string;
+  email?: string;
+  token: string;
+}
+
+function readStoredEvoSession(): StoredEvoSession | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(EVO_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredEvoSession>;
+    if (
+      !parsed ||
+      typeof parsed.token !== 'string' ||
+      parsed.token.trim().length === 0 ||
+      typeof parsed.username !== 'string' ||
+      parsed.username.trim().length === 0
+    ) {
       return null;
     }
-  });
+    return {
+      id: parsed.id ?? 1,
+      username: parsed.username.trim(),
+      nome: (parsed.nome || parsed.username).trim(),
+      role: parsed.role || 'OPERADOR',
+      email: parsed.email || '',
+      token: parsed.token.trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mapEvoSessionToAppUser(u: StoredEvoSession): AppUser {
+  const rawRole = (u.role || '').toUpperCase();
+  const mappedRole: AppUser['role'] =
+    rawRole === 'DEV' || rawRole === 'SUPERADMIN'
+      ? 'superadmin'
+      : rawRole === 'ADMIN'
+      ? 'admin'
+      : 'subutilizador';
+
+  return {
+    id: Number(u.id) || 1,
+    username: u.username,
+    nome: u.nome || u.username,
+    email: u.email || '',
+    role: mappedRole,
+    ativo: true,
+    is_system: mappedRole === 'superadmin',
+    created_at: new Date().toISOString(),
+  };
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const initialSession = readStoredEvoSession();
+  if (!initialSession && typeof window !== 'undefined') {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  }
+
+  const [token, setToken] = useState<string | null>(() => (initialSession ? initialSession.token : null));
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(() =>
+    initialSession ? mapEvoSessionToAppUser(initialSession) : null
+  );
 
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(() => Boolean(initialSession));
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [showSetupWizard, setShowSetupWizard] = useState<boolean>(false);
+
+  const clearSessionState = useCallback(() => {
+    setToken(null);
+    setCurrentUser(null);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem(EVO_SESSION_KEY);
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+    }
+  }, []);
 
   // Carregar configuração da app a partir da API (:8015)
   const refreshConfig = useCallback(async () => {
@@ -51,8 +120,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const cfg: AppConfig = data.config;
         setAppConfig(cfg);
 
-        // Se modo for autónomo e o setup não estiver completo (sem admins), abrir o wizard
-        if (cfg.modo_dados === 'autonomo' && !cfg.setup_completo) {
+        // Só abrir wizard de configuração autónoma se existir sessão autenticada válida
+        if (readStoredEvoSession() && cfg.modo_dados === 'autonomo' && !cfg.setup_completo) {
           setShowSetupWizard(true);
         }
       }
@@ -61,89 +130,139 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Validar sessão ativa se existir token
+  useEffect(() => {
+    const onForceLogout = () => {
+      clearSessionState();
+    };
+    window.addEventListener('gexcel-evo06-logout', onForceLogout);
+    return () => window.removeEventListener('gexcel-evo06-logout', onForceLogout);
+  }, [clearSessionState]);
+
+  // Validar sessão unificada EVO-11 ativa no arranque/atualização da página
   useEffect(() => {
     let cancel = false;
     async function validarSessao() {
-      setLoading(true);
-      await refreshConfig();
+      const savedEvo = readStoredEvoSession();
+      if (!savedEvo) {
+        clearSessionState();
+        if (!cancel) setLoading(false);
+        refreshConfig();
+        return;
+      }
 
-      const savedToken = localStorage.getItem(TOKEN_KEY);
-      if (savedToken) {
-        try {
-          const res = await fetch(`http://127.0.0.1:8015/api/app/auth/me?token=${encodeURIComponent(savedToken)}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (!cancel && data.user) {
-              setCurrentUser(data.user);
-              localStorage.setItem(USER_KEY, JSON.stringify(data.user));
-            }
-          } else {
-            // Token inválido ou expirado
-            if (!cancel) {
-              setToken(null);
-              setCurrentUser(null);
-              localStorage.removeItem(TOKEN_KEY);
-              localStorage.removeItem(USER_KEY);
-            }
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/auth/verify?token=${encodeURIComponent(savedEvo.token)}`, {
+          cache: 'no-store',
+        });
+        if (res.status === 401 || res.status === 403) {
+          if (!cancel) {
+            clearSessionState();
+            setLoading(false);
           }
-        } catch {
-          // Erro de rede: preserva o cache local para tolerância offline
+          return;
+        }
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data && data.ok === false) {
+            if (!cancel) {
+              clearSessionState();
+              setLoading(false);
+            }
+            return;
+          }
+          if (!cancel && data?.ok && data?.user) {
+            const refreshedSession: StoredEvoSession = {
+              id: data.user.id ?? savedEvo.id ?? 1,
+              username: String(data.user.username || savedEvo.username).trim(),
+              nome: String(data.user.nome || savedEvo.nome || savedEvo.username).trim(),
+              role: String(data.user.role || savedEvo.role || 'OPERADOR'),
+              email: String(data.user.email ?? savedEvo.email ?? ''),
+              token: savedEvo.token,
+            };
+            const mapped = mapEvoSessionToAppUser(refreshedSession);
+            sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(refreshedSession));
+            localStorage.setItem(TOKEN_KEY, refreshedSession.token);
+            localStorage.setItem(USER_KEY, JSON.stringify(mapped));
+            setToken(refreshedSession.token);
+            setCurrentUser(mapped);
+          }
+        }
+      } catch {
+        // Se endpoint remoto não responder momentaneamente, mantém a sessão assinada da aba atual
+        if (!cancel) {
+          const mapped = mapEvoSessionToAppUser(savedEvo);
+          setToken(savedEvo.token);
+          setCurrentUser(mapped);
         }
       }
+
+      await refreshConfig();
       if (!cancel) setLoading(false);
     }
 
     validarSessao();
     return () => { cancel = true; };
-  }, [refreshConfig]);
+  }, [clearSessionState, refreshConfig]);
 
   const login = async (username: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const res = await fetch('http://127.0.0.1:8015/api/app/auth/login', {
+      const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password, appCodigo: 'EVO-06' })
       });
-      if (res.ok) {
-        const data = await res.json();
-        const tk = data.token;
-        const usr = data.user;
-        setToken(tk);
-        setCurrentUser(usr);
-        localStorage.setItem(TOKEN_KEY, tk);
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok && data?.user && data?.token) {
+        const evoSess: StoredEvoSession = {
+          id: data.user.id ?? 1,
+          username: String(data.user.username || username).trim(),
+          nome: String(data.user.nome || username).trim(),
+          role: String(data.user.role || 'OPERADOR'),
+          email: String(data.user.email || ''),
+          token: String(data.token).trim(),
+        };
+        const usr = mapEvoSessionToAppUser(evoSess);
+        sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(evoSess));
+        localStorage.setItem(TOKEN_KEY, evoSess.token);
         localStorage.setItem(USER_KEY, JSON.stringify(usr));
+        setToken(evoSess.token);
+        setCurrentUser(usr);
         setShowLoginModal(false);
         await refreshConfig();
         return { success: true };
-      } else {
-        const err = await res.json();
-        return { success: false, error: err.detail || 'Falha na autenticação' };
       }
+      return { success: false, error: data?.error || data?.detail || 'Falha na autenticação' };
     } catch (e: any) {
-      return { success: false, error: e.message || 'Sem ligação à API' };
+      return { success: false, error: e.message || 'Sem ligação ao servidor de autenticação' };
     }
   };
 
   const setExternalSession = useCallback((usr: AppUser, sessionToken?: string) => {
-    setCurrentUser(usr);
+    const cleanTok = (sessionToken || '').trim();
+    if (!cleanTok || !usr?.username) {
+      clearSessionState();
+      return;
+    }
+    const existing = readStoredEvoSession();
+    const evoSess: StoredEvoSession = {
+      id: existing?.id ?? usr.id ?? 1,
+      username: usr.username,
+      nome: usr.nome || usr.username,
+      role: existing?.role || (usr.role === 'superadmin' ? 'DEV' : usr.role === 'admin' ? 'ADMIN' : 'OPERADOR'),
+      email: usr.email || '',
+      token: cleanTok,
+    };
+    sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(evoSess));
     localStorage.setItem(USER_KEY, JSON.stringify(usr));
-    if (sessionToken) {
-      setToken(sessionToken);
-      localStorage.setItem(TOKEN_KEY, sessionToken);
-    }
-  }, []);
+    localStorage.setItem(TOKEN_KEY, cleanTok);
+    setCurrentUser(usr);
+    setToken(cleanTok);
+  }, [clearSessionState]);
 
-  const logout = () => {
-    if (token) {
-      fetch(`http://127.0.0.1:8015/api/app/auth/logout?token=${encodeURIComponent(token)}`, { method: 'POST' }).catch(() => {});
-    }
-    setToken(null);
-    setCurrentUser(null);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-    sessionStorage.removeItem('gexcel_evo06_auth_session');
-  };
+  const logout = useCallback(() => {
+    clearSessionState();
+  }, [clearSessionState]);
 
   const refreshUsers = async (): Promise<AppUser[]> => {
     try {

@@ -9,11 +9,11 @@ import { AgendadorView } from './components/AgendadorView';
 import { ConfigView } from './components/ConfigView';
 import { LoginModal } from './components/LoginModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
-import { AuthProvider, useAuth } from './lib/auth';
-import { EvoLoginGate, type AuthenticatedEvoUser } from './components/EvoLoginGate';
+import { AuthProvider, useAuth, EVO_SESSION_KEY } from './lib/auth';
+import { EvoLoginGate } from './components/EvoLoginGate';
 
 function AppContent() {
-  const { currentUser, appConfig, refreshConfig, showLoginModal, showSetupWizard, setShowLoginModal, setExternalSession } = useAuth();
+  const { currentUser, token, loading, appConfig, refreshConfig, showLoginModal, showSetupWizard, setShowLoginModal, setExternalSession } = useAuth();
   const [centroKey, setCentroKey] = useState<number>(0);
 
   const centrosDisponiveis = useMemo(() => {
@@ -44,20 +44,7 @@ function AppContent() {
       }
     } catch {}
   };
-  const [authUser, setAuthUser] = useState<AuthenticatedEvoUser | null>(() => {
-    try {
-      const saved = sessionStorage.getItem('gexcel_evo06_auth_session');
-      return saved ? (JSON.parse(saved) as AuthenticatedEvoUser) : null;
-    } catch {
-      return null;
-    }
-  });
 
-  useEffect(() => {
-    if (!currentUser && !sessionStorage.getItem('gexcel_evo06_auth_session') && authUser) {
-      setAuthUser(null);
-    }
-  }, [currentUser, authUser]);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
     if (saved === 'light' || saved === 'dark') return saved;
@@ -207,7 +194,18 @@ function AppContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  if (!authUser && !currentUser) {
+  if (loading) {
+    return (
+      <div className="min-h-screen w-screen bg-background text-foreground flex items-center justify-center font-sans select-none relative">
+        <div className="workspace-ledger absolute inset-0 pointer-events-none" />
+        <div className="relative z-10 px-5 py-3.5 rounded-xl bg-white dark:bg-[#0c1520] border border-border shadow-xl font-mono text-xs text-slate-700 dark:text-slate-200">
+          A validar sessão autenticada...
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser || !token) {
     return (
       <EvoLoginGate
         appCodigo="EVO-06"
@@ -216,19 +214,20 @@ function AppContent() {
         theme={theme}
         onToggleTheme={toggleTheme}
         onAuthenticated={(u) => {
-          sessionStorage.setItem('gexcel_evo06_auth_session', JSON.stringify(u));
+          if (!u?.token || !u?.username) return;
+          sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(u));
+          const rawRole = (u.role || '').toUpperCase();
           const mappedUser = {
-            id: 1,
+            id: Number(u.id) || 1,
             username: u.username,
-            nome: u.nome,
+            nome: u.nome || u.username,
             email: u.email || '',
-            role: (u.role === 'DEV' || u.role === 'superadmin' ? 'superadmin' : u.role === 'ADMIN' || u.role === 'admin' ? 'admin' : 'subutilizador') as 'superadmin' | 'admin' | 'subutilizador',
+            role: (rawRole === 'DEV' || rawRole === 'SUPERADMIN' ? 'superadmin' : rawRole === 'ADMIN' ? 'admin' : 'subutilizador') as 'superadmin' | 'admin' | 'subutilizador',
             ativo: true,
-            is_system: u.role === 'DEV' || u.role === 'superadmin',
+            is_system: rawRole === 'DEV' || rawRole === 'SUPERADMIN',
             created_at: new Date().toISOString(),
           };
           setExternalSession(mappedUser, u.token);
-          setAuthUser(u);
         }}
       />
     );

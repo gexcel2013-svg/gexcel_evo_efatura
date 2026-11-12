@@ -1402,6 +1402,18 @@ export default function CommandCenter({
     ent: Entidade,
     opcoes?: { forcarScraper?: boolean; dataIni?: string; dataFim?: string }
   ) => {
+    try {
+      const rawSess = sessionStorage.getItem('gexcel_evo06_auth_session');
+      const parsedSess = rawSess ? JSON.parse(rawSess) : null;
+      if (!parsedSess || !parsedSess.token || !parsedSess.username) {
+        window.dispatchEvent(new Event('gexcel-evo06-logout'));
+        return;
+      }
+    } catch {
+      window.dispatchEvent(new Event('gexcel-evo06-logout'));
+      return;
+    }
+
     const nifParaEnviar = (ent.nif || ent.nif_cc || '').trim();
     const usarScraperDireto = Boolean(opcoes?.forcarScraper);
     const dIniEnvio = opcoes?.dataIni || dataInicio;
@@ -1499,6 +1511,18 @@ export default function CommandCenter({
   };
 
   const handleSync = async () => {
+    try {
+      const rawSess = sessionStorage.getItem('gexcel_evo06_auth_session');
+      const parsedSess = rawSess ? JSON.parse(rawSess) : null;
+      if (!parsedSess || !parsedSess.token || !parsedSess.username) {
+        window.dispatchEvent(new Event('gexcel-evo06-logout'));
+        return;
+      }
+    } catch {
+      window.dispatchEvent(new Event('gexcel-evo06-logout'));
+      return;
+    }
+
     if (selectedIds.size === 0) return;
     if (!modoManual && meses.size === 0) {
       alert("Por favor selecione pelo menos um mês antes de iniciar a sincronização.");

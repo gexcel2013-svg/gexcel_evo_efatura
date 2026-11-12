@@ -18,6 +18,7 @@ import {
   Calendar,
   SlidersHorizontal,
   User,
+  LogOut,
   LayoutGrid,
   ExternalLink
 } from 'lucide-react';
@@ -88,7 +89,7 @@ export function Sidebar({
     return () => window.removeEventListener('gexcel-motor-source', onSourceChange);
   }, []);
 
-  const { currentUser, setShowLoginModal } = useAuth();
+  const { currentUser, logout } = useAuth();
   const toggleCollapsed = () => setCollapsed(prev => !prev);
 
   const painelUrl =
@@ -284,29 +285,38 @@ export function Sidebar({
       {/* 3. Rodapé Integrado (100% Opaco) */}
       <div className="p-3 border-t border-border/80 space-y-2.5 bg-white dark:bg-[#0c1520]">
         
-        {/* Operador / Sessão Ativa */}
-        <div 
-          onClick={() => setShowLoginModal(true)}
-          title={currentUser ? `Operador: ${currentUser.nome} · Clique para alternar` : "Clique para iniciar sessão"}
-          className={`p-1.5 rounded-md bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] flex items-center cursor-pointer hover:border-[#0284c7] transition ${
-            collapsed ? 'justify-center' : 'justify-between space-x-2'
+        {/* Operador Autenticado / Terminar Sessão */}
+        <div
+          title={currentUser ? `Sessão ativa: ${currentUser.nome} (${currentUser.username})` : 'Sessão autenticada'}
+          className={`p-1.5 rounded-md bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] flex items-center ${
+            collapsed ? 'flex-col space-y-1.5 justify-center' : 'justify-between space-x-2'
           }`}
         >
-          <div className="flex items-center space-x-2 overflow-hidden">
+          <div className="flex items-center space-x-2 overflow-hidden min-w-0">
             <div className="w-5 h-5 rounded-full flex items-center justify-center font-mono font-bold text-[10px] shrink-0 bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-400 border border-sky-300 dark:border-sky-800">
-              {currentUser ? currentUser.nome.charAt(0).toUpperCase() : <User className="w-3 h-3" />}
+              {currentUser?.nome ? currentUser.nome.charAt(0).toUpperCase() : <User className="w-3 h-3" />}
             </div>
             {!collapsed && (
-              <span className="text-[11px] font-mono truncate text-foreground font-medium">
-                {currentUser ? currentUser.nome.split(' ')[0] : 'Entrar'}
+              <span className="text-[11px] font-mono truncate text-foreground font-semibold">
+                {currentUser?.nome || currentUser?.username}
               </span>
             )}
           </div>
-          {!collapsed && (
-            <span className="text-[8.5px] font-mono uppercase px-1.5 py-0.5 rounded font-bold text-[#0284c7] dark:text-sky-300 bg-sky-100 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800">
-              {currentUser ? (currentUser.role === 'subutilizador' ? 'OPERADOR' : 'ADMIN') : 'LOGIN'}
-            </span>
-          )}
+          <div className={`flex items-center shrink-0 ${collapsed ? '' : 'space-x-1.5'}`}>
+            {!collapsed && (
+              <span className="text-[8.5px] font-mono uppercase px-1.5 py-0.5 rounded font-bold text-[#0284c7] dark:text-sky-300 bg-sky-100 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800">
+                {currentUser?.role === 'superadmin' ? 'DEV' : currentUser?.role === 'subutilizador' ? 'OPERADOR' : 'ADMIN'}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={logout}
+              title="Terminar Sessão"
+              className="h-6 w-6 rounded flex items-center justify-center bg-white dark:bg-[#0c1520] hover:bg-rose-100 dark:hover:bg-[#2a1218] text-slate-700 dark:text-slate-300 hover:text-rose-700 dark:hover:text-rose-300 border border-slate-300 dark:border-[#253a52] hover:border-rose-400 dark:hover:border-rose-700 transition-colors cursor-pointer shrink-0"
+            >
+              <LogOut className="w-3 h-3" />
+            </button>
+          </div>
         </div>
 
         {/* Estado da Conexão e Origem do Motor (Local vs Cloud) */}
