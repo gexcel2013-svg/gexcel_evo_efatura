@@ -69,6 +69,35 @@ interface DadosEmpresaMatriz {
   meses_incompletos?: number[];
 }
 
+function normalizarMatrizEmpresas(raw: Record<string, DadosEmpresaMatriz>): Record<string, DadosEmpresaMatriz> {
+  const normalized: Record<string, DadosEmpresaMatriz> = {};
+  for (const [nif, emp] of Object.entries(raw || {})) {
+    const mesesNorm: Record<number, InfoMes> = {};
+    const mesesIncompletos: number[] = [];
+    for (const [mesStr, info] of Object.entries(emp.meses || {})) {
+      const mNum = Number(mesStr);
+      const esp = Number(info?.total_esperado || 0);
+      const docs = Number(info?.docs || 0);
+      const realmenteIncompleto = Boolean(info?.incompleto) && !(esp > 0 && docs >= esp);
+      mesesNorm[mNum] = {
+        ...info,
+        incompleto: realmenteIncompleto,
+      };
+      if (realmenteIncompleto) {
+        mesesIncompletos.push(mNum);
+      }
+    }
+    mesesIncompletos.sort((a, b) => a - b);
+    normalized[nif] = {
+      ...emp,
+      meses: mesesNorm,
+      meses_incompletos: mesesIncompletos,
+      tem_incompletos: mesesIncompletos.length > 0,
+    };
+  }
+  return normalized;
+}
+
 interface JobProgressInfo {
   status: string;
   mensagem: string;
@@ -606,7 +635,7 @@ export default function CommandCenter({
       const res = await fetch(`http://127.0.0.1:8015/api/estatisticas/matriz-anual/${anoAlvo}?tipo=${tipoAlvo}`);
       if (res.ok) {
         const data = await res.json();
-        setMatriz(data.empresas || {});
+        setMatriz(normalizarMatrizEmpresas(data.empresas || {}));
         setSenhasInvalidas(data.senhas_invalidas || {});
       }
 
@@ -1266,7 +1295,12 @@ export default function CommandCenter({
       };
     }
 
-    if (partialInfo) {
+    const partialRealmenteIncompleto =
+      Boolean(partialInfo) &&
+      !(partialInfo && partialInfo.total > 0 && partialInfo.docs >= partialInfo.total) &&
+      !(dadosEmpresa && !dadosEmpresa.tem_incompletos && totalAno > 0);
+
+    if (partialRealmenteIncompleto && partialInfo) {
       return {
         type: 'partial' as const,
         label: `Parcial: ${partialInfo.docs.toLocaleString('pt-PT')} / ${partialInfo.total.toLocaleString('pt-PT')}`,
@@ -1442,10 +1476,12 @@ export default function CommandCenter({
   };
 
   const toggleEntity = (id: string) => {
-    const newSet = new Set(selectedIds);
-    if (newSet.has(id)) newSet.delete(id);
-    else newSet.add(id);
-    setSelectedIds(newSet);
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) newSet.delete(id);
+      else newSet.add(id);
+      return newSet;
+    });
   };
 
   const limparHistoricoEstados = () => {
@@ -2585,7 +2621,9 @@ export default function CommandCenter({
                           ? 'bg-sky-50/90 dark:bg-sky-400/[0.07] border-x border-sky-300/50 dark:border-sky-500/30'
                           : '';
 
-                        const isMesIncompleto = Boolean(infoMes?.incompleto);
+                        const isMesIncompleto =
+                          Boolean(infoMes?.incompleto) &&
+                          !(infoMes?.total_esperado && infoMes.total_esperado > 0 && docs >= infoMes.total_esperado);
 
                         if (isFuturo) {
                           return (

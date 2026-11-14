@@ -155,7 +155,6 @@ export function AssistenteImportacaoPanel({
   passoAtivo,
   onPassoAtivoChange,
 }: AssistenteImportacaoPanelProps) {
-  const [maiorPassoAlcancado, setMaiorPassoAlcancado] = useState<1 | 2 | 3 | 4>(1);
   const [passosConfirmados, setPassosConfirmados] = useState<Set<number>>(() => new Set());
   const [resumoConfig, setResumoConfig] = useState<ResumoDestinosConfigurados>(() => obterResumoDestinosConfigurados());
   const [copiado, setCopiado] = useState<boolean>(false);
@@ -166,7 +165,8 @@ export function AssistenteImportacaoPanel({
   const [escolhendoPastaWin, setEscolhendoPastaWin] = useState<boolean>(false);
   const [escolhendoAntigaWin, setEscolhendoAntigaWin] = useState<boolean>(false);
 
-  const [modoSelecaoEmpresas, setModoSelecaoEmpresas] = useState<'todas' | 'escolher'>('escolher');
+  const [modoSelecaoEmpresas, setModoSelecaoEmpresas] = useState<'todas' | 'empresas' | 'nifs'>('todas');
+  const [categoriaSlicer, setCategoriaSlicer] = useState<'todos' | 'sociedades' | 'singulares' | 'marcadas'>('todos');
   const [pesquisaEmpresa, setPesquisaEmpresa] = useState<string>('');
   const [opcoesAbertas, setOpcoesAbertas] = useState<boolean>(false);
   const [iniciandoAnimado, setIniciandoAnimado] = useState<boolean>(false);
@@ -223,9 +223,9 @@ export function AssistenteImportacaoPanel({
 
   useEffect(() => {
     if (aberto && !prevAbertoRef.current) {
-      setMaiorPassoAlcancado(1);
       setPassosConfirmados(new Set());
       setIniciandoAnimado(false);
+      setCategoriaSlicer('todos');
       onPassoAtivoChange(1);
     } else if (!aberto && prevAbertoRef.current) {
       limparAnimacaoRato(true);
@@ -368,20 +368,51 @@ export function AssistenteImportacaoPanel({
 
   const pastaAntigaExibida = resumoConfig.pastaGexcelAntiga || 'C:\\Dados_GexcelApps';
 
+  const contagensSlicer = useMemo(() => {
+    let sociedades = 0;
+    let singulares = 0;
+    for (const e of empresas) {
+      const nifTrim = (e.nif || '').trim();
+      if (nifTrim.startsWith('5')) sociedades += 1;
+      else if (/^[123]/.test(nifTrim)) singulares += 1;
+    }
+    return {
+      todos: empresas.length,
+      sociedades,
+      singulares,
+      marcadas: selecionadasIds.size,
+    };
+  }, [empresas, selecionadasIds]);
+
   const empresasFiltradas = useMemo(() => {
     const q = pesquisaEmpresa.trim().toLowerCase();
-    if (!q) return empresas;
-    return empresas.filter(
-      e =>
+    const filtradas = empresas.filter(e => {
+      const nifTrim = (e.nif || '').trim();
+      if (categoriaSlicer === 'sociedades' && !nifTrim.startsWith('5')) return false;
+      if (categoriaSlicer === 'singulares' && !/^[123]/.test(nifTrim)) return false;
+      if (categoriaSlicer === 'marcadas' && !selecionadasIds.has(e.id)) return false;
+      if (!q) return true;
+      return (
         (e.nif || '').toLowerCase().includes(q) ||
         (e.nome || '').toLowerCase().includes(q) ||
         (e.cod || '').toLowerCase().includes(q)
-    );
-  }, [empresas, pesquisaEmpresa]);
+      );
+    });
+
+    if (modoSelecaoEmpresas === 'empresas') {
+      return [...filtradas].sort((a, b) =>
+        (a.nome || '').localeCompare(b.nome || '', 'pt', { sensitivity: 'base' })
+      );
+    }
+    if (modoSelecaoEmpresas === 'nifs') {
+      return [...filtradas].sort((a, b) =>
+        (a.nif || '').localeCompare(b.nif || '', 'pt', { numeric: true })
+      );
+    }
+    return filtradas;
+  }, [empresas, pesquisaEmpresa, categoriaSlicer, selecionadasIds, modoSelecaoEmpresas]);
 
   if (!aberto) return null;
-
-  const limiteVisivel = Math.max(passoAtivo, maiorPassoAlcancado) as 1 | 2 | 3 | 4;
 
   const irParaPasso = (
     p: 1 | 2 | 3 | 4,
@@ -390,7 +421,6 @@ export function AssistenteImportacaoPanel({
     customLabel?: string
   ) => {
     onPassoAtivoChange(p);
-    setMaiorPassoAlcancado(prev => (p > prev ? p : prev));
     const zoneFallback = `zona-${p}`;
     const defaultLabels: Record<1 | 2 | 3 | 4, string> = {
       1: 'Passo 1 · Destino dos dados na barra',
@@ -634,10 +664,9 @@ export function AssistenteImportacaoPanel({
           </button>
         </div>
 
-        {/* Barra de Progresso Compacta dos 4 Passos */}
+        {/* Barra de Progresso Compacta dos 4 Passos (Navegação Livre) */}
         <div className="px-3 py-1.5 bg-[#fef3c7] dark:bg-[#1b1409] border-b border-[#fde68a] dark:border-[#4d2f0c] grid grid-cols-4 gap-1.5 shrink-0">
           {([1, 2, 3, 4] as const).map(num => {
-            const alcancado = num <= limiteVisivel;
             const ativo = num === passoAtivo;
             const confirmado = passosConfirmados.has(num);
             const tituloCurto = num === 1 ? '1. Destino' : num === 2 ? '2. Empresas' : num === 3 ? '3. Período' : '4. Iniciar';
@@ -645,25 +674,20 @@ export function AssistenteImportacaoPanel({
               <button
                 key={num}
                 type="button"
-                disabled={!alcancado}
-                onClick={e => alcancado && irParaPasso(num, e)}
-                className={`py-1 px-1.5 rounded text-[10px] font-mono font-bold truncate border transition ${
+                onClick={e => irParaPasso(num, e)}
+                className={`py-1 px-1.5 rounded text-[10px] font-mono font-bold truncate border transition cursor-pointer ${
                   ativo
-                    ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] dark:border-[#fbbf24] shadow-2xs cursor-pointer'
-                    : confirmado
-                      ? 'bg-emerald-700 text-white border-emerald-800 cursor-pointer hover:bg-emerald-600'
-                      : alcancado
-                        ? 'bg-[#fde68a] dark:bg-[#2d200b] text-amber-950 dark:text-amber-200 border-[#f59e0b] dark:border-[#78350f] cursor-pointer'
-                        : 'bg-[#f5e8c2] dark:bg-[#1e170d] text-amber-900 dark:text-amber-400 border-[#e2cb85] dark:border-[#3c2b12] cursor-not-allowed'
+                    ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] dark:border-[#fbbf24] shadow-2xs'
+                    : 'bg-[#fde68a] dark:bg-[#2d200b] text-amber-950 dark:text-amber-200 border-[#f59e0b] dark:border-[#78350f] hover:bg-[#fcd34d] dark:hover:bg-[#3c2a0f]'
                 }`}
               >
-                {tituloCurto}
+                {confirmado && !ativo ? `✓ ${tituloCurto}` : tituloCurto}
               </button>
             );
           })}
         </div>
 
-        {/* Corpo Acordeão: Apenas Passos Alcançados (1 Aberto, Anteriores Compactados) */}
+        {/* Corpo Acordeão: Todos os Passos Acessíveis Livremente (1 Aberto, Restantes Compactados) */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-[#fffbeb] dark:bg-[#141008]">
           {/* ================= PASSO 1: LIGAÇÃO E DESTINO DOS DADOS ================= */}
           {passoAtivo === 1 ? (
@@ -675,7 +699,9 @@ export function AssistenteImportacaoPanel({
                 <div className="flex items-center space-x-2 min-w-0">
                   <span
                     className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
-                      passosConfirmados.has(1) ? 'bg-emerald-600 text-white' : 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008]'
+                      passosConfirmados.has(1)
+                        ? 'bg-[#b45309] dark:bg-[#d97706] text-white'
+                        : 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008]'
                     }`}
                   >
                     {passosConfirmados.has(1) ? <Check className="w-3.5 h-3.5" /> : '1'}
@@ -886,7 +912,7 @@ export function AssistenteImportacaoPanel({
               <div className="flex items-center space-x-2 min-w-0">
                 <span
                   className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-mono font-bold shrink-0 ${
-                    passosConfirmados.has(1) ? 'bg-emerald-600 text-white' : 'bg-[#d97706] text-white'
+                    passosConfirmados.has(1) ? 'bg-[#b45309] dark:bg-[#d97706] text-white' : 'bg-[#d97706] text-white'
                   }`}
                 >
                   {passosConfirmados.has(1) ? <Check className="w-3 h-3" /> : '1'}
@@ -896,503 +922,600 @@ export function AssistenteImportacaoPanel({
                 </span>
               </div>
               <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-[9.5px] font-mono font-bold text-amber-900 dark:text-amber-300 shrink-0">
-                Alterar
+                {passosConfirmados.has(1) ? 'Alterar' : 'Abrir'}
               </span>
             </button>
           )}
 
           {/* ================= PASSO 2: OPERAÇÃO & EMPRESAS ================= */}
-          {limiteVisivel >= 2 &&
-            (passoAtivo === 2 ? (
-              <div
-                ref={step2Ref}
-                className="rounded-md border-2 border-[#d97706] dark:border-[#f59e0b] bg-white dark:bg-[#1c150a] p-3 shadow-md"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center space-x-2 min-w-0">
-                    <span
-                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
-                        passosConfirmados.has(2) ? 'bg-emerald-600 text-white' : 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008]'
-                      }`}
-                    >
-                      {passosConfirmados.has(2) ? <Check className="w-3.5 h-3.5" /> : '2'}
-                    </span>
-                    <span className="text-xs font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
-                      Quem Importar (Operação & Empresas)
-                    </span>
-                  </div>
-                  <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#fef3c7] dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-amber-900 dark:text-amber-300 shrink-0 tabular-nums">
-                    {selecionadasIds.size}/{empresas.length}
+          {passoAtivo === 2 ? (
+            <div
+              ref={step2Ref}
+              className="rounded-md border-2 border-[#d97706] dark:border-[#f59e0b] bg-white dark:bg-[#1c150a] p-3 shadow-md"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center space-x-2 min-w-0">
+                  <span
+                    className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
+                      passosConfirmados.has(2)
+                        ? 'bg-[#b45309] dark:bg-[#d97706] text-white'
+                        : 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008]'
+                    }`}
+                  >
+                    {passosConfirmados.has(2) ? <Check className="w-3.5 h-3.5" /> : '2'}
+                  </span>
+                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                    Quem Importar (Operação & Empresas)
                   </span>
                 </div>
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#fef3c7] dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-amber-900 dark:text-amber-300 shrink-0 tabular-nums">
+                  {selecionadasIds.size}/{empresas.length}
+                </span>
+              </div>
 
-                <div className="mt-2.5 space-y-2">
-                  {/* Operação Compras vs Vendas */}
-                  <div className={`grid gap-1.5 ${permitirAmbos ? 'grid-cols-3' : 'grid-cols-2'}`}>
-                    {permitirAmbos && (
+              <div className="mt-2.5 space-y-2">
+                {/* Operação Compras vs Vendas */}
+                <div className={`grid gap-1.5 ${permitirAmbos ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                  {permitirAmbos && (
+                    <button
+                      type="button"
+                      onClick={e => {
+                        onTipoOperacaoChange('ambos');
+                        animarRatoParaAlvo('op-ambos', 'Operação alterada para Ambos', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
+                      }}
+                      className={`py-1.5 px-2 rounded text-[11px] font-mono font-semibold border flex items-center justify-center space-x-1 cursor-pointer transition ${
+                        tipoOperacao === 'ambos'
+                          ? 'bg-[#d97706] text-white border-[#d97706]'
+                          : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11]'
+                      }`}
+                    >
+                      <Layers className="w-3 h-3" />
+                      <span>Ambos</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={e => {
+                      onTipoOperacaoChange('compras');
+                      animarRatoParaAlvo('op-compras', 'Operação definida para Compras', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
+                    }}
+                    className={`py-1.5 px-2 rounded text-[11px] font-mono font-semibold border flex items-center justify-center space-x-1 cursor-pointer transition ${
+                      tipoOperacao === 'compras'
+                        ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                        : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11]'
+                    }`}
+                  >
+                    <ShoppingCart className="w-3 h-3" />
+                    <span>Compras</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={e => {
+                      onTipoOperacaoChange('vendas');
+                      animarRatoParaAlvo('op-vendas', 'Operação definida para Vendas', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
+                    }}
+                    className={`py-1.5 px-2 rounded text-[11px] font-mono font-semibold border flex items-center justify-center space-x-1 cursor-pointer transition ${
+                      tipoOperacao === 'vendas'
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11]'
+                    }`}
+                  >
+                    <TrendingUp className="w-3 h-3" />
+                    <span>Vendas</span>
+                  </button>
+                </div>
+
+                {/* Slicer Principal: Todas vs Empresas vs NIFs */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={e => {
+                      setModoSelecaoEmpresas('todas');
+                      onSelecionarTodasEmpresas();
+                      animarRatoParaAlvo('empresa-selector', `Todas (${empresas.length}) selecionadas na tabela`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
+                    }}
+                    className={`py-1.5 px-1.5 rounded text-[11px] font-mono font-bold border cursor-pointer transition truncate ${
+                      modoSelecaoEmpresas === 'todas'
+                        ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] dark:border-[#fbbf24] shadow-2xs'
+                        : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-900 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
+                    }`}
+                  >
+                    Todas ({empresas.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={e => {
+                      setModoSelecaoEmpresas('empresas');
+                      animarRatoParaAlvo('empresa-selector', 'Slicer por Nome de Empresa ativo', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
+                    }}
+                    className={`py-1.5 px-1.5 rounded text-[11px] font-mono font-bold border cursor-pointer transition truncate ${
+                      modoSelecaoEmpresas === 'empresas'
+                        ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] dark:border-[#fbbf24] shadow-2xs'
+                        : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-900 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
+                    }`}
+                  >
+                    Empresas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={e => {
+                      setModoSelecaoEmpresas('nifs');
+                      animarRatoParaAlvo('empresa-selector', 'Slicer por NIF ativo', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
+                    }}
+                    className={`py-1.5 px-1.5 rounded text-[11px] font-mono font-bold border cursor-pointer transition truncate ${
+                      modoSelecaoEmpresas === 'nifs'
+                        ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] dark:border-[#fbbf24] shadow-2xs'
+                        : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-900 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
+                    }`}
+                  >
+                    NIFs
+                  </button>
+                </div>
+
+                {/* Slicer Secundário de Categoria (Sociedades, Singulares, Marcadas) */}
+                <div className="flex flex-wrap gap-1">
+                  {([
+                    { id: 'todos', label: `Todos (${contagensSlicer.todos})` },
+                    { id: 'sociedades', label: `Sociedades 5xx (${contagensSlicer.sociedades})` },
+                    { id: 'singulares', label: `Singulares 1/2xx (${contagensSlicer.singulares})` },
+                    { id: 'marcadas', label: `Marcadas (${contagensSlicer.marcadas})` },
+                  ] as const).map(cat => {
+                    const ativo = categoriaSlicer === cat.id;
+                    return (
                       <button
+                        key={cat.id}
                         type="button"
                         onClick={e => {
-                          onTipoOperacaoChange('ambos');
-                          animarRatoParaAlvo('op-ambos', 'Operação alterada para Ambos', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
+                          setCategoriaSlicer(cat.id);
+                          animarRatoParaAlvo('empresa-selector', `Filtro: ${cat.label}`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
                         }}
-                        className={`py-1.5 px-2 rounded text-[11px] font-mono font-semibold border flex items-center justify-center space-x-1 cursor-pointer transition ${
-                          tipoOperacao === 'ambos'
-                            ? 'bg-[#d97706] text-white border-[#d97706]'
-                            : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11]'
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition cursor-pointer ${
+                          ativo
+                            ? 'bg-[#b45309] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#92400e] dark:border-[#fbbf24]'
+                            : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
                         }`}
                       >
-                        <Layers className="w-3 h-3" />
-                        <span>Ambos</span>
+                        {cat.label}
                       </button>
-                    )}
+                    );
+                  })}
+                </div>
+
+                {/* Lista Pesquisável de Empresas / NIFs */}
+                <div className="bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] rounded p-2 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 px-1.5 py-1 rounded bg-[#fef3c7] dark:bg-[#191309] border border-[#fde68a] dark:border-[#4d2f0c] text-[10px] font-mono font-bold text-slate-900 dark:text-amber-100">
+                    <span className="truncate">
+                      {selecionadasIds.size === empresas.length && empresas.length > 0
+                        ? `Todas já incluídas (${selecionadasIds.size}/${empresas.length})`
+                        : `${selecionadasIds.size} de ${empresas.length} selecionada(s)`}
+                    </span>
+                    <span className="text-amber-900 dark:text-amber-300 shrink-0 tabular-nums">
+                      Vista: {empresasFiltradas.length}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center space-x-1">
+                    <div className="relative flex-1">
+                      <Search className="w-3 h-3 text-amber-800 dark:text-amber-300 absolute left-2 top-2" />
+                      <input
+                        type="text"
+                        value={pesquisaEmpresa}
+                        onChange={e => setPesquisaEmpresa(e.target.value)}
+                        placeholder={
+                          modoSelecaoEmpresas === 'nifs'
+                            ? 'Pesquisar NIF...'
+                            : modoSelecaoEmpresas === 'empresas'
+                              ? 'Pesquisar nome da empresa...'
+                              : 'Pesquisar NIF, nome ou código...'
+                        }
+                        className="w-full text-[11px] font-mono bg-white dark:bg-[#1c150a] border border-[#fcd34d] dark:border-[#5c3a11] rounded pl-6 pr-2 py-1 text-slate-900 dark:text-white focus:outline-none focus:border-[#d97706]"
+                      />
+                    </div>
                     <button
                       type="button"
+                      disabled={empresasFiltradas.length === 0 || empresasFiltradas.every(emp => selecionadasIds.has(emp.id))}
                       onClick={e => {
-                        onTipoOperacaoChange('compras');
-                        animarRatoParaAlvo('op-compras', 'Operação definida para Compras', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
+                        if (empresasFiltradas.length === empresas.length && empresas.length > 0) {
+                          onSelecionarTodasEmpresas();
+                        } else {
+                          for (const emp of empresasFiltradas) {
+                            if (!selecionadasIds.has(emp.id)) {
+                              onToggleEmpresa(emp.id);
+                            }
+                          }
+                        }
+                        animarRatoParaAlvo('empresa-selector', `${empresasFiltradas.length} marcadas na matriz`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
                       }}
-                      className={`py-1.5 px-2 rounded text-[11px] font-mono font-semibold border flex items-center justify-center space-x-1 cursor-pointer transition ${
-                        tipoOperacao === 'compras'
-                          ? 'bg-[#0284c7] text-white border-[#0284c7]'
-                          : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11]'
-                      }`}
+                      className="px-2 py-1 rounded bg-[#d97706] hover:bg-[#b45309] disabled:opacity-45 disabled:cursor-not-allowed text-white text-[10px] font-mono font-bold cursor-pointer shrink-0 transition"
                     >
-                      <ShoppingCart className="w-3 h-3" />
-                      <span>Compras</span>
+                      Marcar ({empresasFiltradas.length})
                     </button>
                     <button
                       type="button"
+                      disabled={selecionadasIds.size === 0}
                       onClick={e => {
-                        onTipoOperacaoChange('vendas');
-                        animarRatoParaAlvo('op-vendas', 'Operação definida para Vendas', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
+                        onLimparEmpresas();
+                        animarRatoParaAlvo('empresa-selector', 'Seleção limpa na barra principal', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
                       }}
-                      className={`py-1.5 px-2 rounded text-[11px] font-mono font-semibold border flex items-center justify-center space-x-1 cursor-pointer transition ${
-                        tipoOperacao === 'vendas'
-                          ? 'bg-emerald-600 text-white border-emerald-600'
-                          : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11]'
-                      }`}
+                      className="px-2 py-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] border border-[#f59e0b] dark:border-[#78350f] disabled:opacity-45 disabled:cursor-not-allowed text-[10px] font-mono font-semibold text-amber-950 dark:text-amber-200 cursor-pointer shrink-0"
                     >
-                      <TrendingUp className="w-3 h-3" />
-                      <span>Vendas</span>
+                      Limpar
                     </button>
                   </div>
 
-                  {/* Todas vs Escolher */}
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={e => {
-                        setModoSelecaoEmpresas('todas');
-                        onSelecionarTodasEmpresas();
-                        animarRatoParaAlvo('empresa-selector', `Todas (${empresas.length}) selecionadas na tabela`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
-                      }}
-                      className={`py-1.5 px-2 rounded text-[11px] font-mono font-bold border cursor-pointer transition ${
-                        selecionadasIds.size === empresas.length && empresas.length > 0 && modoSelecaoEmpresas === 'todas'
-                          ? 'bg-[#d97706] text-white border-[#d97706]'
-                          : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-900 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
-                      }`}
-                    >
-                      Todas ({empresas.length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={e => {
-                        setModoSelecaoEmpresas('escolher');
-                        animarRatoParaAlvo('empresa-selector', 'Seleção de empresas na barra principal', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
-                      }}
-                      className={`py-1.5 px-2 rounded text-[11px] font-mono font-bold border cursor-pointer transition ${
-                        modoSelecaoEmpresas === 'escolher'
-                          ? 'bg-slate-800 dark:bg-[#2c1f0a] text-white border-slate-700 dark:border-[#f59e0b]'
-                          : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-900 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
-                      }`}
-                    >
-                      Escolher ({selecionadasIds.size})
-                    </button>
-                  </div>
-
-                  {/* Lista Pesquisável de Empresas */}
-                  {modoSelecaoEmpresas === 'escolher' && (
-                    <div className="bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] rounded p-2 space-y-1.5">
-                      <div className="flex items-center space-x-1.5">
-                        <div className="relative flex-1">
-                          <Search className="w-3 h-3 text-amber-800 dark:text-amber-300 absolute left-2 top-2" />
+                  <div className="max-h-40 overflow-y-auto divide-y divide-[#fde68a] dark:divide-[#36240c]">
+                    {empresasFiltradas.map(emp => {
+                      const checked = selecionadasIds.has(emp.id);
+                      const nifExibido = modoPrivacidade ? mascararNif(emp.nif) : emp.nif;
+                      const nomeExibido = modoPrivacidade ? mascararNome(emp.nome) : emp.nome;
+                      return (
+                        <label
+                          key={emp.id}
+                          className={`flex items-center space-x-2 py-1.5 px-1 cursor-pointer text-[11px] font-mono hover:bg-[#fef3c7] dark:hover:bg-[#1f170b] ${
+                            checked ? 'bg-[#fef3c7] dark:bg-[#241a0b]' : ''
+                          }`}
+                        >
                           <input
-                            type="text"
-                            value={pesquisaEmpresa}
-                            onChange={e => setPesquisaEmpresa(e.target.value)}
-                            placeholder="Pesquisar NIF, nome ou código..."
-                            className="w-full text-[11px] font-mono bg-white dark:bg-[#1c150a] border border-[#fcd34d] dark:border-[#5c3a11] rounded pl-6 pr-2 py-1 text-slate-900 dark:text-white focus:outline-none focus:border-[#d97706]"
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              onToggleEmpresa(emp.id);
+                              animarRatoParaAlvo('empresa-selector', `${checked ? 'Removida' : 'Selecionada'} na matriz`, undefined, undefined, 'zona-2');
+                            }}
+                            className="w-3.5 h-3.5 rounded accent-[#d97706] cursor-pointer shrink-0"
                           />
-                        </div>
+                          {modoSelecaoEmpresas === 'empresas' ? (
+                            <>
+                              <span className="font-sans font-semibold text-slate-900 dark:text-amber-50 truncate flex-1">
+                                {nomeExibido}
+                              </span>
+                              <span className="text-[#b45309] dark:text-[#fbbf24] font-bold shrink-0 text-[10.5px]">
+                                {nifExibido}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-[#b45309] dark:text-[#fbbf24] font-bold shrink-0">
+                                {nifExibido}
+                              </span>
+                              <span className="font-sans text-slate-900 dark:text-amber-50 truncate flex-1">
+                                {nomeExibido}
+                              </span>
+                            </>
+                          )}
+                        </label>
+                      );
+                    })}
+                    {empresasFiltradas.length === 0 && (
+                      <div className="py-3 text-center text-[11px] font-mono text-slate-700 dark:text-amber-200">
+                        Nenhuma entidade encontrada.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={e => confirmarEAvancar(2, 3, e)}
+                  className="w-full py-2 px-3 rounded bg-[#d97706] hover:bg-[#b45309] text-white font-mono text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs transition"
+                >
+                  <span>
+                    {selecionadasIds.size > 0
+                      ? `Confirmar Empresas (${selecionadasIds.size}) e Avançar`
+                      : 'Avançar para Período'}
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={e => irParaPasso(2, e)}
+              className="w-full text-left rounded-md border border-[#fcd34d] dark:border-[#78350f] bg-[#fef3c7] dark:bg-[#191309] hover:border-[#d97706] dark:hover:border-[#f59e0b] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
+            >
+              <div className="flex items-center space-x-2 min-w-0">
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-mono font-bold shrink-0 ${
+                    passosConfirmados.has(2) ? 'bg-[#b45309] dark:bg-[#d97706] text-white' : 'bg-[#d97706] text-white'
+                  }`}
+                >
+                  {passosConfirmados.has(2) ? <Check className="w-3 h-3" /> : '2'}
+                </span>
+                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                  Empresas · {labelOperacaoCurto} · {selecionadasIds.size} selecionada(s)
+                </span>
+              </div>
+              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-[9.5px] font-mono font-bold text-amber-900 dark:text-amber-300 shrink-0">
+                {passosConfirmados.has(2) ? 'Alterar' : 'Abrir'}
+              </span>
+            </button>
+          )}
+
+          {/* ================= PASSO 3: PERÍODO ================= */}
+          {passoAtivo === 3 ? (
+            <div
+              ref={step3Ref}
+              className="rounded-md border-2 border-[#d97706] dark:border-[#f59e0b] bg-white dark:bg-[#1c150a] p-3 shadow-md"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center space-x-2 min-w-0">
+                  <span
+                    className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
+                      passosConfirmados.has(3)
+                        ? 'bg-[#b45309] dark:bg-[#d97706] text-white'
+                        : 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008]'
+                    }`}
+                  >
+                    {passosConfirmados.has(3) ? <Check className="w-3.5 h-3.5" /> : '3'}
+                  </span>
+                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                    Que Período Importar
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#fef3c7] dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-amber-900 dark:text-amber-300 shrink-0">
+                  {ano}{mesesSelecionados ? ` · ${mesesSelecionados.size}m` : ''}
+                </span>
+              </div>
+
+              <div className="mt-2.5 space-y-2">
+                {/* Seletor de Ano */}
+                <div className="flex items-center justify-between bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] rounded px-2.5 py-1.5">
+                  <div className="flex items-center space-x-1.5 text-xs font-mono font-semibold text-slate-900 dark:text-amber-50">
+                    <Calendar className="w-3.5 h-3.5 text-[#d97706] dark:text-[#fbbf24]" />
+                    <span>Exercício Fiscal</span>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <button
+                      type="button"
+                      onClick={e => {
+                        const novo = ano - 1;
+                        onAnoChange(novo);
+                        animarRatoParaAlvo('ano-selector', `Exercício alterado para ${novo}`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
+                      }}
+                      className="p-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] hover:bg-[#fde68a] dark:hover:bg-[#33240f] text-slate-900 dark:text-amber-100 cursor-pointer"
+                      title="Ano Anterior"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="font-mono font-black text-sm text-slate-900 dark:text-white min-w-[44px] text-center">
+                      {ano}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={e => {
+                        if (ano < anoAtual) {
+                          const novo = ano + 1;
+                          onAnoChange(novo);
+                          animarRatoParaAlvo('ano-selector', `Exercício alterado para ${novo}`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
+                        }
+                      }}
+                      disabled={ano >= anoAtual}
+                      className={`p-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] text-slate-900 dark:text-amber-100 ${
+                        ano >= anoAtual ? 'opacity-25 cursor-not-allowed' : 'hover:bg-[#fde68a] dark:hover:bg-[#33240f] cursor-pointer'
+                      }`}
+                      title="Ano Seguinte"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {!apenasAnoCompleto && mesesSelecionados && onToggleMes ? (
+                  <>
+                    {/* Atalhos Rápidos */}
+                    <div className="flex flex-wrap items-center gap-1 text-[10.5px] font-mono">
+                      {onSelecionarAnoTodo && (
                         <button
                           type="button"
                           onClick={e => {
-                            onLimparEmpresas();
-                            animarRatoParaAlvo('empresa-selector', 'Seleção limpa na barra principal', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
+                            onSelecionarAnoTodo();
+                            animarRatoParaAlvo('periodo-ano-todo', 'Ano completo marcado na barra', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
                           }}
-                          className="px-2 py-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] border border-[#f59e0b] dark:border-[#78350f] text-[10px] font-mono font-semibold text-amber-950 dark:text-amber-200 cursor-pointer shrink-0"
+                          className="px-2 py-1 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706] font-semibold text-slate-900 dark:text-amber-100 cursor-pointer"
                         >
-                          Limpar
+                          Ano Completo
                         </button>
-                      </div>
-
-                      <div className="max-h-40 overflow-y-auto divide-y divide-[#fde68a] dark:divide-[#36240c]">
-                        {empresasFiltradas.map(emp => {
-                          const checked = selecionadasIds.has(emp.id);
-                          return (
-                            <label
-                              key={emp.id}
-                              className={`flex items-center space-x-2 py-1.5 px-1 cursor-pointer text-[11px] font-mono hover:bg-[#fef3c7] dark:hover:bg-[#1f170b] ${
-                                checked ? 'bg-[#fef3c7] dark:bg-[#241a0b]' : ''
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => {
-                                  onToggleEmpresa(emp.id);
-                                  animarRatoParaAlvo('empresa-selector', `${checked ? 'Removida' : 'Selecionada'} na matriz`, undefined, undefined, 'zona-2');
-                                }}
-                                className="w-3.5 h-3.5 rounded accent-[#d97706] cursor-pointer shrink-0"
-                              />
-                              <span className="text-[#b45309] dark:text-[#fbbf24] font-bold shrink-0">
-                                {modoPrivacidade ? mascararNif(emp.nif) : emp.nif}
-                              </span>
-                              <span className="font-sans text-slate-900 dark:text-amber-50 truncate flex-1">
-                                {modoPrivacidade ? mascararNome(emp.nome) : emp.nome}
-                              </span>
-                            </label>
-                          );
-                        })}
-                        {empresasFiltradas.length === 0 && (
-                          <div className="py-3 text-center text-[11px] font-mono text-slate-700 dark:text-amber-200">
-                            Nenhuma empresa encontrada.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  <button
-                    type="button"
-                    disabled={selecionadasIds.size === 0}
-                    onClick={e => confirmarEAvancar(2, 3, e)}
-                    className="w-full py-2 px-3 rounded bg-[#d97706] hover:bg-[#b45309] disabled:opacity-50 text-white font-mono text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs transition"
-                  >
-                    <span>Confirmar Empresas ({selecionadasIds.size}) e Avançar</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={e => irParaPasso(2, e)}
-                className="w-full text-left rounded-md border border-[#fcd34d] dark:border-[#78350f] bg-[#fef3c7] dark:bg-[#191309] hover:border-[#d97706] dark:hover:border-[#f59e0b] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
-              >
-                <div className="flex items-center space-x-2 min-w-0">
-                  <span
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-mono font-bold shrink-0 ${
-                      passosConfirmados.has(2) ? 'bg-emerald-600 text-white' : 'bg-[#d97706] text-white'
-                    }`}
-                  >
-                    {passosConfirmados.has(2) ? <Check className="w-3 h-3" /> : '2'}
-                  </span>
-                  <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
-                    Empresas · {labelOperacaoCurto} · {selecionadasIds.size} selecionada(s)
-                  </span>
-                </div>
-                <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-[9.5px] font-mono font-bold text-amber-900 dark:text-amber-300 shrink-0">
-                  Alterar
-                </span>
-              </button>
-            ))}
-
-          {/* ================= PASSO 3: PERÍODO ================= */}
-          {limiteVisivel >= 3 &&
-            (passoAtivo === 3 ? (
-              <div
-                ref={step3Ref}
-                className="rounded-md border-2 border-[#d97706] dark:border-[#f59e0b] bg-white dark:bg-[#1c150a] p-3 shadow-md"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center space-x-2 min-w-0">
-                    <span
-                      className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
-                        passosConfirmados.has(3) ? 'bg-emerald-600 text-white' : 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008]'
-                      }`}
-                    >
-                      {passosConfirmados.has(3) ? <Check className="w-3.5 h-3.5" /> : '3'}
-                    </span>
-                    <span className="text-xs font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
-                      Que Período Importar
-                    </span>
-                  </div>
-                  <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#fef3c7] dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-amber-900 dark:text-amber-300 shrink-0">
-                    {ano}{mesesSelecionados ? ` · ${mesesSelecionados.size}m` : ''}
-                  </span>
-                </div>
-
-                <div className="mt-2.5 space-y-2">
-                  {/* Seletor de Ano */}
-                  <div className="flex items-center justify-between bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] rounded px-2.5 py-1.5">
-                    <div className="flex items-center space-x-1.5 text-xs font-mono font-semibold text-slate-900 dark:text-amber-50">
-                      <Calendar className="w-3.5 h-3.5 text-[#d97706] dark:text-[#fbbf24]" />
-                      <span>Exercício Fiscal</span>
-                    </div>
-                    <div className="flex items-center space-x-1">
-                      <button
-                        type="button"
-                        onClick={e => {
-                          const novo = ano - 1;
-                          onAnoChange(novo);
-                          animarRatoParaAlvo('ano-selector', `Exercício alterado para ${novo}`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
-                        }}
-                        className="p-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] hover:bg-[#fde68a] dark:hover:bg-[#33240f] text-slate-900 dark:text-amber-100 cursor-pointer"
-                        title="Ano Anterior"
-                      >
-                        <ChevronLeft className="w-3.5 h-3.5" />
-                      </button>
-                      <span className="font-mono font-black text-sm text-slate-900 dark:text-white min-w-[44px] text-center">
-                        {ano}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={e => {
-                          if (ano < anoAtual) {
-                            const novo = ano + 1;
-                            onAnoChange(novo);
-                            animarRatoParaAlvo('ano-selector', `Exercício alterado para ${novo}`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
-                          }
-                        }}
-                        disabled={ano >= anoAtual}
-                        className={`p-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] text-slate-900 dark:text-amber-100 ${
-                          ano >= anoAtual ? 'opacity-25 cursor-not-allowed' : 'hover:bg-[#fde68a] dark:hover:bg-[#33240f] cursor-pointer'
-                        }`}
-                        title="Ano Seguinte"
-                      >
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {!apenasAnoCompleto && mesesSelecionados && onToggleMes ? (
-                    <>
-                      {/* Atalhos Rápidos */}
-                      <div className="flex flex-wrap items-center gap-1 text-[10.5px] font-mono">
-                        {onSelecionarAnoTodo && (
+                      )}
+                      {onSelecionarMesAtual && ano === anoAtual && (
+                        <button
+                          type="button"
+                          onClick={e => {
+                            onSelecionarMesAtual();
+                            animarRatoParaAlvo('periodo-mes-atual', 'Mês atual marcado na barra', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
+                          }}
+                          className="px-2 py-1 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706] font-semibold text-slate-900 dark:text-amber-100 cursor-pointer"
+                        >
+                          Mês Atual
+                        </button>
+                      )}
+                      {onSelecionarTrimestre &&
+                        [1, 2, 3, 4].map(t => (
                           <button
+                            key={t}
                             type="button"
                             onClick={e => {
-                              onSelecionarAnoTodo();
-                              animarRatoParaAlvo('periodo-ano-todo', 'Ano completo marcado na barra', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
+                              onSelecionarTrimestre(t);
+                              animarRatoParaAlvo('zona-3', `T${t} selecionado na matriz`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
                             }}
-                            className="px-2 py-1 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706] font-semibold text-slate-900 dark:text-amber-100 cursor-pointer"
+                            className="px-1.5 py-1 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706] font-bold text-slate-900 dark:text-amber-100 cursor-pointer"
                           >
-                            Ano Completo
+                            T{t}
                           </button>
-                        )}
-                        {onSelecionarMesAtual && ano === anoAtual && (
-                          <button
-                            type="button"
-                            onClick={e => {
-                              onSelecionarMesAtual();
-                              animarRatoParaAlvo('periodo-mes-atual', 'Mês atual marcado na barra', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
-                            }}
-                            className="px-2 py-1 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706] font-semibold text-slate-900 dark:text-amber-100 cursor-pointer"
-                          >
-                            Mês Atual
-                          </button>
-                        )}
-                        {onSelecionarTrimestre &&
-                          [1, 2, 3, 4].map(t => (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={e => {
-                                onSelecionarTrimestre(t);
-                                animarRatoParaAlvo('zona-3', `T${t} selecionado na matriz`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
-                              }}
-                              className="px-1.5 py-1 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706] font-bold text-slate-900 dark:text-amber-100 cursor-pointer"
-                            >
-                              T{t}
-                            </button>
-                          ))}
-                      </div>
-
-                      {/* Grelha 12 Meses */}
-                      <div className="grid grid-cols-4 gap-1">
-                        {MESES_CURTOS.map(m => {
-                          const futuro = ano === anoAtual && m.num > mesAtual;
-                          const ativo = mesesSelecionados.has(m.num);
-                          return (
-                            <button
-                              key={m.num}
-                              type="button"
-                              disabled={futuro}
-                              onClick={e => {
-                                onToggleMes(m.num);
-                                animarRatoParaAlvo('zona-3', `${m.nome} atualizado no período`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
-                              }}
-                              className={`py-1 rounded text-[11px] font-mono font-semibold border transition cursor-pointer ${
-                                futuro
-                                  ? 'opacity-30 cursor-not-allowed bg-[#f5e8c2] dark:bg-[#1a140b] border-[#e2cb85] dark:border-[#3c2b12] text-amber-800 dark:text-amber-500'
-                                  : ativo
-                                    ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] font-bold'
-                                    : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
-                              }`}
-                            >
-                              {m.nome}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="px-2.5 py-1.5 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] text-[11px] font-mono text-slate-800 dark:text-amber-200">
-                      Extração configurada para todo o exercício de <strong className="text-slate-950 dark:text-white">{ano}</strong>.
+                        ))}
                     </div>
-                  )}
 
-                  <button
-                    type="button"
-                    disabled={mesesSelecionados ? mesesSelecionados.size === 0 : false}
-                    onClick={e => confirmarEAvancar(3, 4, e)}
-                    className="w-full py-2 px-3 rounded bg-[#d97706] hover:bg-[#b45309] disabled:opacity-50 text-white font-mono text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs transition"
-                  >
-                    <span>Confirmar Período e Avançar</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                    {/* Grelha 12 Meses */}
+                    <div className="grid grid-cols-4 gap-1">
+                      {MESES_CURTOS.map(m => {
+                        const futuro = ano === anoAtual && m.num > mesAtual;
+                        const ativo = mesesSelecionados.has(m.num);
+                        return (
+                          <button
+                            key={m.num}
+                            type="button"
+                            disabled={futuro}
+                            onClick={e => {
+                              onToggleMes(m.num);
+                              animarRatoParaAlvo('zona-3', `${m.nome} atualizado no período`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
+                            }}
+                            className={`py-1 rounded text-[11px] font-mono font-semibold border transition cursor-pointer ${
+                              futuro
+                                ? 'opacity-30 cursor-not-allowed bg-[#f5e8c2] dark:bg-[#1a140b] border-[#e2cb85] dark:border-[#3c2b12] text-amber-800 dark:text-amber-500'
+                                : ativo
+                                  ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] font-bold'
+                                  : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
+                            }`}
+                          >
+                            {m.nome}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <div className="px-2.5 py-1.5 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] text-[11px] font-mono text-slate-800 dark:text-amber-200">
+                    Extração configurada para todo o exercício de <strong className="text-slate-950 dark:text-white">{ano}</strong>.
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  disabled={mesesSelecionados ? mesesSelecionados.size === 0 : false}
+                  onClick={e => confirmarEAvancar(3, 4, e)}
+                  className="w-full py-2 px-3 rounded bg-[#d97706] hover:bg-[#b45309] disabled:opacity-50 text-white font-mono text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs transition"
+                >
+                  <span>Confirmar Período e Avançar</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
               </div>
-            ) : (
-              <button
-                type="button"
-                onClick={e => irParaPasso(3, e)}
-                className="w-full text-left rounded-md border border-[#fcd34d] dark:border-[#78350f] bg-[#fef3c7] dark:bg-[#191309] hover:border-[#d97706] dark:hover:border-[#f59e0b] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
-              >
-                <div className="flex items-center space-x-2 min-w-0">
-                  <span
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-mono font-bold shrink-0 ${
-                      passosConfirmados.has(3) ? 'bg-emerald-600 text-white' : 'bg-[#d97706] text-white'
-                    }`}
-                  >
-                    {passosConfirmados.has(3) ? <Check className="w-3 h-3" /> : '3'}
-                  </span>
-                  <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
-                    Período · Exercício {ano}{mesesSelecionados ? ` (${mesesSelecionados.size}m)` : ' (Ano todo)'}
-                  </span>
-                </div>
-                <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-[9.5px] font-mono font-bold text-amber-900 dark:text-amber-300 shrink-0">
-                  Alterar
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={e => irParaPasso(3, e)}
+              className="w-full text-left rounded-md border border-[#fcd34d] dark:border-[#78350f] bg-[#fef3c7] dark:bg-[#191309] hover:border-[#d97706] dark:hover:border-[#f59e0b] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
+            >
+              <div className="flex items-center space-x-2 min-w-0">
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-mono font-bold shrink-0 ${
+                    passosConfirmados.has(3) ? 'bg-[#b45309] dark:bg-[#d97706] text-white' : 'bg-[#d97706] text-white'
+                  }`}
+                >
+                  {passosConfirmados.has(3) ? <Check className="w-3 h-3" /> : '3'}
                 </span>
-              </button>
-            ))}
+                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                  Período · Exercício {ano}{mesesSelecionados ? ` (${mesesSelecionados.size}m)` : ' (Ano todo)'}
+                </span>
+              </div>
+              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-[9.5px] font-mono font-bold text-amber-900 dark:text-amber-300 shrink-0">
+                {passosConfirmados.has(3) ? 'Alterar' : 'Abrir'}
+              </span>
+            </button>
+          )}
 
           {/* ================= PASSO 4: RESUMO E INICIAR ================= */}
-          {limiteVisivel >= 4 &&
-            (passoAtivo === 4 ? (
-              <div
-                ref={step4Ref}
-                className="rounded-md border-2 border-emerald-600 dark:border-emerald-500 bg-white dark:bg-[#0d1c17] p-3 shadow-md"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center space-x-2 min-w-0">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-mono font-bold shrink-0">
-                      4
-                    </span>
-                    <span className="text-xs font-mono font-bold text-slate-900 dark:text-emerald-50 truncate">
-                      Confirmar e Iniciar Importação
-                    </span>
-                  </div>
-                  <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white shrink-0">
-                    Passo Final
-                  </span>
-                </div>
-
-                <div className="mt-2.5 space-y-2">
-                  <div className="p-2.5 rounded bg-[#f0fdf4] dark:bg-[#091511] border border-emerald-300 dark:border-emerald-800 text-[11px] font-mono space-y-1 text-slate-800 dark:text-emerald-100">
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="shrink-0 font-semibold">Destino:</span>
-                      <span className="font-bold text-slate-950 dark:text-white break-all text-right">{caminhoExibido}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold">Seleção:</span>
-                      <span className="font-bold text-slate-950 dark:text-white text-right">
-                        {labelOperacao} · {selecionadasIds.size} de {empresas.length}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold">Período:</span>
-                      <span className="font-bold text-slate-950 dark:text-white text-right">
-                        Exercício {ano}
-                        {mesesSelecionados ? ` (${mesesSelecionados.size} ${mesesSelecionados.size === 1 ? 'mês' : 'meses'})` : ''}
-                      </span>
-                    </div>
-                  </div>
-
-                  {opcoesExtras && (
-                    <div className="bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] rounded overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={e => {
-                          const vaiAbrir = !opcoesAbertas;
-                          setOpcoesAbertas(vaiAbrir);
-                          if (vaiAbrir) {
-                            animarRatoParaAlvo('btn-opcoes', 'Estas opções também existem aqui na barra', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-4');
-                          }
-                        }}
-                        className="w-full px-2.5 py-1.5 flex items-center justify-between text-[11px] font-mono font-semibold text-slate-800 dark:text-amber-200 hover:bg-[#fef3c7] dark:hover:bg-[#1f180b] cursor-pointer"
-                      >
-                        <span className="flex items-center space-x-1.5">
-                          <SlidersHorizontal className="w-3 h-3 text-[#d97706] dark:text-[#fbbf24]" />
-                          <span>Opções Avançadas</span>
-                        </span>
-                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${opcoesAbertas ? 'rotate-180' : ''}`} />
-                      </button>
-                      {opcoesAbertas && (
-                        <div className="p-2.5 border-t border-[#fcd34d] dark:border-[#5c3a11] space-y-2">
-                          {opcoesExtras}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <button
-                    type="button"
-                    disabled={!podeIniciar}
-                    onClick={executarIniciarComRato}
-                    className="w-full py-2.5 px-4 rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-45 disabled:cursor-not-allowed text-white font-mono text-xs font-bold uppercase tracking-wider flex items-center justify-center space-x-2 cursor-pointer shadow-sm transition"
-                  >
-                    <Play className="w-4 h-4 fill-current" />
-                    <span>
-                      {iniciandoAnimado
-                        ? 'A iniciar na barra principal...'
-                        : labelBotaoIniciar || `Iniciar Importação (${selecionadasIds.size})`}
-                    </span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={e => irParaPasso(4, e)}
-                className="w-full text-left rounded-md border border-emerald-400 dark:border-emerald-700 bg-emerald-50 dark:bg-[#0d1c17] hover:border-emerald-600 px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
-              >
+          {passoAtivo === 4 ? (
+            <div
+              ref={step4Ref}
+              className="rounded-md border-2 border-[#d97706] dark:border-[#f59e0b] bg-white dark:bg-[#1c150a] p-3 shadow-md"
+            >
+              <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center space-x-2 min-w-0">
-                  <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[11px] font-mono font-bold shrink-0">
+                  <span className="w-6 h-6 rounded-full bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] flex items-center justify-center text-xs font-mono font-bold shrink-0">
                     4
                   </span>
-                  <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-emerald-100 truncate">
-                    Iniciar · {selecionadasIds.size} selecionada(s) · {ano}
+                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                    Confirmar e Iniciar Importação
                   </span>
                 </div>
-                <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#091511] border border-emerald-500 text-[9.5px] font-mono font-bold text-emerald-800 dark:text-emerald-300 shrink-0">
-                  Abrir
+                <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] shrink-0">
+                  Passo Final
                 </span>
-              </button>
-            ))}
+              </div>
+
+              <div className="mt-2.5 space-y-2">
+                <div className="p-2.5 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] text-[11px] font-mono space-y-1 text-slate-800 dark:text-amber-100">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="shrink-0 font-semibold">Destino:</span>
+                    <span className="font-bold text-slate-950 dark:text-white break-all text-right">{caminhoExibido}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">Seleção:</span>
+                    <span className="font-bold text-slate-950 dark:text-white text-right">
+                      {labelOperacao} · {selecionadasIds.size} de {empresas.length}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">Período:</span>
+                    <span className="font-bold text-slate-950 dark:text-white text-right">
+                      Exercício {ano}
+                      {mesesSelecionados ? ` (${mesesSelecionados.size} ${mesesSelecionados.size === 1 ? 'mês' : 'meses'})` : ''}
+                    </span>
+                  </div>
+                </div>
+
+                {opcoesExtras && (
+                  <div className="bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] rounded overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={e => {
+                        const vaiAbrir = !opcoesAbertas;
+                        setOpcoesAbertas(vaiAbrir);
+                        if (vaiAbrir) {
+                          animarRatoParaAlvo('btn-opcoes', 'Estas opções também existem aqui na barra', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-4');
+                        }
+                      }}
+                      className="w-full px-2.5 py-1.5 flex items-center justify-between text-[11px] font-mono font-semibold text-slate-800 dark:text-amber-200 hover:bg-[#fef3c7] dark:hover:bg-[#1f180b] cursor-pointer"
+                    >
+                      <span className="flex items-center space-x-1.5">
+                        <SlidersHorizontal className="w-3 h-3 text-[#d97706] dark:text-[#fbbf24]" />
+                        <span>Opções Avançadas</span>
+                      </span>
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${opcoesAbertas ? 'rotate-180' : ''}`} />
+                    </button>
+                    {opcoesAbertas && (
+                      <div className="p-2.5 border-t border-[#fcd34d] dark:border-[#5c3a11] space-y-2">
+                        {opcoesExtras}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  disabled={!podeIniciar}
+                  onClick={executarIniciarComRato}
+                  className="w-full py-2.5 px-4 rounded-md bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-45 disabled:cursor-not-allowed text-white font-mono text-xs font-bold uppercase tracking-wider flex items-center justify-center space-x-2 cursor-pointer shadow-sm transition"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>
+                    {iniciandoAnimado
+                      ? 'A iniciar na barra principal...'
+                      : labelBotaoIniciar || `Iniciar Importação (${selecionadasIds.size})`}
+                  </span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={e => irParaPasso(4, e)}
+              className="w-full text-left rounded-md border border-[#fcd34d] dark:border-[#78350f] bg-[#fef3c7] dark:bg-[#191309] hover:border-[#d97706] dark:hover:border-[#f59e0b] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
+            >
+              <div className="flex items-center space-x-2 min-w-0">
+                <span className="w-5 h-5 rounded-full bg-[#d97706] text-white flex items-center justify-center text-[11px] font-mono font-bold shrink-0">
+                  4
+                </span>
+                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                  Iniciar · {selecionadasIds.size} selecionada(s) · {ano}
+                </span>
+              </div>
+              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-[9.5px] font-mono font-bold text-amber-900 dark:text-amber-300 shrink-0">
+                Abrir
+              </span>
+            </button>
+          )}
         </div>
       </aside>
 
