@@ -552,17 +552,18 @@ export function InconformidadesView({
           <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5 shrink-0">
             {/* Zona 1: Destino dos Dados */}
             <div
+              data-evo-guide-target="zona-1"
               onClick={() => assistenteAberto && setPassoAssistente(1)}
               className={`flex items-center space-x-2 px-2.5 py-1.5 rounded border text-xs font-mono transition ${
                 assistenteAberto && passoAssistente === 1
-                  ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
                   : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
               }`}
             >
               {assistenteAberto && (
                 <span
                   className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
-                    passoAssistente === 1 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                    passoAssistente === 1 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                   }`}
                 >
                   ① Destino
@@ -585,6 +586,7 @@ export function InconformidadesView({
               </button>
               <button
                 type="button"
+                data-evo-guide-target="btn-abrir-pasta"
                 onClick={e => {
                   e.stopPropagation();
                   abrirPastaDadosWindows();
@@ -598,17 +600,18 @@ export function InconformidadesView({
 
             {/* Zona 2: Módulo (Ambos / Compras / Vendas), Empresa, Pesquisa & Origem */}
             <div
+              data-evo-guide-target="zona-2"
               onClick={() => assistenteAberto && setPassoAssistente(2)}
               className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition ${
                 assistenteAberto && passoAssistente === 2
-                  ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
                   : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
               }`}
             >
               {assistenteAberto && (
                 <span
                   className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
-                    passoAssistente === 2 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                    passoAssistente === 2 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                   }`}
                 >
                   ② Empresas
@@ -618,6 +621,7 @@ export function InconformidadesView({
               <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] p-0.5 rounded border border-slate-200 dark:border-[#1e344f] text-xs font-mono">
                 <button
                   type="button"
+                  data-evo-guide-target="op-ambos"
                   onClick={() => {
                     setModuloFiltro('todos');
                     setScrapeModulo('ambos');
@@ -630,6 +634,7 @@ export function InconformidadesView({
                 </button>
                 <button
                   type="button"
+                  data-evo-guide-target="op-compras"
                   onClick={() => {
                     setModuloFiltro('compras');
                     setScrapeModulo('compras');
@@ -643,6 +648,7 @@ export function InconformidadesView({
                 </button>
                 <button
                   type="button"
+                  data-evo-guide-target="op-vendas"
                   onClick={() => {
                     setModuloFiltro('vendas');
                     setScrapeModulo('vendas');
@@ -656,30 +662,32 @@ export function InconformidadesView({
                 </button>
               </div>
 
-              <EmpresaSelectorCombobox
-                entidades={entidadesCombobox}
-                value={nifFiltro}
-                onChange={val => {
-                  setNifFiltro(val);
-                  if (val) {
-                    setScrapeNif(val);
-                    setSelecionadasAssistente(new Set([val]));
-                  } else {
-                    selecionarTodasAssistente();
-                  }
-                }}
-                modoPrivacidade={modoPrivacidade}
-                allLabel={`Todas (${entidadesCombobox.length})`}
-                placeholder="Pesquisar NIF, nome ou código..."
-                className="w-full sm:w-auto sm:min-w-[210px] max-w-full sm:max-w-[280px]"
-                dropdownClassName="w-80 md:w-[400px]"
-                align="left"
-                title="Pesquisar e selecionar empresa"
-              />
+              <div data-evo-guide-target="empresa-selector" className="flex items-center gap-2 w-full sm:w-auto">
+                <EmpresaSelectorCombobox
+                  entidades={entidadesCombobox}
+                  value={nifFiltro}
+                  onChange={val => {
+                    setNifFiltro(val);
+                    if (val) {
+                      setScrapeNif(val);
+                      setSelecionadasAssistente(new Set([val]));
+                    } else {
+                      selecionarTodasAssistente();
+                    }
+                  }}
+                  modoPrivacidade={modoPrivacidade}
+                  allLabel={`Todas (${entidadesCombobox.length})`}
+                  placeholder="Pesquisar NIF, nome ou código..."
+                  className="w-full sm:w-auto sm:min-w-[210px] max-w-full sm:max-w-[280px]"
+                  dropdownClassName="w-80 md:w-[400px]"
+                  align="left"
+                  title="Pesquisar e selecionar empresa"
+                />
 
-              <span className="text-[11px] font-mono text-slate-700 dark:text-slate-200 font-semibold px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] shrink-0 tabular-nums">
-                {selecionadasAssistente.size}/{entidadesCombobox.length}
-              </span>
+                <span className="text-[11px] font-mono text-slate-700 dark:text-slate-200 font-semibold px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] shrink-0 tabular-nums">
+                  {selecionadasAssistente.size}/{entidadesCombobox.length}
+                </span>
+              </div>
 
               <div className="relative w-full sm:w-auto sm:min-w-[160px] max-w-full sm:max-w-[210px]">
                 <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-1.5" />
@@ -734,23 +742,24 @@ export function InconformidadesView({
 
             {/* Zona 3: Período (Exercício) */}
             <div
+              data-evo-guide-target="zona-3"
               onClick={() => assistenteAberto && setPassoAssistente(3)}
               className={`flex items-center gap-1.5 px-2 py-1 rounded border transition ${
                 assistenteAberto && passoAssistente === 3
-                  ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
                   : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
               }`}
             >
               {assistenteAberto && (
                 <span
                   className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
-                    passoAssistente === 3 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                    passoAssistente === 3 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                   }`}
                 >
                   ③ Período
                 </span>
               )}
-              <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#0284c7] dark:border-sky-600 rounded px-1.5 py-0.5">
+              <div data-evo-guide-target="ano-selector" className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#0284c7] dark:border-sky-600 rounded px-1.5 py-0.5">
                 <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
                 <button
                   type="button"
@@ -781,10 +790,11 @@ export function InconformidadesView({
 
             {/* Zona 4: Sincronizar Anulados na AT */}
             <div
+              data-evo-guide-target="zona-4"
               onClick={() => assistenteAberto && setPassoAssistente(4)}
               className={`flex items-center space-x-2 px-2 py-1 rounded border transition ${
                 assistenteAberto && passoAssistente === 4
-                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c1608] border-amber-500 shadow-md'
+                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
                   : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
               }`}
             >
@@ -800,6 +810,7 @@ export function InconformidadesView({
 
               <button
                 type="button"
+                data-evo-guide-target="btn-opcoes"
                 onClick={() => setModalScrapeAberto(true)}
                 className="px-2 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1a2d42] border border-slate-300 dark:border-[#253a52] text-[11px] font-mono font-semibold text-foreground cursor-pointer"
                 title="Abrir opções avançadas de sincronização por empresa ou mês"
@@ -809,6 +820,7 @@ export function InconformidadesView({
 
               <button
                 type="button"
+                data-evo-guide-target="btn-iniciar"
                 onClick={iniciarSincronizacaoAssistenteOuDireta}
                 disabled={scrapeExecutando}
                 className="px-3.5 py-1.5 rounded-md bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-50 text-white font-mono text-xs font-bold shadow-xs flex items-center space-x-1.5 cursor-pointer transition"

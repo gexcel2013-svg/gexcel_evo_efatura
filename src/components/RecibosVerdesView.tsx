@@ -1132,17 +1132,18 @@ export function RecibosVerdesView({
             <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5 shrink-0">
               {/* Zona 1: Destino dos Dados */}
               <div
+                data-evo-guide-target="zona-1"
                 onClick={() => assistenteAberto && setPassoAssistente(1)}
                 className={`flex items-center space-x-2 px-2.5 py-1.5 rounded border text-xs font-mono transition ${
                   assistenteAberto && passoAssistente === 1
-                    ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                    ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
                     : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
                 }`}
               >
                 {assistenteAberto && (
                   <span
                     className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
-                      passoAssistente === 1 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                      passoAssistente === 1 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                     }`}
                   >
                     ① Destino
@@ -1169,6 +1170,7 @@ export function RecibosVerdesView({
                 </button>
                 <button
                   type="button"
+                  data-evo-guide-target="btn-abrir-pasta"
                   onClick={e => {
                     e.stopPropagation();
                     abrirNoExplorador(pastaV4 || pastaPdfs || caminhoDestinoLocal);
@@ -1182,17 +1184,18 @@ export function RecibosVerdesView({
 
               {/* Zona 2: Operação (Compras/Vendas) & Filtro de Empresa */}
               <div
+                data-evo-guide-target="zona-2"
                 onClick={() => assistenteAberto && setPassoAssistente(2)}
                 className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition ${
                   assistenteAberto && passoAssistente === 2
-                    ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                    ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
                     : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
                 }`}
               >
                 {assistenteAberto && (
                   <span
                     className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
-                      passoAssistente === 2 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                      passoAssistente === 2 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                     }`}
                   >
                     ② Empresas
@@ -1201,6 +1204,7 @@ export function RecibosVerdesView({
                 <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] p-0.5 rounded border border-slate-200 dark:border-[#1e344f]">
                   <button
                     type="button"
+                    data-evo-guide-target="op-compras"
                     onClick={() => setTipoFluxo('compras')}
                     className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
                       tipoFluxo === 'compras'
@@ -1214,6 +1218,7 @@ export function RecibosVerdesView({
                   </button>
                   <button
                     type="button"
+                    data-evo-guide-target="op-vendas"
                     onClick={() => setTipoFluxo('vendas')}
                     className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
                       tipoFluxo === 'vendas'
@@ -1227,43 +1232,46 @@ export function RecibosVerdesView({
                   </button>
                 </div>
 
-                <EmpresaSelectorCombobox
-                  entidades={entidadesCombobox}
-                  value={nifMatrizFiltro}
-                  onChange={setNifMatrizFiltro}
-                  modoPrivacidade={modoPrivacidade}
-                  allLabel={`Todas (${entidadesCombobox.length})`}
-                  placeholder="Pesquisar NIF, nome ou código..."
-                  className="w-full sm:w-auto sm:min-w-[230px] max-w-full sm:max-w-[300px]"
-                  dropdownClassName="w-80 md:w-[420px]"
-                  align="left"
-                  title="Pesquisar e selecionar empresa na Matriz"
-                />
+                <div data-evo-guide-target="empresa-selector" className="flex items-center gap-2 w-full sm:w-auto">
+                  <EmpresaSelectorCombobox
+                    entidades={entidadesCombobox}
+                    value={nifMatrizFiltro}
+                    onChange={setNifMatrizFiltro}
+                    modoPrivacidade={modoPrivacidade}
+                    allLabel={`Todas (${entidadesCombobox.length})`}
+                    placeholder="Pesquisar NIF, nome ou código..."
+                    className="w-full sm:w-auto sm:min-w-[230px] max-w-full sm:max-w-[300px]"
+                    dropdownClassName="w-80 md:w-[420px]"
+                    align="left"
+                    title="Pesquisar e selecionar empresa na Matriz"
+                  />
 
-                <span className="text-[11px] font-mono text-slate-700 dark:text-slate-200 font-semibold px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] shrink-0 tabular-nums">
-                  {selecionadas.size}/{entidadesCombobox.length}
-                </span>
+                  <span className="text-[11px] font-mono text-slate-700 dark:text-slate-200 font-semibold px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] shrink-0 tabular-nums">
+                    {selecionadas.size}/{entidadesCombobox.length}
+                  </span>
+                </div>
               </div>
 
               {/* Zona 3: Período (Exercício) */}
               <div
+                data-evo-guide-target="zona-3"
                 onClick={() => assistenteAberto && setPassoAssistente(3)}
                 className={`flex flex-wrap items-center gap-1.5 px-2 py-1 rounded border transition ${
                   assistenteAberto && passoAssistente === 3
-                    ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                    ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
                     : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
                 }`}
               >
                 {assistenteAberto && (
                   <span
                     className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
-                      passoAssistente === 3 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                      passoAssistente === 3 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                     }`}
                   >
                     ③ Período
                   </span>
                 )}
-                <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#0284c7] dark:border-sky-600 rounded px-1.5 py-0.5">
+                <div data-evo-guide-target="ano-selector" className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#0284c7] dark:border-sky-600 rounded px-1.5 py-0.5">
                   <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
                   <button
                     type="button"
@@ -1294,10 +1302,11 @@ export function RecibosVerdesView({
 
               {/* Zona 4: Opções Avançadas + Extrair Selecionadas */}
               <div
+                data-evo-guide-target="zona-4"
                 onClick={() => assistenteAberto && setPassoAssistente(4)}
                 className={`relative flex items-center space-x-2 px-2 py-1 rounded border transition ${
                   assistenteAberto && passoAssistente === 4
-                    ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c1608] border-amber-500 shadow-md'
+                    ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
                     : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
                 }`}
               >
@@ -1314,6 +1323,7 @@ export function RecibosVerdesView({
                 <div className="relative">
                   <button
                     type="button"
+                    data-evo-guide-target="btn-opcoes"
                     onClick={e => {
                       e.stopPropagation();
                       setOpcoesPopoverAberto(v => !v);
@@ -1498,6 +1508,7 @@ export function RecibosVerdesView({
                 ) : (
                   <button
                     type="button"
+                    data-evo-guide-target="btn-iniciar"
                     onClick={iniciarExtracaoSelecionadas}
                     disabled={selecionadas.size === 0}
                     className="px-3.5 py-1.5 rounded-md bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-50 text-white font-mono text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-xs transition"
