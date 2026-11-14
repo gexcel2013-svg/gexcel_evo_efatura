@@ -7,6 +7,7 @@ import {
   Loader2, 
   ChevronLeft, 
   ChevronRight, 
+  ChevronDown,
   Calendar,
   RefreshCw, 
   ArrowUpDown, 
@@ -283,6 +284,7 @@ export default function CommandCenter({
 
   // Tipo de Operação Fiscal: Compras (BdsefaturaV4/{NIF}/compras_{NIF}.db) vs Vendas (BdsefaturaV4/{NIF}/vendas_{NIF}.db)
   const [tipoOperacao, setTipoOperacao] = useState<'compras' | 'vendas'>('compras');
+  const [opcoesMobileAbertas, setOpcoesMobileAbertas] = useState<boolean>(false);
   const [motorSource, setMotorSource] = useState<MotorSourceType>(() => getMotorSource());
   const [modoPortalWebForcado, setModoPortalWebForcado] = useState<boolean>(false);
 
@@ -1619,27 +1621,27 @@ export default function CommandCenter({
   };
 
   return (
-    <div className="h-full flex flex-col space-y-3 min-h-0">
+    <div className="h-full flex flex-col space-y-3 min-h-0 overflow-y-auto xl:overflow-hidden">
       
       {/* Cabeçalho Oficial evoGex.com */}
-      <header className="flex justify-between items-start shrink-0">
+      <header className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2 shrink-0">
         <div>
           <span className="page-kicker text-primary font-mono text-[9.5px] uppercase tracking-[0.2em] font-semibold block mb-0.5">
             Controlo & Auditoria Fiscal
           </span>
-          <h1 className="page-title text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center flex-wrap gap-2">
+          <h1 className="page-title text-lg sm:text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center flex-wrap gap-2">
             <span>Matriz de Extração e Controlo e-Fatura</span>
             <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-mono font-bold bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border border-[#0284c7] dark:border-sky-700 shadow-2xs">
               <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
               Exercício {ano}
             </span>
           </h1>
-          <p className="page-description text-muted-foreground text-[11.5px] font-mono tracking-[0.03em] mt-0.5">
+          <p className="page-description text-muted-foreground text-[11.5px] font-mono tracking-[0.03em] mt-0.5 hidden sm:block">
             Acompanhamento contínuo por exercício fiscal e extração massiva em segundo plano.
           </p>
         </div>
 
-        <div className="flex items-center space-x-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {/* Indicador Automático de Processamento Paralelo (100% Autónomo na Cloud) */}
           {apiOnline && (perfConfig.active_workers > 0 || (perfConfig.queue_waiting || 0) > 0) && (
             <div className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs select-none">
@@ -1712,7 +1714,7 @@ export default function CommandCenter({
               {/* Popover / Dropdown do Worker */}
               {dropdownWorkerAberto && (
                 <div 
-                  className="absolute right-0 mt-2 w-80 bg-card border border-border rounded-lg shadow-xl p-3 z-50 text-xs font-mono animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md"
+                  className="absolute left-0 sm:left-auto sm:right-0 mt-2 w-80 max-w-[calc(100vw-1.5rem)] bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded-lg shadow-xl p-3 z-50 text-xs font-mono animate-in fade-in slide-in-from-top-2 duration-150"
                   onClick={e => e.stopPropagation()}
                 >
                   <div className="flex items-center justify-between pb-2 mb-2 border-b border-border">
@@ -2030,11 +2032,23 @@ export default function CommandCenter({
                 <span className="w-1.5 h-1.5 rounded-full bg-[#0284c7] dark:bg-sky-400" />
                 <span className="text-foreground dark:text-slate-200 font-semibold">Extração & Execução</span>
               </div>
-              <span className="text-[9px] font-mono text-slate-700 dark:text-slate-300 font-bold bg-slate-100 dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
-                {meses.size} {meses.size === 1 ? 'Mês' : 'Meses'}
-              </span>
+              <div className="flex items-center space-x-1.5">
+                <span className="text-[9px] font-mono text-slate-700 dark:text-slate-300 font-bold bg-slate-100 dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
+                  {meses.size} {meses.size === 1 ? 'Mês' : 'Meses'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setOpcoesMobileAbertas(prev => !prev)}
+                  className="xl:hidden inline-flex items-center space-x-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] text-[9px] font-mono font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+                >
+                  <SlidersHorizontal className="w-2.5 h-2.5" />
+                  <span>Opções</span>
+                  <ChevronDown className={`w-3 h-3 transition-transform ${opcoesMobileAbertas ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
             </div>
 
+            <div className={opcoesMobileAbertas ? 'space-y-2.5' : 'hidden xl:block space-y-2.5'}>
             {/* Opção Reimportação Forçada (Wipe) */}
             <div className="p-2 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42]">
               <label className="flex items-start space-x-2.5 cursor-pointer group">
@@ -2088,6 +2102,7 @@ export default function CommandCenter({
                 </div>
               </label>
             </div>
+            </div>
 
             {/* Botão de Disparo Principal */}
             {isSyncing ? (
@@ -2124,6 +2139,7 @@ export default function CommandCenter({
             )}
 
             {/* Aviso Informativo de Segundo Plano (Background Autónomo) */}
+            <div className={opcoesMobileAbertas ? 'space-y-2.5' : 'hidden xl:block space-y-2.5'}>
             {isSyncing ? (
               <div className="flex items-start space-x-2 p-2 rounded bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800 text-sky-800 dark:text-sky-300 text-[10px] font-mono leading-relaxed">
                 <Zap className="w-3.5 h-3.5 text-sky-500 shrink-0 mt-0.5" />
@@ -2148,11 +2164,12 @@ export default function CommandCenter({
                 Limpar Histórico de Estados
               </button>
             )}
+            </div>
           </div>
         </div>
 
         {/* Lado Direito: A Grande Matriz Anual */}
-        <div className="xl:col-span-9 overflow-hidden rounded-md border border-border shadow-xs flex flex-col min-h-0 bg-card text-card-foreground">
+        <div className="xl:col-span-9 overflow-hidden rounded-md border border-border shadow-xs flex flex-col min-h-[420px] xl:min-h-0 bg-card text-card-foreground">
           
           {/* Nova Barra Superior da Matriz: Controlos Temporais e Pesquisa */}
           <div className="relative evo-card-signature flex flex-wrap justify-between items-center border-b border-border/80 px-3.5 py-2 bg-card text-card-foreground gap-2 shrink-0 select-none before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
@@ -2246,7 +2263,7 @@ export default function CommandCenter({
             </div>
 
             {/* Lado Direito: Seletor de Empresa (pesquisa interna + filtro após seleção) e Contador */}
-            <div className="flex items-center space-x-2.5 ml-auto">
+            <div className="flex items-center justify-between sm:justify-end gap-2.5 w-full sm:w-auto sm:ml-auto">
               <EmpresaSelectorCombobox
                 entidades={entidades}
                 value={nifFiltroEmpresa}
@@ -2254,7 +2271,7 @@ export default function CommandCenter({
                 modoPrivacidade={modoPrivacidade}
                 allLabel="Todas as Empresas"
                 placeholder="Pesquisar NIF, nome ou código..."
-                className="min-w-[260px] sm:min-w-[320px] max-w-[400px]"
+                className="flex-1 sm:flex-none min-w-0 sm:min-w-[320px] max-w-full sm:max-w-[400px]"
                 dropdownClassName="w-80 md:w-[420px]"
                 align="right"
                 title="Pesquisar e selecionar empresa na Matriz"
@@ -2364,7 +2381,7 @@ export default function CommandCenter({
                   </th>
                   <th 
                     onClick={() => handleSort('status')}
-                    className="py-2 pr-3 pl-2 w-72 min-w-[275px] text-right text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-slate-700 dark:text-slate-200 hover:text-foreground dark:hover:text-white hover:bg-slate-300/60 dark:hover:bg-muted/50 cursor-pointer select-none transition-colors sticky right-0 z-30 bg-slate-200/95 dark:bg-[#0c1724]/95 shadow-[-3px_0_5px_-1px_rgba(0,0,0,0.12)]"
+                    className="py-2 pr-3 pl-2 w-52 lg:w-72 min-w-[200px] lg:min-w-[275px] text-right text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-slate-700 dark:text-slate-200 hover:text-foreground dark:hover:text-white hover:bg-slate-300/60 dark:hover:bg-muted/50 cursor-pointer select-none transition-colors lg:sticky lg:right-0 lg:z-30 bg-slate-200 dark:bg-[#0c1724] lg:shadow-[-3px_0_5px_-1px_rgba(0,0,0,0.12)]"
                     title="Ordenar por Estado"
                   >
                     <div className="flex items-center justify-end space-x-1">
@@ -2598,7 +2615,7 @@ export default function CommandCenter({
                       })()}
 
                       {/* Coluna Estado (Alargada, com texto moldado sem truncagem, barra de progresso visível e botão parar) */}
-                      <td className={`py-1.5 px-2 text-right min-w-[275px] w-72 sticky right-0 z-10 shadow-[-3px_0_5px_-1px_rgba(0,0,0,0.08)] ${
+                      <td className={`py-1.5 px-2 text-right min-w-[200px] lg:min-w-[275px] w-52 lg:w-72 lg:sticky lg:right-0 lg:z-10 lg:shadow-[-3px_0_5px_-1px_rgba(0,0,0,0.08)] ${
                         selectedIds.has(ent.id) 
                           ? 'bg-sky-50 dark:bg-[#0c1b2c] !border-y !border-sky-300/50 dark:!border-sky-500/30' 
                           : activeJobs[ent.id] 

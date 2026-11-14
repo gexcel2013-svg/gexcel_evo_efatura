@@ -964,23 +964,23 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
   const totalPaginas = Math.max(1, Math.ceil(dados.total_linhas / limite));
 
   return (
-    <div className="h-full flex flex-col space-y-3 min-h-0 select-none">
+    <div className="h-full flex flex-col space-y-3 min-h-0 select-none overflow-y-auto md:overflow-hidden">
       
       {/* 1. Cabeçalho Oficial evoGex.com */}
-      <header className="flex justify-between items-start shrink-0">
+      <header className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2 shrink-0">
         <div>
           <span className="page-kicker text-primary font-mono text-[9.5px] uppercase tracking-[0.2em] font-semibold block mb-0.5">
             Auditoria Analítica & Detalhe Fiscal
           </span>
-          <h1 className="page-title text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center">
+          <h1 className="page-title text-lg sm:text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center">
             Dados e-Fatura
           </h1>
-          <p className="page-description text-muted-foreground text-[11.5px] font-mono tracking-[0.03em] mt-0.5">
+          <p className="page-description text-muted-foreground text-[11.5px] font-mono tracking-[0.03em] mt-0.5 hidden sm:block">
             Exploração granular e detalhe fiscal de documentos importados.
           </p>
         </div>
 
-        <div className="flex items-center space-x-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <div className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="text-muted-foreground">Base Sincronizada</span>
@@ -1070,14 +1070,14 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
             modoPrivacidade={modoPrivacidade}
             allLabel={`Todas as Empresas (${entidades.length})`}
             placeholder="Pesquisar NIF, nome ou código..."
-            className="min-w-[280px] md:min-w-[380px] max-w-[520px]"
+            className="w-full sm:w-auto sm:min-w-[280px] md:min-w-[380px] max-w-full sm:max-w-[520px]"
             dropdownClassName="w-96 md:w-[460px]"
             align="left"
             title="Pesquisar e selecionar empresa para filtrar faturas"
           />
 
           {/* Campo de Pesquisa de Faturas / Contraparte */}
-          <div className="relative w-64 md:w-80 shrink-0">
+          <div className="relative w-full sm:w-64 md:w-80 shrink-0">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground dark:text-slate-400" />
             <input
               type="text"
@@ -1089,7 +1089,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
           </div>
 
           {/* Seletor de Taxa de IVA */}
-          <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] p-1 rounded shrink-0">
+          <div className="flex flex-wrap items-center gap-1 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] p-1 rounded w-full sm:w-auto shrink-0">
             <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 px-1 font-semibold">IVA:</span>
             {[
               { val: "", label: "Todas" },
@@ -1207,7 +1207,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
           </div>
 
           {/* Intervalo Manual de Datas */}
-          <div className="flex items-center space-x-1.5 font-mono text-xs bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#1c2e42] shrink-0">
+          <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#1c2e42] w-full sm:w-auto shrink-0">
             <Calendar className="w-3.5 h-3.5 text-muted-foreground dark:text-slate-400 shrink-0" />
             <input
               type="date"
@@ -1327,7 +1327,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
       </div>
 
       {/* 4. Tabela de Detalhe de Linhas de Fatura (Card Principal com Assinatura Canónica EVO) */}
-      <div className="overflow-hidden rounded-md border border-border shadow-xs flex flex-col flex-1 min-h-0 bg-card text-card-foreground">
+      <div className="overflow-hidden rounded-md border border-border shadow-xs flex flex-col flex-1 min-h-[380px] md:min-h-0 bg-card text-card-foreground">
         
         {/* Cabeçalho do Card da Tabela com Assinatura Canónica EVO */}
         <div className="relative evo-card-signature flex flex-wrap justify-between items-center border-b border-border/80 px-4 py-2 bg-card text-card-foreground gap-3 shrink-0 select-none before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">

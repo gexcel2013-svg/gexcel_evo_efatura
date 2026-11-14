@@ -38,8 +38,8 @@ export function EmpresaSelectorCombobox({
   allLabel = 'Todas as Empresas',
   placeholder = 'Pesquisar NIF, nome ou código...',
   disabled = false,
-  className = 'min-w-[280px] sm:min-w-[340px] max-w-[460px]',
-  dropdownClassName = 'w-96 md:w-[460px]',
+  className = 'w-full sm:w-auto sm:min-w-[340px] max-w-full sm:max-w-[460px]',
+  dropdownClassName = 'w-[calc(100vw-1.5rem)] sm:w-96 md:w-[460px]',
   align = 'left',
   title = 'Pesquisar e selecionar empresa',
 }: EmpresaSelectorComboboxProps) {
@@ -188,7 +188,7 @@ export function EmpresaSelectorCombobox({
 
       {aberto && (
         <div
-          className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} mt-1 ${dropdownClassName} max-w-[92vw] bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded-md shadow-2xl z-50 overflow-hidden flex flex-col`}
+          className={`absolute left-0 ${align === 'right' ? 'sm:left-auto sm:right-0' : ''} mt-1 ${dropdownClassName} max-w-[calc(100vw-1.5rem)] bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded-md shadow-2xl z-50 overflow-hidden flex flex-col`}
         >
           {/* Pesquisa Interna (filtra apenas a lista de sugestões; tabela só filtra ao selecionar) */}
           <div className="p-2 border-b border-[#d7e0ea] dark:border-[#222f3e] bg-slate-50 dark:bg-[#101b28]">

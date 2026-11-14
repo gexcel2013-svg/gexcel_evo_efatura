@@ -477,23 +477,23 @@ export function AgendadorView({ onApiStatusChange, modoPrivacidade = false }: Ag
   }, [entidades, formPesquisaEntidade]);
 
   return (
-    <div className="h-full flex flex-col space-y-3 min-h-0 select-none">
+    <div className="h-full flex flex-col space-y-3 min-h-0 select-none overflow-y-auto md:overflow-hidden">
       
       {/* 1. Cabeçalho Oficial evoGex.com */}
-      <header className="flex justify-between items-start shrink-0">
+      <header className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2 shrink-0">
         <div>
           <span className="page-kicker text-primary font-mono text-[9.5px] uppercase tracking-[0.2em] font-semibold block mb-0.5">
             Automatização Contínua · Motor Autónomo V4
           </span>
-          <h1 className="page-title text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center space-x-2">
+          <h1 className="page-title text-lg sm:text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center space-x-2">
             <span>Agendador de Tarefas em Segundo Plano</span>
           </h1>
-          <p className="page-description text-muted-foreground text-[11.5px] font-mono tracking-[0.03em] mt-0.5">
+          <p className="page-description text-muted-foreground text-[11.5px] font-mono tracking-[0.03em] mt-0.5 hidden sm:block">
             Programe varreduras automáticas de anos inteiros com gestão resiliente de computadores desligados (Catch-Up).
           </p>
         </div>
 
-        <div className="flex items-center space-x-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             onClick={() => handleAbrirLogs()}
             className="flex items-center space-x-1.5 px-3 py-1.5 rounded border border-border bg-card hover:bg-muted text-xs font-mono text-muted-foreground hover:text-foreground transition-colors shadow-2xs cursor-pointer"
@@ -654,7 +654,7 @@ export function AgendadorView({ onApiStatusChange, modoPrivacidade = false }: Ag
       </div>
 
       {/* 4. Lista Principal de Agendamentos (Card Principal Canónico EVO com Assinatura Lateral) */}
-      <div className="overflow-hidden rounded-md border border-border shadow-xs flex flex-col flex-1 min-h-0 bg-card text-card-foreground">
+      <div className="overflow-hidden rounded-md border border-border shadow-xs flex flex-col flex-1 min-h-[360px] md:min-h-0 bg-card text-card-foreground">
         
         {/* Cabeçalho do Card da Tabela com Assinatura Canónica EVO (before:h-5 before:w-0.5) */}
         <div className="relative evo-card-signature flex flex-wrap justify-between items-center border-b border-border/80 px-4 py-2 bg-card text-card-foreground gap-3 shrink-0 select-none before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">

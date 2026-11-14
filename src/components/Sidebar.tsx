@@ -20,7 +20,9 @@ import {
   User,
   LogOut,
   LayoutGrid,
-  ExternalLink
+  ExternalLink,
+  Menu,
+  X
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import type { CentroDadosItem } from '../types/auth';
@@ -70,6 +72,7 @@ export function Sidebar({
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem('gexcel_sidebar_collapsed') === 'true';
   });
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [motorSource, setMotorSource] = useState<MotorSourceType>(() => getMotorSource());
 
   useEffect(() => {
@@ -145,11 +148,258 @@ export function Sidebar({
   const versaoExibida = versaoMotor || '4.2.27';
 
   return (
-    <aside
-      className={`h-screen bg-white dark:bg-[#0c1520] text-card-foreground border-r border-border flex flex-col justify-between transition-all duration-300 select-none z-30 shrink-0 ${
-        collapsed ? 'w-16' : 'w-[280px]'
-      }`}
-    >
+    <>
+      {/* Barra Superior Mobile (< md) */}
+      <header className="md:hidden w-full h-12 px-2.5 bg-white dark:bg-[#0c1520] text-card-foreground border-b border-border flex items-center justify-between gap-2 shrink-0 select-none z-30">
+        <div className="flex items-center space-x-2 min-w-0">
+          <button
+            type="button"
+            onClick={() => setMobileDrawerOpen(true)}
+            aria-label="Abrir menu de navegação"
+            className="h-8 w-8 rounded-md border border-slate-300 dark:border-[#253a52] bg-slate-50 dark:bg-[#132233] flex items-center justify-center text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#1a2c40] cursor-pointer shrink-0"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
+          <div className="w-7 h-7 rounded-md bg-white dark:bg-[#07121c] border border-border flex items-center justify-center p-0.5 shadow-2xs shrink-0 overflow-hidden">
+            <img
+              src="/evogex_simbolo_fundo_branco.png"
+              alt="evoGex.com"
+              className="w-full h-full object-contain dark:hidden"
+            />
+            <img
+              src="/evogex_simbolo_fundo_dark.png"
+              alt="evoGex.com"
+              className="w-full h-full object-contain hidden dark:block"
+            />
+          </div>
+          <div className="flex flex-col min-w-0">
+            <span className="font-display font-light text-[13px] leading-tight tracking-tight text-foreground truncate">
+              <span className="text-[#0284c7] dark:text-[#38bdf8]">evo</span>Gex<span className="text-[8px] font-normal ml-[1px] text-[#0284c7] dark:text-[#38bdf8]">.com</span> · e-Fatura
+            </span>
+            <span className="text-[8px] font-mono uppercase tracking-widest text-slate-600 dark:text-slate-400 leading-tight truncate">
+              {navItems.find(i => i.id === activeTab)?.label || 'ENGINE V4'}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-1.5 shrink-0">
+          <span
+            title={`Empresas selecionadas: ${selectedCount} de ${totalCount}`}
+            className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] text-[10px] font-mono font-semibold text-[#0284c7] dark:text-sky-400 tabular-nums"
+          >
+            {selectedCount}/{totalCount}
+          </span>
+          <span
+            title={apiOnline ? 'Centro de Dados OK' : 'Centro Desligado'}
+            className="h-7 px-1.5 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] flex items-center justify-center"
+          >
+            <span className={`w-2 h-2 rounded-full ${apiOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+          </span>
+          {onToggleModoPrivacidade && (
+            <button
+              type="button"
+              onClick={onToggleModoPrivacidade}
+              title={modoPrivacidade ? 'Desativar Modo Demonstração' : 'Ativar Modo Demonstração'}
+              className={`h-8 w-8 rounded-md border flex items-center justify-center transition-colors cursor-pointer ${
+                modoPrivacidade
+                  ? 'bg-amber-100 dark:bg-[#241a08] border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-300'
+                  : 'border-slate-300 dark:border-[#253a52] bg-slate-50 dark:bg-[#132233] text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              {modoPrivacidade ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            title={theme === 'dark' ? 'Modo Claro' : 'Modo Escuro'}
+            className="h-8 w-8 rounded-md border border-slate-300 dark:border-[#253a52] bg-slate-50 dark:bg-[#132233] flex items-center justify-center text-slate-700 dark:text-slate-300 cursor-pointer"
+          >
+            {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+      </header>
+
+      {/* Gaveta Lateral Deslizante Mobile (< md, 100% opaca) */}
+      {mobileDrawerOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex select-none">
+          <div
+            className="fixed inset-0 bg-slate-950/60"
+            onClick={() => setMobileDrawerOpen(false)}
+          />
+          <aside className="relative w-[285px] max-w-[85vw] h-full bg-white dark:bg-[#0c1520] text-card-foreground border-r border-border flex flex-col justify-between z-10 shadow-2xl">
+            {/* Topo Drawer */}
+            <div className="p-3 border-b border-border/80 bg-white dark:bg-[#0c1520]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2.5 overflow-hidden">
+                  <div className="w-8 h-8 rounded-lg bg-white dark:bg-[#07121c] border border-border flex items-center justify-center p-0.5 shadow-sm shrink-0 overflow-hidden">
+                    <img src="/evogex_simbolo_fundo_branco.png" alt="evoGex.com" className="w-full h-full object-contain dark:hidden" />
+                    <img src="/evogex_simbolo_fundo_dark.png" alt="evoGex.com" className="w-full h-full object-contain hidden dark:block" />
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <span className="font-display font-light text-sm tracking-tight text-foreground truncate">
+                      <span className="text-[#0284c7] dark:text-[#38bdf8]">evo</span>Gex<span className="text-[8.5px] font-normal ml-[1px] text-[#0284c7] dark:text-[#38bdf8]">.com</span> · e-Fatura
+                    </span>
+                    <span className="text-[9px] font-mono uppercase tracking-widest text-slate-700 dark:text-slate-300">
+                      IMPORTADOR · ENGINE V4
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMobileDrawerOpen(false)}
+                  aria-label="Fechar menu"
+                  className="p-1.5 rounded-md text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#132233] cursor-pointer shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {centrosDisponiveis.length > 1 && onSelecionarCentro && (
+                <div className="mt-2.5">
+                  <select
+                    value={centroAtivoId || centrosDisponiveis[0]?.id || ''}
+                    onChange={e => onSelecionarCentro(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-md bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] text-xs font-mono font-semibold text-foreground cursor-pointer focus:outline-none"
+                  >
+                    {centrosDisponiveis.map(c => (
+                      <option key={c.id} value={c.id}>
+                        Centro: {c.nome}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="mt-3 p-2.5 rounded-md bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] text-xs shadow-2xs">
+                <div className="flex items-center justify-between font-mono text-[10.5px]">
+                  <span className="text-slate-700 dark:text-slate-300 flex items-center">
+                    <CheckSquare className="w-3 h-3 mr-1 text-[#0284c7] dark:text-sky-400" />
+                    Selecionadas
+                  </span>
+                  <span className="font-semibold text-[#0284c7] dark:text-sky-400 font-mono tabular-nums">
+                    {selectedCount} de {totalCount}
+                  </span>
+                </div>
+                <div className="mt-1.5 w-full bg-slate-200 dark:bg-[#1b2b3d] h-1 rounded-full overflow-hidden">
+                  <div
+                    className="bg-[#0284c7] dark:bg-sky-500 h-full transition-all duration-300"
+                    style={{ width: `${totalCount > 0 ? (selectedCount / totalCount) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Navegação Drawer */}
+            <nav className="flex-1 px-2.5 py-3 space-y-1.5 overflow-y-auto">
+              {navItems.map(item => {
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      onSelectTab(item.id);
+                      setMobileDrawerOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                      isActive
+                        ? 'bg-[#0284c7] text-white shadow-xs border border-[#0284c7]'
+                        : 'bg-slate-50 hover:bg-slate-100 dark:bg-[#13202e] dark:hover:bg-[#1a2c40] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-[#2b415a]'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2.5 overflow-hidden">
+                      {item.icon}
+                      <span className="truncate font-sans font-medium text-xs">{item.label}</span>
+                    </div>
+                    {item.badge && (
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                        isActive
+                          ? 'bg-[#0369a1] text-white font-bold border border-sky-300'
+                          : 'bg-white dark:bg-[#1a2c3f] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-[#304764]'
+                      }`}>
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+
+              <div className="pt-2 border-t border-slate-200 dark:border-[#222f3e]">
+                <a
+                  href={painelUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-md text-xs font-semibold transition cursor-pointer bg-slate-100 hover:bg-sky-50 dark:bg-[#132233] dark:hover:bg-[#0a1929] text-slate-700 hover:text-[#0284c7] dark:text-slate-200 dark:hover:text-sky-400 border border-slate-300 dark:border-[#253a52]"
+                >
+                  <div className="flex items-center space-x-2.5 overflow-hidden">
+                    <LayoutGrid className="w-4 h-4 shrink-0 text-[#0284c7] dark:text-sky-400" />
+                    <span className="truncate font-sans font-medium text-xs">Painel Principal</span>
+                  </div>
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                </a>
+              </div>
+            </nav>
+
+            {/* Rodapé Drawer */}
+            <div className="p-3 border-t border-border/80 space-y-2.5 bg-white dark:bg-[#0c1520]">
+              <div className="p-1.5 rounded-md bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] flex items-center justify-between space-x-2">
+                <div className="flex items-center space-x-2 overflow-hidden min-w-0">
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center font-mono font-bold text-[10px] shrink-0 bg-sky-100 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-400 border border-sky-300 dark:border-sky-800">
+                    {currentUser?.nome ? currentUser.nome.charAt(0).toUpperCase() : <User className="w-3 h-3" />}
+                  </div>
+                  <span className="text-[11px] font-mono truncate text-foreground font-semibold">
+                    {currentUser?.nome || currentUser?.username}
+                  </span>
+                </div>
+                <div className="flex items-center shrink-0 space-x-1.5">
+                  <span className="text-[8.5px] font-mono uppercase px-1.5 py-0.5 rounded font-bold text-[#0284c7] dark:text-sky-300 bg-sky-100 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800">
+                    {currentUser?.role === 'superadmin' ? 'DEV' : currentUser?.role === 'subutilizador' ? 'OPERADOR' : 'ADMIN'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={logout}
+                    title="Terminar Sessão"
+                    className="h-6 w-6 rounded flex items-center justify-center bg-white dark:bg-[#0c1520] hover:bg-rose-100 dark:hover:bg-[#2a1218] text-slate-700 dark:text-slate-300 hover:text-rose-700 dark:hover:text-rose-300 border border-slate-300 dark:border-[#253a52] transition-colors cursor-pointer shrink-0"
+                  >
+                    <LogOut className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-xs font-mono">
+                <div className="flex items-center space-x-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span className="text-[10px] text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    Auth Ativo
+                  </span>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <div className={`w-1.5 h-1.5 rounded-full ${apiOnline ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                  <span className="text-[10px] text-slate-700 dark:text-slate-300 font-mono">
+                    {apiOnline ? 'Centro Dados OK' : 'Centro Desligado'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end pt-0.5">
+                <EvoVersionWatchBadge
+                  currentVersion={APP_VERSION}
+                  currentBuild={APP_BUILD}
+                  channel={APP_CHANNEL}
+                  compact
+                />
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Barra Lateral Desktop Canónica (>= md) */}
+      <aside
+        className={`h-screen hidden md:flex bg-white dark:bg-[#0c1520] text-card-foreground border-r border-border flex-col justify-between transition-all duration-300 select-none z-30 shrink-0 ${
+          collapsed ? 'w-16' : 'w-[280px]'
+        }`}
+      >
       {/* 1. Topo: Logótipo e Título da Aplicação */}
       <div className="p-3 border-b border-border/80 bg-white dark:bg-[#0c1520]">
         <div className="flex items-center justify-between">
@@ -437,5 +687,59 @@ export function Sidebar({
         </div>
       </div>
     </aside>
+    </>
+  );
+}
+
+interface MobileBottomNavProps {
+  activeTab: string;
+  onSelectTab: (tab: string) => void;
+  totalCount: number;
+}
+
+export function MobileBottomNav({ activeTab, onSelectTab, totalCount }: MobileBottomNavProps) {
+  const mobileTabs = [
+    { id: 'matriz', label: 'e-Fatura', icon: Table2, badge: totalCount > 0 ? totalCount : undefined },
+    { id: 'recibos', label: 'Recibos', icon: FileText },
+    { id: 'anulados', label: 'Anulados', icon: ShieldAlert },
+    { id: 'faturas', label: 'Dados', icon: FileSpreadsheet },
+    { id: 'agendador', label: 'Agenda', icon: Calendar },
+  ];
+
+  return (
+    <nav
+      aria-label="Navegação Mobile"
+      className="md:hidden w-full bg-white dark:bg-[#0c1520] border-t border-border shrink-0 z-30 grid grid-cols-5 h-14 select-none"
+    >
+      {mobileTabs.map(tab => {
+        const Icon = tab.icon;
+        const isActive = activeTab === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => onSelectTab(tab.id)}
+            className={`relative flex flex-col items-center justify-center space-y-0.5 text-[10px] font-sans font-medium transition-colors cursor-pointer ${
+              isActive
+                ? 'bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-400 font-semibold'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#13202e]'
+            }`}
+          >
+            {isActive && (
+              <span className="absolute top-0 inset-x-3 h-0.5 bg-[#0284c7] dark:bg-sky-400 rounded-b" />
+            )}
+            <div className="relative">
+              <Icon className="w-4 h-4" />
+              {tab.badge !== undefined && (
+                <span className="absolute -top-1.5 -right-3 px-1 min-w-[16px] h-3.5 rounded-full bg-[#0284c7] text-white text-[8px] font-mono font-bold flex items-center justify-center leading-none">
+                  {tab.badge}
+                </span>
+              )}
+            </div>
+            <span className="truncate max-w-full px-1">{tab.label}</span>
+          </button>
+        );
+      })}
+    </nav>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Sidebar } from './components/Sidebar';
+import { Sidebar, MobileBottomNav } from './components/Sidebar';
 import CommandCenter from './components/CommandCenter';
 import { RecibosVerdesView } from './components/RecibosVerdesView';
 import { InconformidadesView } from './components/InconformidadesView';
@@ -99,8 +99,14 @@ function AppContent() {
   });
 
   useEffect(() => {
-    (document.body.style as unknown as { zoom: string }).zoom = String(zoomLevel);
+    const applyZoom = () => {
+      const targetZoom = window.innerWidth < 768 ? '1' : String(zoomLevel);
+      (document.body.style as unknown as { zoom: string }).zoom = targetZoom;
+    };
+    applyZoom();
     localStorage.setItem('gexcel_zoom_level', zoomLevel.toFixed(2));
+    window.addEventListener('resize', applyZoom);
+    return () => window.removeEventListener('resize', applyZoom);
   }, [zoomLevel]);
 
   const handleZoomIn = () => setZoomLevel(prev => Math.min(Number((prev + 0.05).toFixed(2)), 1.30));
@@ -234,12 +240,12 @@ function AppContent() {
   }
 
   return (
-    <div className="h-screen w-screen bg-background text-foreground flex flex-row font-sans overflow-hidden select-none relative">
+    <div className="h-[100dvh] w-screen bg-background text-foreground flex flex-col md:flex-row font-sans overflow-hidden select-none relative">
       {/* Camada de Fundo Grelha Excel Subtil (Evo Grid) - z-0 atrás de todo o conteúdo */}
       <div className="workspace-ledger absolute inset-0 pointer-events-none z-0" />
 
-      {/* Menu Lateral Esquerdo Canónico evoGex.com (z-20) */}
-      <div className="relative z-20 flex">
+      {/* Menu Lateral Esquerdo Canónico evoGex.com + Barra Superior Mobile (z-30) */}
+      <div className="relative z-30 flex flex-col md:flex-row shrink-0">
         <Sidebar
           activeTab={activeTab}
           onSelectTab={setActiveTab}
@@ -262,8 +268,8 @@ function AppContent() {
       </div>
 
       {/* Área Principal de Trabalho Delimitada (z-10) */}
-      <main className="flex-1 flex flex-col p-3.5 min-h-0 overflow-hidden relative z-10">
-        <div key={centroKey} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      <main className="flex-1 flex flex-col p-2 sm:p-3.5 min-h-0 overflow-hidden relative z-10">
+        <div key={centroKey} className="flex-1 flex flex-col min-h-0 overflow-y-auto md:overflow-hidden">
           {activeTab === 'recibos' ? (
             <RecibosVerdesView
               ano={anoGlobal}
@@ -314,6 +320,13 @@ function AppContent() {
           )}
         </div>
       </main>
+
+      {/* Barra Inferior Mobile (< md) */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        totalCount={totalCount}
+      />
 
       {/* Modais Globais de Autenticação e Configuração Inicial */}
       {showLoginModal && <LoginModal onClose={() => setShowLoginModal(false)} />}

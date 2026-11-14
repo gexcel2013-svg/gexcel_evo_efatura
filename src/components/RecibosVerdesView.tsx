@@ -840,7 +840,7 @@ export function RecibosVerdesView({
   };
 
   return (
-    <div className="h-full flex flex-col space-y-3 min-h-0 select-none overflow-hidden">
+    <div className="h-full flex flex-col space-y-3 min-h-0 select-none overflow-y-auto md:overflow-hidden">
       {/* 1. Cabeçalho Executivo evoGex.com */}
       <header className="flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div>
@@ -979,7 +979,7 @@ export function RecibosVerdesView({
           </button>
         </div>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 shrink-0">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 shrink-0">
         {/* Card 1: Recibos Verdes */}
         <div
           onClick={() => abrirDrilldown(nifDetalhe, mesDetalhe, 'rv')}
@@ -1223,13 +1223,13 @@ export function RecibosVerdesView({
                 modoPrivacidade={modoPrivacidade}
                 allLabel={`Todas as Empresas (${entidadesCombobox.length})`}
                 placeholder="Pesquisar NIF, nome ou código..."
-                className="min-w-[260px] max-w-[360px]"
+                className="w-full sm:w-auto sm:min-w-[260px] max-w-full sm:max-w-[360px]"
                 dropdownClassName="w-80 md:w-[420px]"
                 align="left"
                 title="Pesquisar e selecionar empresa na Matriz"
               />
 
-              <div className="flex items-center space-x-1 bg-slate-100 dark:bg-[#132233] p-1 rounded border border-slate-300 dark:border-[#253a52] text-[11px] font-mono">
+              <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-[#132233] p-1 rounded border border-slate-300 dark:border-[#253a52] text-[11px] font-mono">
                 {[
                   { id: 'todas', label: `Todas (${entidades.length})` },
                   { id: 'com_dados', label: `Com Dados (${totaisGlobaisMatriz.empresasComDados})` },
@@ -1303,7 +1303,7 @@ export function RecibosVerdesView({
           </div>
 
           {/* Grelha Matriz 12 Meses */}
-          <div className="flex-1 min-h-0 bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] shadow-2xs overflow-hidden flex flex-col">
+          <div className="flex-1 min-h-[380px] md:min-h-0 bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] shadow-2xs overflow-hidden flex flex-col">
             <div className="flex-1 overflow-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="sticky top-0 bg-slate-100 dark:bg-[#132233] border-b border-[#d7e0ea] dark:border-[#222f3e] z-20">
@@ -1581,7 +1581,7 @@ export function RecibosVerdesView({
                   modoPrivacidade={modoPrivacidade}
                   allLabel="Todas as Empresas"
                   placeholder="Pesquisar NIF, nome ou código..."
-                  className="min-w-[240px] max-w-[320px]"
+                  className="w-full sm:w-auto sm:min-w-[240px] max-w-full sm:max-w-[320px]"
                   dropdownClassName="w-80 md:w-[400px]"
                   align="left"
                   title="Selecionar Entidade"
@@ -1610,7 +1610,7 @@ export function RecibosVerdesView({
                 </label>
 
                 {/* Pesquisa livre no detalhe */}
-                <div className="relative min-w-[200px] flex-1 max-w-[280px]">
+                <div className="relative w-full sm:w-auto sm:min-w-[200px] flex-1 max-w-full sm:max-w-[280px]">
                   <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
                   <input
                     type="text"
@@ -1712,7 +1712,7 @@ export function RecibosVerdesView({
                 })}
               </div>
 
-              <div className="flex items-center space-x-1 ml-auto border-l border-slate-300 dark:border-[#253a52] pl-2">
+              <div className="flex flex-wrap items-center gap-1 sm:ml-auto sm:border-l border-slate-300 dark:border-[#253a52] sm:pl-2">
                 <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                 <input
                   type="date"
@@ -1744,7 +1744,7 @@ export function RecibosVerdesView({
           </div>
 
           {/* Tabela Detalhada de Recibos Verdes e Rendas */}
-          <div className="flex-1 min-h-0 bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] shadow-2xs overflow-hidden flex flex-col">
+          <div className="flex-1 min-h-[380px] md:min-h-0 bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] shadow-2xs overflow-hidden flex flex-col">
             <div className="relative evo-card-signature flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 border-b border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] shrink-0 before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
               <div className="flex items-center flex-wrap gap-2">
                 <span className="text-xs font-mono font-bold uppercase tracking-wider text-foreground">
