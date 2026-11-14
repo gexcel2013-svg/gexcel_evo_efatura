@@ -24,6 +24,26 @@ export interface LocalFsCentroConfig {
   updated_at: string;
 }
 
+export interface ResumoDestinosConfigurados {
+  id: string;
+  nome: string;
+  hostname: string;
+  pastaEvogex: string;
+  pastaV4: string;
+  pastaGexcelAntiga: string;
+  pastaV3: string;
+  pastaBdsrv: string;
+  pastaPdfs: string;
+  evogexConfirmado: boolean;
+  antigaConfirmada: boolean;
+}
+
+export function isWindowsPath(p?: string | null): boolean {
+  if (!p) return false;
+  const s = p.trim();
+  return /^[A-Za-z]:\\/.test(s) || /^\\\\/.test(s);
+}
+
 const STORAGE_KEY = 'gexcel_local_fs_centro_v1';
 const IDB_NAME = 'gexcel_evogex_fs_db';
 const IDB_STORE = 'dir_handles';
@@ -78,21 +98,163 @@ export function obterLocalFsCentroConfig(): LocalFsCentroConfig | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as LocalFsCentroConfig;
-    // Corrige configurações antigas onde Dados_evoGex ficou dentro de Dados_GexcelApps por defeito
+    let dirty = false;
+
+    // Bloqueia caminhos Linux (/opt/...) ou pastas incorretas Dados_GexcelApps\Dados_evoGex
     if (
-      parsed.pasta_evogex_display &&
+      !isWindowsPath(parsed.pasta_evogex_display) ||
       /dados_gexcelapps[\\/]dados_evogex/i.test(parsed.pasta_evogex_display)
     ) {
       parsed.pasta_evogex_display = 'C:\\Dados_evoGex';
-      parsed.pasta_motor_display = 'C:\\Dados_evoGex\\motor';
-      parsed.pasta_v4_display = 'C:\\Dados_evoGex\\BdsefaturaV4';
-      parsed.pasta_pdfs_display = 'C:\\Dados_evoGex\\PDFs_Recibos';
+      dirty = true;
+    }
+
+    const baseEvo = parsed.pasta_evogex_display;
+    if (!isWindowsPath(parsed.pasta_motor_display) || /dados_gexcelapps[\\/]dados_evogex/i.test(parsed.pasta_motor_display)) {
+      parsed.pasta_motor_display = `${baseEvo}\\motor`;
+      dirty = true;
+    }
+    if (!isWindowsPath(parsed.pasta_v4_display) || /dados_gexcelapps[\\/]dados_evogex/i.test(parsed.pasta_v4_display)) {
+      parsed.pasta_v4_display = `${baseEvo}\\BdsefaturaV4`;
+      dirty = true;
+    }
+    if (!isWindowsPath(parsed.pasta_pdfs_display) || /dados_gexcelapps[\\/]dados_evogex/i.test(parsed.pasta_pdfs_display)) {
+      parsed.pasta_pdfs_display = `${baseEvo}\\PDFs_Recibos`;
+      dirty = true;
+    }
+
+    if (parsed.pasta_gexcel_antiga_display && !isWindowsPath(parsed.pasta_gexcel_antiga_display)) {
+      parsed.pasta_gexcel_antiga_display = '';
+      dirty = true;
+    }
+
+    const baseAntiga = isWindowsPath(parsed.pasta_gexcel_antiga_display)
+      ? parsed.pasta_gexcel_antiga_display
+      : 'C:\\Dados_GexcelApps';
+
+    if (!isWindowsPath(parsed.pasta_v3_display)) {
+      parsed.pasta_v3_display = `${baseAntiga}\\BdsefaturaV3`;
+      dirty = true;
+    }
+    if (!isWindowsPath(parsed.pasta_bdsrv_display)) {
+      parsed.pasta_bdsrv_display = `${baseAntiga}\\BdsRV`;
+      dirty = true;
+    }
+
+    if (dirty) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
     }
     return parsed;
   } catch {
     return null;
   }
+}
+
+export function sincronizarLocalFsComAppConfig(appConfig: any): LocalFsCentroConfig {
+  const atual = obterLocalFsCentroConfig();
+  const centros = Array.isArray(appConfig?.centros_dados) ? appConfig.centros_dados : [];
+  const centroAtivo = centros.find((c: any) => c?.selecionado) || centros[0] || null;
+
+  const candidatoEvo =
+    (isWindowsPath(centroAtivo?.pasta_evogex) && !/dados_gexcelapps/i.test(centroAtivo.pasta_evogex)
+      ? centroAtivo.pasta_evogex
+      : '') ||
+    (isWindowsPath(appConfig?.centro_dados_pasta_evogex) && !/dados_gexcelapps/i.test(appConfig.centro_dados_pasta_evogex)
+      ? appConfig.centro_dados_pasta_evogex
+      : '') ||
+    (isWindowsPath(appConfig?.pasta_v4) && !/dados_gexcelapps/i.test(appConfig.pasta_v4)
+      ? String(appConfig.pasta_v4).replace(/[\\/]BdsefaturaV4[\\/]?$/i, '')
+      : '');
+
+  const candidatoAntiga =
+    (isWindowsPath(centroAtivo?.pasta_gexcel_antiga) ? centroAtivo.pasta_gexcel_antiga : '') ||
+    (isWindowsPath(appConfig?.centro_dados_pasta_gexcel_antiga) ? appConfig.centro_dados_pasta_gexcel_antiga : '') ||
+    (isWindowsPath(appConfig?.pasta_v3)
+      ? String(appConfig.pasta_v3).replace(/[\\/]BdsefaturaV3[\\/]?$/i, '')
+      : '');
+
+  const pastaEvoFinal =
+    (atual?.evogex_confirmado && isWindowsPath(atual.pasta_evogex_display) ? atual.pasta_evogex_display : '') ||
+    candidatoEvo ||
+    (atual && isWindowsPath(atual.pasta_evogex_display) ? atual.pasta_evogex_display : '') ||
+    'C:\\Dados_evoGex';
+
+  const pastaAntigaFinal =
+    (atual?.antiga_confirmada && isWindowsPath(atual.pasta_gexcel_antiga_display) ? atual.pasta_gexcel_antiga_display : '') ||
+    candidatoAntiga ||
+    (atual && isWindowsPath(atual.pasta_gexcel_antiga_display) ? atual.pasta_gexcel_antiga_display : '') ||
+    '';
+
+  const pastaV4Final =
+    (isWindowsPath(atual?.pasta_v4_display) && atual?.evogex_confirmado ? atual.pasta_v4_display : '') ||
+    (isWindowsPath(appConfig?.pasta_v4) ? appConfig.pasta_v4 : '') ||
+    `${pastaEvoFinal}\\BdsefaturaV4`;
+
+  const baseAntigaDisplay = pastaAntigaFinal || 'C:\\Dados_GexcelApps';
+  const pastaV3Final =
+    (isWindowsPath(appConfig?.pasta_v3) ? appConfig.pasta_v3 : '') ||
+    `${baseAntigaDisplay}\\BdsefaturaV3`;
+  const pastaBdsrvFinal =
+    (isWindowsPath(appConfig?.pasta_bdsrv) ? appConfig.pasta_bdsrv : '') ||
+    `${baseAntigaDisplay}\\BdsRV`;
+  const pastaPdfsFinal =
+    (isWindowsPath(atual?.pasta_pdfs_display) && atual?.evogex_confirmado ? atual.pasta_pdfs_display : '') ||
+    (isWindowsPath(appConfig?.pasta_pdfs) ? appConfig.pasta_pdfs : '') ||
+    `${pastaEvoFinal}\\PDFs_Recibos`;
+
+  const merged: LocalFsCentroConfig = {
+    id: centroAtivo?.id || appConfig?.centro_dados_ativo_id || atual?.id || 'escritorio-principal',
+    nome: centroAtivo?.nome || appConfig?.centro_dados_nome || atual?.nome || 'Escritório Principal',
+    hostname: centroAtivo?.hostname || appConfig?.centro_dados_hostname || atual?.hostname || 'COMPUTADOR-LOCAL',
+    pasta_evogex_display: pastaEvoFinal,
+    pasta_motor_display: `${pastaEvoFinal}\\motor`,
+    pasta_v4_display: pastaV4Final,
+    pasta_v3_display: pastaV3Final,
+    pasta_bdsrv_display: pastaBdsrvFinal,
+    pasta_pdfs_display: pastaPdfsFinal,
+    pasta_gexcel_antiga_display: pastaAntigaFinal,
+    ligado: true,
+    evogex_confirmado: Boolean(atual?.evogex_confirmado || candidatoEvo),
+    antiga_confirmada: Boolean(atual?.antiga_confirmada || pastaAntigaFinal),
+    total_entidades_carregadas: atual?.total_entidades_carregadas,
+    total_sqlites_gravados: atual?.total_sqlites_gravados,
+    updated_at: atual?.updated_at || new Date().toISOString(),
+  };
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+    window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: merged }));
+  } catch {
+    // ignore storage quota errors
+  }
+
+  return merged;
+}
+
+export function obterResumoDestinosConfigurados(appConfig?: any): ResumoDestinosConfigurados {
+  const local = appConfig ? sincronizarLocalFsComAppConfig(appConfig) : obterLocalFsCentroConfig();
+  const pastaEvogex = local && isWindowsPath(local.pasta_evogex_display) ? local.pasta_evogex_display : 'C:\\Dados_evoGex';
+  const pastaV4 = local && isWindowsPath(local.pasta_v4_display) ? local.pasta_v4_display : `${pastaEvogex}\\BdsefaturaV4`;
+  const pastaGexcelAntiga =
+    local && isWindowsPath(local.pasta_gexcel_antiga_display) ? local.pasta_gexcel_antiga_display : '';
+  const baseAntiga = pastaGexcelAntiga || 'C:\\Dados_GexcelApps';
+  const pastaV3 = local && isWindowsPath(local.pasta_v3_display) ? local.pasta_v3_display : `${baseAntiga}\\BdsefaturaV3`;
+  const pastaBdsrv = local && isWindowsPath(local.pasta_bdsrv_display) ? local.pasta_bdsrv_display : `${baseAntiga}\\BdsRV`;
+  const pastaPdfs = local && isWindowsPath(local.pasta_pdfs_display) ? local.pasta_pdfs_display : `${pastaEvogex}\\PDFs_Recibos`;
+
+  return {
+    id: local?.id || 'escritorio-principal',
+    nome: local?.nome || 'Escritório Principal',
+    hostname: local?.hostname || 'COMPUTADOR-LOCAL',
+    pastaEvogex,
+    pastaV4,
+    pastaGexcelAntiga,
+    pastaV3,
+    pastaBdsrv,
+    pastaPdfs,
+    evogexConfirmado: Boolean(local?.evogex_confirmado),
+    antigaConfirmada: Boolean(local?.antiga_confirmada || pastaGexcelAntiga),
+  };
 }
 
 export function guardarLocalFsCentroConfig(cfg: LocalFsCentroConfig): void {

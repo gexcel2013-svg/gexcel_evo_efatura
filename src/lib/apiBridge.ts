@@ -33,7 +33,6 @@ const origFetch = window.fetch.bind(window);
 let localMotorAvailable = !isCloudHost;
 let currentMotorSource: MotorSourceType = isCloudHost ? 'cloud' : 'local';
 let lastSyncedJobId = '';
-let consecutiveLocalFailures = 0;
 
 function setMotorSource(source: MotorSourceType) {
   if (typeof window === 'undefined') return;
@@ -64,7 +63,6 @@ async function probeLocalMotor(): Promise<boolean> {
     if (res.ok) {
       const text = await res.text();
       if (text.includes('API Importador e-Fatura Gexcel')) {
-        consecutiveLocalFailures = 0;
         localMotorAvailable = true;
         setMotorSource('local');
         return true;
@@ -75,7 +73,6 @@ async function probeLocalMotor(): Promise<boolean> {
   } finally {
     window.clearTimeout(timer);
   }
-  consecutiveLocalFailures += 1;
   localMotorAvailable = false;
   if (isCloudHost) {
     setMotorSource('cloud');
@@ -85,15 +82,11 @@ async function probeLocalMotor(): Promise<boolean> {
 
 if (typeof window !== 'undefined') {
   window.__GEXCEL_MOTOR_SOURCE__ = currentMotorSource;
-  // Adia a sondagem local para depois do arranque inicial da página não bloquear o browser
+  // Adia ligeiramente a sondagem local para não bloquear o render inicial
   window.setTimeout(() => {
     void probeLocalMotor();
-  }, 2500);
+  }, 150);
   window.setInterval(() => {
-    // Se já falhou 3 vezes seguidas num portátil sem motor local, reduz a frequência para não saturar sockets do browser
-    if (isCloudHost && !localMotorAvailable && consecutiveLocalFailures >= 3) {
-      return;
-    }
     void probeLocalMotor();
   }, 15000);
 }

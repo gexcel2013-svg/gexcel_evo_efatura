@@ -34,7 +34,11 @@ import {
   FolderOpen
 } from 'lucide-react';
 import { getMotorSource, type MotorSourceType } from '../lib/apiBridge';
-import { obterLocalFsCentroConfig, abrirPastaNoExploradorNativo } from '../lib/localFsBridge';
+import {
+  isWindowsPath,
+  obterResumoDestinosConfigurados,
+  abrirPastaNoExploradorNativo,
+} from '../lib/localFsBridge';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
 import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
 
@@ -251,7 +255,7 @@ export default function CommandCenter({
           setGerarXmlLegado(d.alimentar_xml_legado);
           localStorage.setItem('gexcel_alimentar_xml_legado', String(d.alimentar_xml_legado));
         }
-        if (d?.pasta_v4 && !obterLocalFsCentroConfig()?.pasta_v4_display) {
+        if (isWindowsPath(d?.pasta_v4) && !obterResumoDestinosConfigurados().evogexConfirmado) {
           setCaminhoDadosLocal(d.pasta_v4);
         }
       })
@@ -297,7 +301,7 @@ export default function CommandCenter({
   const [opcoesAvancadasAbertas, setOpcoesAvancadasAbertas] = useState<boolean>(false);
   const [copiadoPasta, setCopiadoPasta] = useState<boolean>(false);
   const [caminhoDadosLocal, setCaminhoDadosLocal] = useState<string>(
-    () => obterLocalFsCentroConfig()?.pasta_v4_display || 'C:\\Dados_evoGex\\BdsefaturaV4'
+    () => obterResumoDestinosConfigurados().pastaV4
   );
   const [motorSource, setMotorSource] = useState<MotorSourceType>(() => getMotorSource());
 
@@ -313,8 +317,7 @@ export default function CommandCenter({
 
   useEffect(() => {
     const onFsUpdated = () => {
-      const cfg = obterLocalFsCentroConfig();
-      if (cfg?.pasta_v4_display) setCaminhoDadosLocal(cfg.pasta_v4_display);
+      setCaminhoDadosLocal(obterResumoDestinosConfigurados().pastaV4);
     };
     window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
     return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);

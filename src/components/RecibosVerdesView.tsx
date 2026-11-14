@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
 import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
-import { obterLocalFsCentroConfig } from '../lib/localFsBridge';
+import { isWindowsPath, obterResumoDestinosConfigurados } from '../lib/localFsBridge';
 
 interface Entidade {
   id: string;
@@ -150,10 +150,10 @@ export function RecibosVerdesView({
   });
 
   // Caminhos BdsefaturaV4 (SQLite), BdsRV (XML) e BdsRV_PDFs
-  const [pastaV4, setPastaV4] = useState<string>('');
-  const [pastaBdsrv, setPastaBdsrv] = useState<string>('');
-  const [pastaPdfs, setPastaPdfs] = useState<string>('');
-  const [pastaPdfsEdit, setPastaPdfsEdit] = useState<string>('');
+  const [pastaV4, setPastaV4] = useState<string>(() => obterResumoDestinosConfigurados().pastaV4);
+  const [pastaBdsrv, setPastaBdsrv] = useState<string>(() => obterResumoDestinosConfigurados().pastaBdsrv);
+  const [pastaPdfs, setPastaPdfs] = useState<string>(() => obterResumoDestinosConfigurados().pastaPdfs);
+  const [pastaPdfsEdit, setPastaPdfsEdit] = useState<string>(() => obterResumoDestinosConfigurados().pastaPdfs);
   const [editandoPastaPdfs, setEditandoPastaPdfs] = useState<boolean>(false);
   const [copiadoCaminho, setCopiadoCaminho] = useState<string | null>(null);
 
@@ -169,7 +169,7 @@ export function RecibosVerdesView({
   const [passoAssistente, setPassoAssistente] = useState<1 | 2 | 3 | 4>(1);
   const [opcoesPopoverAberto, setOpcoesPopoverAberto] = useState<boolean>(false);
   const [caminhoDestinoLocal, setCaminhoDestinoLocal] = useState<string>(
-    () => obterLocalFsCentroConfig()?.pasta_v4_display || 'C:\\Dados_evoGex\\BdsefaturaV4'
+    () => obterResumoDestinosConfigurados().pastaV4
   );
 
   const abrirAssistente = () => {
@@ -185,8 +185,12 @@ export function RecibosVerdesView({
 
   useEffect(() => {
     const onFsUpdated = () => {
-      const cfg = obterLocalFsCentroConfig();
-      if (cfg?.pasta_v4_display) setCaminhoDestinoLocal(cfg.pasta_v4_display);
+      const resumo = obterResumoDestinosConfigurados();
+      setCaminhoDestinoLocal(resumo.pastaV4);
+      setPastaV4(resumo.pastaV4);
+      setPastaBdsrv(resumo.pastaBdsrv);
+      setPastaPdfs(resumo.pastaPdfs);
+      setPastaPdfsEdit(resumo.pastaPdfs);
     };
     window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
     return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
@@ -294,10 +298,14 @@ export function RecibosVerdesView({
       ]);
       if (resCfg.ok) {
         const cfg = await resCfg.json();
-        setPastaV4(cfg.pasta_v4 || '');
-        setPastaBdsrv(cfg.pasta_bdsrv || '');
-        setPastaPdfs(cfg.pasta_pdfs || '');
-        setPastaPdfsEdit(cfg.pasta_pdfs || '');
+        const resumoLocal = obterResumoDestinosConfigurados();
+        const v4Final = isWindowsPath(cfg.pasta_v4) && !resumoLocal.evogexConfirmado ? cfg.pasta_v4 : resumoLocal.pastaV4;
+        const bdsrvFinal = isWindowsPath(cfg.pasta_bdsrv) && !resumoLocal.antigaConfirmada ? cfg.pasta_bdsrv : resumoLocal.pastaBdsrv;
+        const pdfsFinal = isWindowsPath(cfg.pasta_pdfs) && !resumoLocal.evogexConfirmado ? cfg.pasta_pdfs : resumoLocal.pastaPdfs;
+        setPastaV4(v4Final);
+        setPastaBdsrv(bdsrvFinal);
+        setPastaPdfs(pdfsFinal);
+        setPastaPdfsEdit(pdfsFinal);
         if (typeof cfg.alimentar_xml_legado === 'boolean') {
           setGerarXmlLegado(cfg.alimentar_xml_legado);
           localStorage.setItem('gexcel_alimentar_xml_legado', String(cfg.alimentar_xml_legado));
@@ -324,15 +332,15 @@ export function RecibosVerdesView({
         const data = await res.json();
         setMatrizEmpresas(data.empresas || {});
         setSenhasInvalidas(data.senhas_invalidas || {});
-        if (data.pasta_v4) setPastaV4(data.pasta_v4);
-        if (data.pasta_bdsrv) setPastaBdsrv(data.pasta_bdsrv);
+        const resumoLocal = obterResumoDestinosConfigurados();
+        setPastaV4(isWindowsPath(data.pasta_v4) && !resumoLocal.evogexConfirmado ? data.pasta_v4 : resumoLocal.pastaV4);
+        setPastaBdsrv(isWindowsPath(data.pasta_bdsrv) && !resumoLocal.antigaConfirmada ? data.pasta_bdsrv : resumoLocal.pastaBdsrv);
         if (typeof data.alimentar_xml_legado === 'boolean') {
           setGerarXmlLegado(data.alimentar_xml_legado);
         }
-        if (data.pasta_pdfs) {
-          setPastaPdfs(data.pasta_pdfs);
-          if (!editandoPastaPdfs) setPastaPdfsEdit(data.pasta_pdfs);
-        }
+        const pdfsFinal = isWindowsPath(data.pasta_pdfs) && !resumoLocal.evogexConfirmado ? data.pasta_pdfs : resumoLocal.pastaPdfs;
+        setPastaPdfs(pdfsFinal);
+        if (!editandoPastaPdfs) setPastaPdfsEdit(pdfsFinal);
         onApiStatusChange?.(true);
       }
     } catch {

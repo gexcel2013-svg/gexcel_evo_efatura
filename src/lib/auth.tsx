@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { AppUser, AppConfig } from '../types/auth';
+import { sincronizarLocalFsComAppConfig } from './localFsBridge';
 
 interface AuthContextType {
   currentUser: AppUser | null;
@@ -119,6 +120,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = await res.json();
         const cfg: AppConfig = data.config;
         setAppConfig(cfg);
+        sincronizarLocalFsComAppConfig(cfg);
 
         // Só abrir wizard de configuração autónoma se existir sessão autenticada válida
         if (readStoredEvoSession() && cfg.modo_dados === 'autonomo' && !cfg.setup_completo) {

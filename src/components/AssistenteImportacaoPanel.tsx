@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import {
   Sparkles,
   X,
@@ -20,12 +20,17 @@ import {
   SlidersHorizontal,
   CheckCircle2,
   AlertCircle,
+  Building2,
 } from 'lucide-react';
 import {
+  isWindowsPath,
   obterLocalFsCentroConfig,
+  obterResumoDestinosConfigurados,
   guardarLocalFsCentroConfig,
   escolherEInstalarPastaDadosEvogex,
+  escolherPastaDadosGexcelAntigos,
   abrirPastaNoExploradorNativo,
+  type ResumoDestinosConfigurados,
 } from '../lib/localFsBridge';
 
 export type ZonaSpotlight = 1 | 2 | 3 | 4 | null;
@@ -132,11 +137,14 @@ export function AssistenteImportacaoPanel({
   onPassoAtivoChange,
 }: AssistenteImportacaoPanelProps) {
   const [passosConfirmados, setPassosConfirmados] = useState<Set<number>>(() => new Set());
+  const [resumoConfig, setResumoConfig] = useState<ResumoDestinosConfigurados>(() => obterResumoDestinosConfigurados());
   const [copiado, setCopiado] = useState<boolean>(false);
+  const [copiadoAntiga, setCopiadoAntiga] = useState<boolean>(false);
   const [editandoCaminho, setEditandoCaminho] = useState<boolean>(false);
   const [caminhoDraft, setCaminhoDraft] = useState<string>(caminhoDados);
   const [mensagemPasta, setMensagemPasta] = useState<string | null>(null);
   const [escolhendoPastaWin, setEscolhendoPastaWin] = useState<boolean>(false);
+  const [escolhendoAntigaWin, setEscolhendoAntigaWin] = useState<boolean>(false);
 
   const [modoSelecaoEmpresas, setModoSelecaoEmpresas] = useState<'todas' | 'escolher'>('escolher');
   const [pesquisaEmpresa, setPesquisaEmpresa] = useState<string>('');
@@ -149,10 +157,17 @@ export function AssistenteImportacaoPanel({
 
   const mesAtual = new Date().getMonth() + 1;
 
+  useEffect(() => {
+    const onFsUpdated = () => {
+      setResumoConfig(obterResumoDestinosConfigurados());
+    };
+    window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
+    return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
+  }, []);
+
   const caminhoExibido = useMemo(() => {
-    const local = obterLocalFsCentroConfig();
-    return caminhoDados || local?.pasta_v4_display || 'C:\\Dados_evoGex\\BdsefaturaV4';
-  }, [caminhoDados]);
+    return isWindowsPath(caminhoDados) ? caminhoDados : resumoConfig.pastaV4;
+  }, [caminhoDados, resumoConfig.pastaV4]);
 
   const empresasFiltradas = useMemo(() => {
     const q = pesquisaEmpresa.trim().toLowerCase();
@@ -194,6 +209,18 @@ export function AssistenteImportacaoPanel({
     }
   };
 
+  const pastaAntigaExibida = resumoConfig.pastaGexcelAntiga || 'C:\\Dados_GexcelApps';
+
+  const copiarCaminhoAntiga = async () => {
+    try {
+      await navigator.clipboard.writeText(pastaAntigaExibida);
+      setCopiadoAntiga(true);
+      setTimeout(() => setCopiadoAntiga(false), 1800);
+    } catch {
+      // ignora erro de clipboard
+    }
+  };
+
   const abrirPastaWindows = async () => {
     try {
       const res = await fetch('http://127.0.0.1:8015/api/sistema/abrir-explorador', {
@@ -211,6 +238,23 @@ export function AssistenteImportacaoPanel({
     await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
   };
 
+  const abrirPastaAntigaWindows = async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:8015/api/sistema/abrir-explorador', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caminho: pastaAntigaExibida }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.status === 'ok' && d.origem !== 'cloud') return;
+      }
+    } catch {
+      // fallback File System Access API
+    }
+    await abrirPastaNoExploradorNativo(undefined, 'antiga');
+  };
+
   const escolherPastaNoWindows = async () => {
     setEscolhendoPastaWin(true);
     setMensagemPasta(null);
@@ -221,6 +265,7 @@ export function AssistenteImportacaoPanel({
         const novoCaminho = res.config.pasta_v4_display || `${res.config.pasta_evogex_display}\\BdsefaturaV4`;
         setCaminhoDraft(novoCaminho);
         onCaminhoDadosChange?.(novoCaminho);
+        setResumoConfig(obterResumoDestinosConfigurados());
         setMensagemPasta('Pasta gravada e sincronizada com sucesso.');
       } else if (res.erro && res.erro !== 'Seleção de pasta cancelada.') {
         setMensagemPasta(res.erro);
@@ -230,9 +275,31 @@ export function AssistenteImportacaoPanel({
     }
   };
 
+  const escolherPastaAntigaNoWindows = async () => {
+    setEscolhendoAntigaWin(true);
+    setMensagemPasta(null);
+    try {
+      const res = await escolherPastaDadosGexcelAntigos(pastaAntigaExibida);
+      if (res.ok && res.config) {
+        setResumoConfig(obterResumoDestinosConfigurados());
+        setMensagemPasta(
+          res.erro ||
+            `Pasta GexcelApps ligada (${res.totalEntidades || 0} empresas carregadas).`
+        );
+      } else if (res.erro && res.erro !== 'Seleção de pasta cancelada.') {
+        setMensagemPasta(res.erro);
+      }
+    } finally {
+      setEscolhendoAntigaWin(false);
+    }
+  };
+
   const guardarCaminhoManual = () => {
     const limpo = (caminhoDraft || '').trim();
-    if (!limpo) return;
+    if (!limpo || !isWindowsPath(limpo)) {
+      setMensagemPasta('Introduza um caminho Windows válido (ex: C:\\Dados_evoGex\\BdsefaturaV4).');
+      return;
+    }
     const raiz = limpo.replace(/[\\/](BdsefaturaV4|PDFs_Recibos|BdsRV)[\\/]?$/i, '') || limpo;
     const atual = obterLocalFsCentroConfig();
     const atualizado = {
@@ -242,8 +309,8 @@ export function AssistenteImportacaoPanel({
       pasta_evogex_display: raiz,
       pasta_motor_display: `${raiz}\\motor`,
       pasta_v4_display: /bdsefaturav4$/i.test(limpo) ? limpo : `${raiz}\\BdsefaturaV4`,
-      pasta_v3_display: atual?.pasta_v3_display || `${raiz}\\BdsefaturaV3`,
-      pasta_bdsrv_display: atual?.pasta_bdsrv_display || `${raiz}\\BdsRV`,
+      pasta_v3_display: atual?.pasta_v3_display || `${pastaAntigaExibida}\\BdsefaturaV3`,
+      pasta_bdsrv_display: atual?.pasta_bdsrv_display || `${pastaAntigaExibida}\\BdsRV`,
       pasta_pdfs_display: atual?.pasta_pdfs_display || `${raiz}\\PDFs_Recibos`,
       pasta_gexcel_antiga_display: atual?.pasta_gexcel_antiga_display || '',
       ligado: true,
@@ -254,6 +321,7 @@ export function AssistenteImportacaoPanel({
       updated_at: new Date().toISOString(),
     };
     guardarLocalFsCentroConfig(atualizado);
+    setResumoConfig(obterResumoDestinosConfigurados());
     onCaminhoDadosChange?.(atualizado.pasta_v4_display);
     setEditandoCaminho(false);
     setMensagemPasta('Destino dos dados gravado.');
@@ -340,26 +408,37 @@ export function AssistenteImportacaoPanel({
           </div>
 
           <div className="mt-2.5 space-y-2" onClick={e => e.stopPropagation()}>
-            {/* Estado da Ligação */}
-            <div className="flex items-center justify-between px-2.5 py-1.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] text-[11px] font-mono">
-              <span className="text-slate-700 dark:text-slate-300">Estado da Ligação:</span>
-              {apiOnline ? (
-                <span className="inline-flex items-center space-x-1.5 font-bold text-emerald-700 dark:text-emerald-400">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Computador Ligado</span>
+            {/* Centro de Dados Ativo & Estado da Ligação */}
+            <div className="px-2.5 py-2 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] text-[11px] font-mono space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-700 dark:text-slate-300 flex items-center space-x-1">
+                  <Building2 className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                  <span>Centro Ativo:</span>
                 </span>
-              ) : (
-                <span className="inline-flex items-center space-x-1.5 font-bold text-amber-700 dark:text-amber-300">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  <span>Motor Offline / Cloud</span>
+                <span className="font-bold text-foreground truncate" title={resumoConfig.nome}>
+                  {resumoConfig.nome}
                 </span>
-              )}
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-[#18293d]">
+                <span className="text-slate-700 dark:text-slate-300">Estado da Ligação:</span>
+                {apiOnline ? (
+                  <span className="inline-flex items-center space-x-1.5 font-bold text-emerald-700 dark:text-emerald-400">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Computador Ligado</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center space-x-1.5 font-bold text-amber-700 dark:text-amber-300">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    <span>Motor Offline / Cloud</span>
+                  </span>
+                )}
+              </div>
             </div>
 
-            {/* Endereço Completo onde os Dados Ficam Guardados */}
+            {/* 1. Pasta Dados evoGex (SQLite V4) */}
             <div className="p-2.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] space-y-1.5">
               <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-                Onde os dados vão ser guardados:
+                1. Pasta Dados evoGex (Bases SQLite V4):
               </div>
 
               {editandoCaminho ? (
@@ -400,7 +479,7 @@ export function AssistenteImportacaoPanel({
                     <button
                       type="button"
                       onClick={copiarCaminho}
-                      title="Copiar endereço completo"
+                      title="Copiar endereço completo (📋)"
                       className="p-1 rounded bg-slate-100 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1d3148] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-[#253a52] cursor-pointer"
                     >
                       {copiado ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -408,7 +487,7 @@ export function AssistenteImportacaoPanel({
                     <button
                       type="button"
                       onClick={abrirPastaWindows}
-                      title="Abrir pasta no Explorador do Windows"
+                      title="Abrir pasta no Explorador do Windows (📂)"
                       className="p-1 rounded bg-slate-100 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1d3148] text-[#0284c7] dark:text-sky-400 border border-slate-300 dark:border-[#253a52] cursor-pointer"
                     >
                       <FolderOpen className="w-3.5 h-3.5" />
@@ -441,13 +520,70 @@ export function AssistenteImportacaoPanel({
                   </button>
                 )}
               </div>
-
-              {mensagemPasta && (
-                <div className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-semibold pt-0.5">
-                  {mensagemPasta}
-                </div>
-              )}
             </div>
+
+            {/* 2. Pasta Dados Antigos Excel (GexcelApps / XML) */}
+            <div className="p-2.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] space-y-1.5">
+              <div className="flex items-center justify-between gap-1.5">
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                  2. Pasta Excel Antigo (GexcelApps / XML):
+                </span>
+                {resumoConfig.antigaConfirmada && (
+                  <span className="text-[9.5px] font-mono font-bold text-emerald-700 dark:text-emerald-400 shrink-0">
+                    Ligada
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-start justify-between gap-1.5">
+                <span
+                  title={pastaAntigaExibida}
+                  className="text-[11px] font-mono font-semibold text-foreground break-all leading-snug"
+                >
+                  {pastaAntigaExibida}
+                </span>
+                <div className="flex items-center space-x-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={copiarCaminhoAntiga}
+                    title="Copiar endereço completo (📋)"
+                    className="p-1 rounded bg-slate-100 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1d3148] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-[#253a52] cursor-pointer"
+                  >
+                    {copiadoAntiga ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={abrirPastaAntigaWindows}
+                    title="Abrir pasta no Explorador do Windows (📂)"
+                    className="p-1 rounded bg-slate-100 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1d3148] text-[#0284c7] dark:text-sky-400 border border-slate-300 dark:border-[#253a52] cursor-pointer"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="text-[10px] font-mono text-slate-600 dark:text-slate-400 break-all">
+                XML: {resumoConfig.pastaV3} · {resumoConfig.pastaBdsrv}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <button
+                  type="button"
+                  onClick={escolherPastaAntigaNoWindows}
+                  disabled={escolhendoAntigaWin}
+                  className="px-2 py-1 rounded bg-slate-100 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1a2d42] border border-slate-300 dark:border-[#253a52] text-[10.5px] font-mono font-semibold text-foreground flex items-center space-x-1 cursor-pointer"
+                >
+                  <FolderOpen className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                  <span>{escolhendoAntigaWin ? 'A abrir Windows...' : 'Mudar Pasta Antiga'}</span>
+                </button>
+              </div>
+            </div>
+
+            {mensagemPasta && (
+              <div className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-semibold px-1">
+                {mensagemPasta}
+              </div>
+            )}
 
             {passoAtivo === 1 && (
               <button

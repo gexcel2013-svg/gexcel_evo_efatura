@@ -24,7 +24,11 @@ import {
 } from 'lucide-react';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
 import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
-import { obterLocalFsCentroConfig, abrirPastaNoExploradorNativo } from '../lib/localFsBridge';
+import {
+  isWindowsPath,
+  obterResumoDestinosConfigurados,
+  abrirPastaNoExploradorNativo,
+} from '../lib/localFsBridge';
 
 interface Entidade {
   id: string;
@@ -101,7 +105,7 @@ export function InconformidadesView({
   );
   const [passoAssistente, setPassoAssistente] = useState<1 | 2 | 3 | 4>(1);
   const [caminhoDestinoLocal, setCaminhoDestinoLocal] = useState<string>(
-    () => obterLocalFsCentroConfig()?.pasta_v4_display || 'C:\\Dados_evoGex\\BdsefaturaV4'
+    () => obterResumoDestinosConfigurados().pastaV4
   );
   const [copiadoPasta, setCopiadoPasta] = useState<boolean>(false);
   const [selecionadasAssistente, setSelecionadasAssistente] = useState<Set<string>>(new Set());
@@ -118,8 +122,7 @@ export function InconformidadesView({
 
   useEffect(() => {
     const onFsUpdated = () => {
-      const cfg = obterLocalFsCentroConfig();
-      if (cfg?.pasta_v4_display) setCaminhoDestinoLocal(cfg.pasta_v4_display);
+      setCaminhoDestinoLocal(obterResumoDestinosConfigurados().pastaV4);
     };
     window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
     return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
@@ -129,7 +132,7 @@ export function InconformidadesView({
     fetch('http://127.0.0.1:8015/api/recibos-verdes/config')
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
-        if (d?.pasta_v4 && !obterLocalFsCentroConfig()?.pasta_v4_display) {
+        if (isWindowsPath(d?.pasta_v4) && !obterResumoDestinosConfigurados().evogexConfirmado) {
           setCaminhoDestinoLocal(d.pasta_v4);
         }
       })
