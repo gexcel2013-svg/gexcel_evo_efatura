@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+zeep
+cryptography
+python-dotenv
+
+streamlit
+pandas

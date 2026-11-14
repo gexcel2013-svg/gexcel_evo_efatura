@@ -27,3 +27,6 @@ src-tauri/target
 *.sw?
 __pycache__/
 *.pyc
+backend_evo06/.env
+backend_evo06/certs/
+backend_evo06/__pycache__/

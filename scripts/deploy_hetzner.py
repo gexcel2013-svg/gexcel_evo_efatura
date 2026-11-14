@@ -169,7 +169,7 @@ def ensure_caddy_tcp_and_nocache(sftp):
 def main():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     evo_root = os.path.dirname(base_dir)
-    evo05_dir = os.path.join(evo_root, 'EVO-05_API_Efatura')
+    evo05_dir = os.path.join(base_dir, 'backend_evo06')
     scr_dir = os.path.join(evo_root, '03.9_SCR_EVO_Scrapers_Gov')
 
     env = load_env(os.path.join(base_dir, 'deploy.env'))
@@ -202,8 +202,8 @@ def main():
         print("A sincronizar dist/ diretamente para /opt/gexcel/evo06/dev/dist...")
         upload_dir_filtered(sftp, dist_local, f"{target_dir}/dist")
 
-    # 2. Deploy do Motor Backend EVO-05 (:8015) + Scrapers SCR-01..03
-    print("A sincronizar motor EVO-05_API_Efatura para /opt/gexcel/evo05...")
+    # 2. Deploy do Motor Backend Isolado (backend_evo06 -> :8015) + Scrapers SCR-01..03
+    print("A sincronizar motor isolado backend_evo06 para /opt/gexcel/evo05...")
     run_ssh(ssh, "mkdir -p /opt/gexcel/evo05 /opt/gexcel/evo05/docs /opt/gexcel/evo05/certs /opt/gexcel/03.9_SCR_EVO_Scrapers_Gov")
 
     for fname in os.listdir(evo05_dir):
