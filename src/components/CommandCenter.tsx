@@ -541,46 +541,7 @@ export default function CommandCenter({
   };
 
   // Alertas e Notificações de Erro da AT com interface evoGex.com
-  interface AlertaErroUI {
-    id: string;
-    nome: string;
-    nif: string;
-    mensagem: string;
-    hora: string;
-    tipo_erro?: string;
-    badge_label?: string;
-    detalhe?: string;
-    entId?: string;
-  }
-  const [alertasErro, setAlertasErro] = useState<AlertaErroUI[]>([]);
   const [entidadeErros, setEntidadeErros] = useState<Record<string, { tipo_erro: string; badge_label: string; mensagem: string; detalhe: string }>>({});
-
-  const mostrarAlertaErro = useCallback((
-    nome: string, 
-    nif: string, 
-    mensagem: string,
-    tipo_erro: string = 'outro',
-    badge_label: string = 'Erro AT',
-    detalhe: string = '',
-    entId?: string
-  ) => {
-    const novo: AlertaErroUI = {
-      id: Math.random().toString(36).substring(2, 9),
-      nome,
-      nif,
-      mensagem,
-      hora: new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      tipo_erro,
-      badge_label,
-      detalhe,
-      entId
-    };
-    setAlertasErro(prev => [novo, ...prev.filter(a => a.nif !== nif).slice(0, 4)]);
-  }, []);
-
-  const fecharAlertaErro = (id: string) => {
-    setAlertasErro(prev => prev.filter(a => a.id !== id));
-  };
 
   // Polling de telemetria da máquina e workers (1.5s durante sincronização, 4s em repouso)
   useEffect(() => {
@@ -681,7 +642,6 @@ export default function CommandCenter({
             return next;
           });
         }
-        setAlertasErro(prev => prev.filter(a => a.nif !== nif));
         carregarMatriz(ano, tipoOperacao);
       } else {
         const err = await res.json();
@@ -1029,7 +989,10 @@ export default function CommandCenter({
 
   // Polling Effect para monitorizar o progresso dos Jobs na API Python
   useEffect(() => {
+    let isPollingTick = false;
+
     const interval = setInterval(async () => {
+      if (isPollingTick) return;
       if (abortSyncRef.current) {
         setIsSyncing(false);
         setBatchSyncIds(new Set());
@@ -1042,128 +1005,126 @@ export default function CommandCenter({
         return;
       }
       
+      isPollingTick = true;
       setIsSyncing(true);
+      let shouldRefreshMatrix = false;
 
-      for (const [entId, jobId] of jobs) {
-        try {
-          const res = await fetch(`http://127.0.0.1:8015/api/extracao/status/${jobId}`);
-          if (res.ok) {
-            const data = await res.json();
-            const ent = entidades.find(e => e.id === entId);
-            const nifReal = ent ? (ent.nif || ent.nif_cc || '').trim() : '';
-            
-            setSyncStatus(prev => ({ 
-              ...prev, 
-              [entId]: data.mensagem || data.status 
-            }));
+      try {
+        for (const [entId, jobId] of jobs) {
+          try {
+            const res = await fetch(`http://127.0.0.1:8015/api/extracao/status/${jobId}`);
+            if (res.ok) {
+              const data = await res.json();
+              const ent = entidades.find(e => e.id === entId);
+              const nifReal = ent ? (ent.nif || ent.nif_cc || '').trim() : '';
+              
+              setSyncStatus(prev => ({ 
+                ...prev, 
+                [entId]: data.mensagem || data.status 
+              }));
 
-            // Atualiza progresso quantitativo em tempo real
-            setJobsProgress(prev => ({
-              ...prev,
-              [entId]: {
-                status: data.status,
-                mensagem: data.mensagem || '',
-                docs: data.docs_atuais || 0,
-                total: data.total_esperado || 0,
-                pct: data.percentagem || 0,
-                fase: data.fase,
-                mes_ativo: data.mes_ativo,
-                ano_ativo: data.ano_ativo,
-                sub_atuais: data.sub_atuais,
-                sub_total: data.sub_total,
-                parcial: Boolean(data.parcial)
-              }
-            }));
-            
-            if (data.status === 'interrompido' || data.status === 'cancelado' || data.parcial) {
-              if (nifReal && data.docs_atuais > 0) {
-                const pKey = `${nifReal}_${ano}_${tipoOperacao}`;
-                setPartialStatus(prev => ({
-                  ...prev,
-                  [pKey]: {
-                    nif: nifReal,
-                    ano,
-                    tipo: tipoOperacao,
-                    docs: data.docs_atuais || 0,
-                    total: data.total_esperado || 0,
-                    data: new Date().toLocaleTimeString('pt-PT')
-                  }
-                }));
-              }
-              setActiveJobs(prev => {
-                const next = { ...prev };
-                delete next[entId];
-                return next;
-              });
-              // Refrescar Matriz para refletir os docs parciais guardados na BD
-              carregarMatriz(ano, tipoOperacao);
-            } else if (data.status === 'concluido') {
-              if (nifReal) {
-                // Sincronização 100% terminada: limpa flag parcial deste NIF
-                const pKey = `${nifReal}_${ano}_${tipoOperacao}`;
-                setPartialStatus(prev => {
-                  const next = { ...prev };
-                  delete next[pKey];
-                  return next;
-                });
-              }
-              setActiveJobs(prev => {
-                const next = { ...prev };
-                delete next[entId];
-                return next;
-              });
-              // Refrescar Matriz agregada após conclusão
-              carregarMatriz(ano, tipoOperacao);
-            } else if (data.status === 'erro') {
-              const errMsg = data.mensagem || data.erro || 'Falha na comunicação com a AT';
-              const tipoErro = data.tipo_erro || 'outro';
-              const badgeLabel = data.badge_label || 'Erro AT';
-              const detalheErro = data.erro || errMsg;
-
-              setEntidadeErros(prev => ({
+              // Atualiza progresso quantitativo em tempo real
+              setJobsProgress(prev => ({
                 ...prev,
                 [entId]: {
-                  tipo_erro: tipoErro,
-                  badge_label: badgeLabel,
-                  mensagem: errMsg,
-                  detalhe: detalheErro,
+                  status: data.status,
+                  mensagem: data.mensagem || '',
+                  docs: data.docs_atuais || 0,
+                  total: data.total_esperado || 0,
+                  pct: data.percentagem || 0,
+                  fase: data.fase,
+                  mes_ativo: data.mes_ativo,
+                  ano_ativo: data.ano_ativo,
+                  sub_atuais: data.sub_atuais,
+                  sub_total: data.sub_total,
+                  parcial: Boolean(data.parcial)
                 }
               }));
+              
+              if (data.status === 'interrompido' || data.status === 'cancelado' || data.parcial) {
+                if (nifReal && data.docs_atuais > 0) {
+                  const pKey = `${nifReal}_${ano}_${tipoOperacao}`;
+                  setPartialStatus(prev => ({
+                    ...prev,
+                    [pKey]: {
+                      nif: nifReal,
+                      ano,
+                      tipo: tipoOperacao,
+                      docs: data.docs_atuais || 0,
+                      total: data.total_esperado || 0,
+                      data: new Date().toLocaleTimeString('pt-PT')
+                    }
+                  }));
+                }
+                setActiveJobs(prev => {
+                  const next = { ...prev };
+                  delete next[entId];
+                  return next;
+                });
+                shouldRefreshMatrix = true;
+              } else if (data.status === 'concluido') {
+                if (nifReal) {
+                  // Sincronização 100% terminada: limpa flag parcial deste NIF
+                  const pKey = `${nifReal}_${ano}_${tipoOperacao}`;
+                  setPartialStatus(prev => {
+                    const next = { ...prev };
+                    delete next[pKey];
+                    return next;
+                  });
+                }
+                setActiveJobs(prev => {
+                  const next = { ...prev };
+                  delete next[entId];
+                  return next;
+                });
+                shouldRefreshMatrix = true;
+              } else if (data.status === 'erro') {
+                const errMsg = data.mensagem || data.erro || 'Falha na comunicação com a AT';
+                const tipoErro = data.tipo_erro || 'outro';
+                const badgeLabel = data.badge_label || 'Erro AT';
+                const detalheErro = data.erro || errMsg;
 
-              setSyncStatus(prev => ({
-                ...prev,
-                [entId]: `Erro: ${badgeLabel}`
-              }));
+                setEntidadeErros(prev => ({
+                  ...prev,
+                  [entId]: {
+                    tipo_erro: tipoErro,
+                    badge_label: badgeLabel,
+                    mensagem: errMsg,
+                    detalhe: detalheErro,
+                  }
+                }));
+
+                setSyncStatus(prev => ({
+                  ...prev,
+                  [entId]: `Erro: ${badgeLabel}`
+                }));
+                setActiveJobs(prev => {
+                  const next = { ...prev };
+                  delete next[entId];
+                  return next;
+                });
+                shouldRefreshMatrix = true;
+              }
+            } else if (res.status === 404) {
+              // Se o job não existe no servidor (ex: motor reiniciado), remove da lista ativa
               setActiveJobs(prev => {
                 const next = { ...prev };
                 delete next[entId];
                 return next;
               });
-              const entObj = entidades.find(e => e.id === entId);
-              mostrarAlertaErro(
-                entObj?.nomecli || entId,
-                nifReal,
-                errMsg,
-                tipoErro,
-                badgeLabel,
-                detalheErro,
-                entId
-              );
-              carregarMatriz(ano, tipoOperacao);
             }
-          } else if (res.status === 404) {
-            // Se o job não existe no servidor (ex: motor reiniciado), remove da lista ativa
-            setActiveJobs(prev => {
-              const next = { ...prev };
-              delete next[entId];
-              return next;
-            });
+          } catch (err) {
+             console.error("Erro no polling do job", jobId, err);
           }
-        } catch (err) {
-           console.error("Erro no polling do job", jobId, err);
         }
+
+        if (shouldRefreshMatrix) {
+          carregarMatriz(ano, tipoOperacao);
+        }
+      } finally {
+        isPollingTick = false;
       }
-    }, 500);
+    }, 1200);
 
     return () => clearInterval(interval);
   }, [ano, tipoOperacao, entidades]);
@@ -1522,15 +1483,6 @@ export default function CommandCenter({
         ...prev, 
         [ent.id]: `Bloqueado: Senha Inválida (${mot})` 
       }));
-      mostrarAlertaErro(
-        ent.nomecli || ent.id,
-        nifParaEnviar,
-        `Autenticação Bloqueada: Senha previamente rejeitada pela AT (${mot}). Clique em 'Limpar' na tabela para desbloquear e testar à mão.`,
-        'senha_invalida',
-        'Senha Rejeitada AT',
-        mot,
-        ent.id
-      );
       return;
     }
 
@@ -1540,7 +1492,6 @@ export default function CommandCenter({
       delete next[ent.id];
       return next;
     });
-    setAlertasErro(prev => prev.filter(a => a.nif !== nifParaEnviar));
 
     const volEst = estimativasVolume[nifParaEnviar]?.volume_estimado ?? (matriz[nifParaEnviar]?.total_docs_ano ?? 0);
     setSyncStatus(prev => ({
@@ -1589,12 +1540,10 @@ export default function CommandCenter({
         }));
 
         setSyncStatus(prev => ({ ...prev, [ent.id]: `Erro: ${badgeLabel}` }));
-        mostrarAlertaErro(ent.nomecli || ent.id, nifParaEnviar, msg, tipoErro, badgeLabel, detalhe, ent.id);
       }
     } catch (err: any) {
       const netMsg = err.message || 'Sem Ligação à API (Porta 8015)';
       setSyncStatus(prev => ({ ...prev, [ent.id]: `Erro: ${netMsg}` }));
-      mostrarAlertaErro(ent.nomecli || ent.id, nifParaEnviar, netMsg, 'outro', 'Erro Ligação', netMsg, ent.id);
     }
   };
 
@@ -1996,95 +1945,6 @@ export default function CommandCenter({
               Tentar Novamente
             </button>
           </div>
-        </div>
-      )}
-
-      {/* Banners de Notificação e Erros da AT */}
-      {alertasErro.length > 0 && (
-        <div className="space-y-2 shrink-0">
-          {alertasErro.map(alerta => {
-            const isInvalidPass = alerta.tipo_erro === 'senha_invalida';
-            const isServerError = alerta.tipo_erro === 'servidor_at';
-            const isTimeout = alerta.tipo_erro === 'timeout_rede';
-            const isRateLimit = alerta.tipo_erro === 'rate_limit';
-            const isPermissao = alerta.tipo_erro === 'permissao_subuser';
-
-            const cardBg = isInvalidPass
-              ? "bg-rose-50 dark:bg-[#1c0f16] border-rose-300 dark:border-rose-900 before:bg-rose-500"
-              : isServerError || isTimeout || isRateLimit
-              ? "bg-amber-50 dark:bg-[#1f1a10] border-amber-300 dark:border-amber-900 before:bg-amber-500"
-              : isPermissao
-              ? "bg-orange-50 dark:bg-[#1f140e] border-orange-300 dark:border-orange-900 before:bg-orange-500"
-              : "bg-rose-50 dark:bg-[#1c0f16] border-rose-300 dark:border-rose-900 before:bg-rose-500";
-
-            return (
-              <div 
-                key={alerta.id}
-                className={`relative evo-card-signature ${cardBg} border rounded-md p-2.5 text-xs shadow-sm flex items-center justify-between gap-3 before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:z-20 animate-in fade-in slide-in-from-top-2 duration-200`}
-              >
-                <div className="flex items-center space-x-2.5 min-w-0">
-                  {isInvalidPass ? (
-                    <ShieldAlert className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
-                  ) : isServerError ? (
-                    <ServerCrash className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                  ) : (isTimeout || isRateLimit) ? (
-                    <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
-                  )}
-                  <div className="flex items-baseline space-x-2 min-w-0 font-mono">
-                    <span className={`font-bold text-[11.5px] shrink-0 ${isInvalidPass ? 'text-rose-700 dark:text-rose-300' : 'text-amber-700 dark:text-amber-300'}`}>
-                      {alerta.nome} ({alerta.nif})
-                    </span>
-                    <span className="text-muted-foreground text-[10px] shrink-0">· {alerta.hora} :</span>
-                    {alerta.badge_label && (
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
-                        isInvalidPass 
-                          ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-500/30' 
-                          : 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30'
-                      }`}>
-                        {alerta.badge_label}
-                      </span>
-                    )}
-                    <span className={`text-[11px] font-sans truncate ${isInvalidPass ? 'text-rose-900 dark:text-rose-200' : 'text-amber-900 dark:text-amber-200'}`} title={alerta.detalhe || alerta.mensagem}>
-                      {alerta.mensagem}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2 shrink-0">
-                  {isInvalidPass ? (
-                    <button
-                      type="button"
-                      onClick={() => handleResetSenhaInvalida(alerta.nif, alerta.entId)}
-                      className="px-2.5 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 border border-rose-500/30 text-[10px] font-mono font-semibold transition-colors flex items-center space-x-1 cursor-pointer"
-                      title="Limpar o bloqueio antifraude desta entidade para tentar nova autenticação à mão"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Desbloquear / Tentar de novo</span>
-                    </button>
-                  ) : (isServerError || isTimeout || isRateLimit) ? (
-                    <button
-                      type="button"
-                      onClick={() => handleTentarNovamente(alerta.nif, alerta.entId)}
-                      className="px-2.5 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-[10px] font-mono font-semibold transition-colors flex items-center space-x-1 cursor-pointer"
-                      title="Tentar nova comunicação com a AT"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Tentar Novamente</span>
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => fecharAlertaErro(alerta.id)}
-                    className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                    title="Fechar notificação"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
         </div>
       )}
 
