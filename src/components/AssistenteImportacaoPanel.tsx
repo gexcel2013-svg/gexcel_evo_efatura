@@ -632,19 +632,19 @@ export function AssistenteImportacaoPanel({
       <aside
         ref={asideRef}
         aria-label="Assistente Passo a Passo"
-        className="w-full lg:w-[390px] xl:w-[420px] shrink-0 bg-[#fffbeb] dark:bg-[#141008] border-2 border-[#d97706] dark:border-[#b45309] rounded-md shadow-xl flex flex-col min-h-[360px] lg:min-h-0 overflow-hidden select-none"
+        className="w-full lg:w-[390px] xl:w-[420px] shrink-0 bg-[#eef2f6] dark:bg-[#111827] border-2 border-[#4f46e5] dark:border-[#6366f1] rounded-md shadow-xl flex flex-col min-h-[360px] lg:min-h-0 overflow-hidden select-none"
       >
-        {/* Cabeçalho Distinto do Assistente Guia (Âmbar Executivo 100% Opaco) */}
-        <div className="relative evo-card-signature px-3.5 py-2.5 border-b border-[#f59e0b] dark:border-[#78350f] bg-[#fef3c7] dark:bg-[#1f180b] flex items-center justify-between gap-2 shrink-0 before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#d97706] dark:before:bg-[#fbbf24] before:z-20">
+        {/* Cabeçalho Distinto do Assistente Guia (Grafite-Índigo Executivo 100% Opaco) */}
+        <div className="relative evo-card-signature px-3.5 py-2.5 border-b border-[#cbd5e1] dark:border-[#2a3a54] bg-[#e2e8f0] dark:bg-[#182235] flex items-center justify-between gap-2 shrink-0 before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#4f46e5] dark:before:bg-[#6366f1] before:z-20">
           <div className="flex items-center space-x-2 min-w-0">
-            <div className="w-7 h-7 rounded-md bg-[#fde68a] dark:bg-[#2c1f0a] border border-[#d97706] dark:border-[#f59e0b] flex items-center justify-center text-[#92400e] dark:text-[#fbbf24] shrink-0">
+            <div className="w-7 h-7 rounded-md bg-white dark:bg-[#1e293b] border border-[#4f46e5] dark:border-[#6366f1] flex items-center justify-center text-[#4338ca] dark:text-[#818cf8] shrink-0">
               <Sparkles className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <div className="text-xs font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+              <div className="text-xs font-mono font-bold text-slate-900 dark:text-slate-50 truncate">
                 Assistente Passo a Passo
               </div>
-              <div className="text-[10px] font-mono font-semibold text-amber-950 dark:text-amber-200 truncate">
+              <div className="text-[10px] font-mono font-semibold text-slate-700 dark:text-slate-300 truncate">
                 {moduloTitulo} · Passo {passoAtivo} de 4
               </div>
             </div>
@@ -657,7 +657,7 @@ export function AssistenteImportacaoPanel({
               onClose();
             }}
             title="Fechar Assistente e usar interface normal"
-            className="h-7 px-2 rounded border border-[#d97706] dark:border-[#78350f] bg-white dark:bg-[#141008] hover:bg-[#fde68a] dark:hover:bg-[#2c1f0a] text-amber-950 dark:text-amber-100 text-[11px] font-mono font-semibold flex items-center space-x-1 cursor-pointer shrink-0"
+            className="h-7 px-2 rounded border border-[#94a3b8] dark:border-[#334155] bg-white dark:bg-[#111827] hover:bg-[#e0e7ff] dark:hover:bg-[#1e293b] text-slate-900 dark:text-slate-100 text-[11px] font-mono font-semibold flex items-center space-x-1 cursor-pointer shrink-0"
           >
             <X className="w-3.5 h-3.5" />
             <span>Fechar</span>
@@ -665,7 +665,7 @@ export function AssistenteImportacaoPanel({
         </div>
 
         {/* Barra de Progresso Compacta dos 4 Passos (Navegação Livre) */}
-        <div className="px-3 py-1.5 bg-[#fef3c7] dark:bg-[#1b1409] border-b border-[#fde68a] dark:border-[#4d2f0c] grid grid-cols-4 gap-1.5 shrink-0">
+        <div className="px-3 py-1.5 bg-[#e2e8f0] dark:bg-[#151e30] border-b border-[#cbd5e1] dark:border-[#2a3a54] grid grid-cols-4 gap-1.5 shrink-0">
           {([1, 2, 3, 4] as const).map(num => {
             const ativo = num === passoAtivo;
             const confirmado = passosConfirmados.has(num);
@@ -677,8 +677,8 @@ export function AssistenteImportacaoPanel({
                 onClick={e => irParaPasso(num, e)}
                 className={`py-1 px-1.5 rounded text-[10px] font-mono font-bold truncate border transition cursor-pointer ${
                   ativo
-                    ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] dark:border-[#fbbf24] shadow-2xs'
-                    : 'bg-[#fde68a] dark:bg-[#2d200b] text-amber-950 dark:text-amber-200 border-[#f59e0b] dark:border-[#78350f] hover:bg-[#fcd34d] dark:hover:bg-[#3c2a0f]'
+                    ? 'bg-[#4f46e5] dark:bg-[#4f46e5] text-white border-[#4338ca] dark:border-[#6366f1] shadow-2xs'
+                    : 'bg-white dark:bg-[#1e293b] text-slate-800 dark:text-slate-200 border-[#cbd5e1] dark:border-[#334155] hover:bg-[#e0e7ff] dark:hover:bg-[#26334d]'
                 }`}
               >
                 {confirmado && !ativo ? `✓ ${tituloCurto}` : tituloCurto}
@@ -688,54 +688,54 @@ export function AssistenteImportacaoPanel({
         </div>
 
         {/* Corpo Acordeão: Todos os Passos Acessíveis Livremente (1 Aberto, Restantes Compactados) */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-[#fffbeb] dark:bg-[#141008]">
+        <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-[#eef2f6] dark:bg-[#111827]">
           {/* ================= PASSO 1: LIGAÇÃO E DESTINO DOS DADOS ================= */}
           {passoAtivo === 1 ? (
             <div
               ref={step1Ref}
-              className="rounded-md border-2 border-[#d97706] dark:border-[#f59e0b] bg-white dark:bg-[#1c150a] p-3 shadow-md"
+              className="rounded-md border-2 border-[#4f46e5] dark:border-[#6366f1] bg-white dark:bg-[#162032] p-3 shadow-md"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center space-x-2 min-w-0">
                   <span
                     className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
                       passosConfirmados.has(1)
-                        ? 'bg-[#b45309] dark:bg-[#d97706] text-white'
-                        : 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008]'
+                        ? 'bg-[#4338ca] dark:bg-[#4f46e5] text-white'
+                        : 'bg-[#4f46e5] dark:bg-[#6366f1] text-white'
                     }`}
                   >
                     {passosConfirmados.has(1) ? <Check className="w-3.5 h-3.5" /> : '1'}
                   </span>
-                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-slate-50 truncate">
                     Ligação & Pasta de Destino
                   </span>
                 </div>
-                <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] shrink-0">
+                <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#4f46e5] dark:bg-[#6366f1] text-white shrink-0">
                   Passo Ativo
                 </span>
               </div>
 
               <div className="mt-2.5 space-y-2">
                 {/* Centro de Dados Ativo & Estado da Ligação */}
-                <div className="px-2.5 py-2 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] text-[11px] font-mono space-y-1.5">
+                <div className="px-2.5 py-2 rounded bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#2a3a54] text-[11px] font-mono space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-700 dark:text-amber-200 flex items-center space-x-1">
-                      <Building2 className="w-3.5 h-3.5 text-[#d97706] dark:text-[#fbbf24] shrink-0" />
+                    <span className="text-slate-700 dark:text-slate-300 flex items-center space-x-1">
+                      <Building2 className="w-3.5 h-3.5 text-[#4f46e5] dark:text-[#818cf8] shrink-0" />
                       <span>Centro Ativo:</span>
                     </span>
                     <span className="font-bold text-slate-900 dark:text-white truncate" title={resumoConfig.nome}>
                       {resumoConfig.nome}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-[#fde68a] dark:border-[#3d280d]">
-                    <span className="text-slate-700 dark:text-amber-200">Estado da Ligação:</span>
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-[#e2e8f0] dark:border-[#1e293b]">
+                    <span className="text-slate-700 dark:text-slate-300">Estado da Ligação:</span>
                     {apiOnline ? (
                       <span className="inline-flex items-center space-x-1.5 font-bold text-emerald-700 dark:text-emerald-400">
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         <span>Computador Ligado</span>
                       </span>
                     ) : (
-                      <span className="inline-flex items-center space-x-1.5 font-bold text-amber-800 dark:text-amber-300">
+                      <span className="inline-flex items-center space-x-1.5 font-bold text-rose-700 dark:text-rose-400">
                         <AlertCircle className="w-3.5 h-3.5" />
                         <span>Motor Offline / Cloud</span>
                       </span>
@@ -744,8 +744,8 @@ export function AssistenteImportacaoPanel({
                 </div>
 
                 {/* 1. Pasta Dados evoGex (SQLite V4) */}
-                <div className="p-2.5 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] space-y-1.5">
-                  <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300">
+                <div className="p-2.5 rounded bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#2a3a54] space-y-1.5">
+                  <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#3730a3] dark:text-[#a5b4fc]">
                     1. Pasta Dados evoGex (Bases SQLite V4):
                   </div>
 
@@ -756,7 +756,7 @@ export function AssistenteImportacaoPanel({
                         value={caminhoDraft}
                         onChange={e => setCaminhoDraft(e.target.value)}
                         placeholder="Ex: C:\Dados_evoGex\BdsefaturaV4"
-                        className="flex-1 text-[11px] font-mono bg-white dark:bg-[#1c150a] border border-[#d97706] rounded px-2 py-1 text-slate-900 dark:text-white focus:outline-none"
+                        className="flex-1 text-[11px] font-mono bg-white dark:bg-[#111827] border border-[#4f46e5] rounded px-2 py-1 text-slate-900 dark:text-white focus:outline-none"
                       />
                       <button
                         type="button"
@@ -770,7 +770,7 @@ export function AssistenteImportacaoPanel({
                         type="button"
                         onClick={() => setEditandoCaminho(false)}
                         title="Cancelar"
-                        className="p-1.5 rounded bg-slate-200 dark:bg-[#2a1f0e] text-slate-900 dark:text-amber-100 cursor-pointer shrink-0"
+                        className="p-1.5 rounded bg-slate-200 dark:bg-[#1e293b] text-slate-900 dark:text-slate-100 cursor-pointer shrink-0"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -788,7 +788,7 @@ export function AssistenteImportacaoPanel({
                           type="button"
                           onClick={copiarCaminho}
                           title="Copiar endereço completo (📋)"
-                          className="p-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] hover:bg-[#fde68a] dark:hover:bg-[#33240f] text-slate-800 dark:text-amber-100 border border-[#f59e0b] dark:border-[#78350f] cursor-pointer"
+                          className="p-1 rounded bg-[#e2e8f0] dark:bg-[#1e293b] hover:bg-[#c7d2fe] dark:hover:bg-[#2a3954] text-slate-800 dark:text-slate-100 border border-[#cbd5e1] dark:border-[#334155] cursor-pointer"
                         >
                           {copiado ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                         </button>
@@ -796,7 +796,7 @@ export function AssistenteImportacaoPanel({
                           type="button"
                           onClick={abrirPastaWindows}
                           title="Abrir pasta no Explorador do Windows (📂)"
-                          className="p-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] hover:bg-[#fde68a] dark:hover:bg-[#33240f] text-[#b45309] dark:text-[#fbbf24] border border-[#f59e0b] dark:border-[#78350f] cursor-pointer"
+                          className="p-1 rounded bg-[#e2e8f0] dark:bg-[#1e293b] hover:bg-[#c7d2fe] dark:hover:bg-[#2a3954] text-[#4338ca] dark:text-[#818cf8] border border-[#cbd5e1] dark:border-[#334155] cursor-pointer"
                         >
                           <FolderOpen className="w-3.5 h-3.5" />
                         </button>
@@ -809,9 +809,9 @@ export function AssistenteImportacaoPanel({
                       type="button"
                       onClick={escolherPastaNoWindows}
                       disabled={escolhendoPastaWin}
-                      className="px-2 py-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] hover:bg-[#fde68a] dark:hover:bg-[#33240f] border border-[#f59e0b] dark:border-[#78350f] text-[10.5px] font-mono font-semibold text-slate-900 dark:text-amber-100 flex items-center space-x-1 cursor-pointer"
+                      className="px-2 py-1 rounded bg-[#e2e8f0] dark:bg-[#1e293b] hover:bg-[#c7d2fe] dark:hover:bg-[#2a3954] border border-[#cbd5e1] dark:border-[#334155] text-[10.5px] font-mono font-semibold text-slate-900 dark:text-slate-100 flex items-center space-x-1 cursor-pointer"
                     >
-                      <FolderOpen className="w-3 h-3 text-[#b45309] dark:text-[#fbbf24]" />
+                      <FolderOpen className="w-3 h-3 text-[#4338ca] dark:text-[#818cf8]" />
                       <span>{escolhendoPastaWin ? 'A abrir Windows...' : 'Mudar Pasta'}</span>
                     </button>
                     {!editandoCaminho && (
@@ -821,7 +821,7 @@ export function AssistenteImportacaoPanel({
                           setCaminhoDraft(caminhoExibido);
                           setEditandoCaminho(true);
                         }}
-                        className="px-2 py-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] hover:bg-[#fde68a] dark:hover:bg-[#33240f] border border-[#f59e0b] dark:border-[#78350f] text-[10.5px] font-mono text-slate-800 dark:text-amber-200 flex items-center space-x-1 cursor-pointer"
+                        className="px-2 py-1 rounded bg-[#e2e8f0] dark:bg-[#1e293b] hover:bg-[#c7d2fe] dark:hover:bg-[#2a3954] border border-[#cbd5e1] dark:border-[#334155] text-[10.5px] font-mono text-slate-800 dark:text-slate-200 flex items-center space-x-1 cursor-pointer"
                       >
                         <Edit3 className="w-3 h-3" />
                         <span>Editar Endereço</span>
@@ -831,9 +831,9 @@ export function AssistenteImportacaoPanel({
                 </div>
 
                 {/* 2. Pasta Dados Antigos Excel (GexcelApps / XML) */}
-                <div className="p-2.5 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] space-y-1.5">
+                <div className="p-2.5 rounded bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#2a3a54] space-y-1.5">
                   <div className="flex items-center justify-between gap-1.5">
-                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300">
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#3730a3] dark:text-[#a5b4fc]">
                       2. Pasta Excel Antigo (GexcelApps / XML):
                     </span>
                     {resumoConfig.antigaConfirmada && (
@@ -855,7 +855,7 @@ export function AssistenteImportacaoPanel({
                         type="button"
                         onClick={copiarCaminhoAntiga}
                         title="Copiar endereço completo (📋)"
-                        className="p-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] hover:bg-[#fde68a] dark:hover:bg-[#33240f] text-slate-800 dark:text-amber-100 border border-[#f59e0b] dark:border-[#78350f] cursor-pointer"
+                        className="p-1 rounded bg-[#e2e8f0] dark:bg-[#1e293b] hover:bg-[#c7d2fe] dark:hover:bg-[#2a3954] text-slate-800 dark:text-slate-100 border border-[#cbd5e1] dark:border-[#334155] cursor-pointer"
                       >
                         {copiadoAntiga ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                       </button>
@@ -863,14 +863,14 @@ export function AssistenteImportacaoPanel({
                         type="button"
                         onClick={abrirPastaAntigaWindows}
                         title="Abrir pasta no Explorador do Windows (📂)"
-                        className="p-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] hover:bg-[#fde68a] dark:hover:bg-[#33240f] text-[#b45309] dark:text-[#fbbf24] border border-[#f59e0b] dark:border-[#78350f] cursor-pointer"
+                        className="p-1 rounded bg-[#e2e8f0] dark:bg-[#1e293b] hover:bg-[#c7d2fe] dark:hover:bg-[#2a3954] text-[#4338ca] dark:text-[#818cf8] border border-[#cbd5e1] dark:border-[#334155] cursor-pointer"
                       >
                         <FolderOpen className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
 
-                  <div className="text-[10px] font-mono text-slate-700 dark:text-amber-200 break-all">
+                  <div className="text-[10px] font-mono text-slate-700 dark:text-slate-300 break-all">
                     XML: {resumoConfig.pastaV3} · {resumoConfig.pastaBdsrv}
                   </div>
 
@@ -879,7 +879,7 @@ export function AssistenteImportacaoPanel({
                       type="button"
                       onClick={escolherPastaAntigaNoWindows}
                       disabled={escolhendoAntigaWin}
-                      className="px-2 py-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] hover:bg-[#fde68a] dark:hover:bg-[#33240f] border border-[#f59e0b] dark:border-[#78350f] text-[10.5px] font-mono font-semibold text-slate-900 dark:text-amber-100 flex items-center space-x-1 cursor-pointer"
+                      className="px-2 py-1 rounded bg-[#e2e8f0] dark:bg-[#1e293b] hover:bg-[#c7d2fe] dark:hover:bg-[#2a3954] border border-[#cbd5e1] dark:border-[#334155] text-[10.5px] font-mono font-semibold text-slate-900 dark:text-slate-100 flex items-center space-x-1 cursor-pointer"
                     >
                       <FolderOpen className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                       <span>{escolhendoAntigaWin ? 'A abrir Windows...' : 'Mudar Pasta Antiga'}</span>
@@ -896,7 +896,7 @@ export function AssistenteImportacaoPanel({
                 <button
                   type="button"
                   onClick={e => confirmarEAvancar(1, 2, e)}
-                  className="w-full py-2 px-3 rounded bg-[#d97706] hover:bg-[#b45309] text-white font-mono text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs transition"
+                  className="w-full py-2 px-3 rounded bg-[#4f46e5] hover:bg-[#4338ca] text-white font-mono text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs transition"
                 >
                   <span>Confirmar Destino e Avançar</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -907,21 +907,21 @@ export function AssistenteImportacaoPanel({
             <button
               type="button"
               onClick={e => irParaPasso(1, e)}
-              className="w-full text-left rounded-md border border-[#fcd34d] dark:border-[#78350f] bg-[#fef3c7] dark:bg-[#191309] hover:border-[#d97706] dark:hover:border-[#f59e0b] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
+              className="w-full text-left rounded-md border border-[#cbd5e1] dark:border-[#2a3a54] bg-[#e2e8f0] dark:bg-[#162032] hover:border-[#4f46e5] dark:hover:border-[#6366f1] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
             >
               <div className="flex items-center space-x-2 min-w-0">
                 <span
                   className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-mono font-bold shrink-0 ${
-                    passosConfirmados.has(1) ? 'bg-[#b45309] dark:bg-[#d97706] text-white' : 'bg-[#d97706] text-white'
+                    passosConfirmados.has(1) ? 'bg-[#4338ca] dark:bg-[#4f46e5] text-white' : 'bg-[#4f46e5] text-white'
                   }`}
                 >
                   {passosConfirmados.has(1) ? <Check className="w-3 h-3" /> : '1'}
                 </span>
-                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-slate-100 truncate">
                   Destino · {apiOnline ? 'Ligado' : 'Cloud'} · {extrairPastaCurta(caminhoExibido)}
                 </span>
               </div>
-              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-[9.5px] font-mono font-bold text-amber-900 dark:text-amber-300 shrink-0">
+              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#0d1422] border border-[#94a3b8] dark:border-[#334155] text-[9.5px] font-mono font-bold text-[#4338ca] dark:text-[#a5b4fc] shrink-0">
                 {passosConfirmados.has(1) ? 'Alterar' : 'Abrir'}
               </span>
             </button>
@@ -931,24 +931,24 @@ export function AssistenteImportacaoPanel({
           {passoAtivo === 2 ? (
             <div
               ref={step2Ref}
-              className="rounded-md border-2 border-[#d97706] dark:border-[#f59e0b] bg-white dark:bg-[#1c150a] p-3 shadow-md"
+              className="rounded-md border-2 border-[#4f46e5] dark:border-[#6366f1] bg-white dark:bg-[#162032] p-3 shadow-md"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center space-x-2 min-w-0">
                   <span
                     className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
                       passosConfirmados.has(2)
-                        ? 'bg-[#b45309] dark:bg-[#d97706] text-white'
-                        : 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008]'
+                        ? 'bg-[#4338ca] dark:bg-[#4f46e5] text-white'
+                        : 'bg-[#4f46e5] dark:bg-[#6366f1] text-white'
                     }`}
                   >
                     {passosConfirmados.has(2) ? <Check className="w-3.5 h-3.5" /> : '2'}
                   </span>
-                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-slate-50 truncate">
                     Quem Importar (Operação & Empresas)
                   </span>
                 </div>
-                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#fef3c7] dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-amber-900 dark:text-amber-300 shrink-0 tabular-nums">
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#eef2ff] dark:bg-[#0d1422] border border-[#c7d2fe] dark:border-[#3730a3] text-[#3730a3] dark:text-[#a5b4fc] shrink-0 tabular-nums">
                   {selecionadasIds.size}/{empresas.length}
                 </span>
               </div>
@@ -965,8 +965,8 @@ export function AssistenteImportacaoPanel({
                       }}
                       className={`py-1.5 px-2 rounded text-[11px] font-mono font-semibold border flex items-center justify-center space-x-1 cursor-pointer transition ${
                         tipoOperacao === 'ambos'
-                          ? 'bg-[#d97706] text-white border-[#d97706]'
-                          : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11]'
+                          ? 'bg-[#4f46e5] text-white border-[#4f46e5]'
+                          : 'bg-[#f8fafc] dark:bg-[#0d1422] text-slate-800 dark:text-slate-200 border-[#cbd5e1] dark:border-[#334155]'
                       }`}
                     >
                       <Layers className="w-3 h-3" />
@@ -982,7 +982,7 @@ export function AssistenteImportacaoPanel({
                     className={`py-1.5 px-2 rounded text-[11px] font-mono font-semibold border flex items-center justify-center space-x-1 cursor-pointer transition ${
                       tipoOperacao === 'compras'
                         ? 'bg-[#0284c7] text-white border-[#0284c7]'
-                        : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11]'
+                        : 'bg-[#f8fafc] dark:bg-[#0d1422] text-slate-800 dark:text-slate-200 border-[#cbd5e1] dark:border-[#334155]'
                     }`}
                   >
                     <ShoppingCart className="w-3 h-3" />
@@ -997,7 +997,7 @@ export function AssistenteImportacaoPanel({
                     className={`py-1.5 px-2 rounded text-[11px] font-mono font-semibold border flex items-center justify-center space-x-1 cursor-pointer transition ${
                       tipoOperacao === 'vendas'
                         ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11]'
+                        : 'bg-[#f8fafc] dark:bg-[#0d1422] text-slate-800 dark:text-slate-200 border-[#cbd5e1] dark:border-[#334155]'
                     }`}
                   >
                     <TrendingUp className="w-3 h-3" />
@@ -1016,8 +1016,8 @@ export function AssistenteImportacaoPanel({
                     }}
                     className={`py-1.5 px-1.5 rounded text-[11px] font-mono font-bold border cursor-pointer transition truncate ${
                       modoSelecaoEmpresas === 'todas'
-                        ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] dark:border-[#fbbf24] shadow-2xs'
-                        : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-900 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
+                        ? 'bg-[#4f46e5] dark:bg-[#4f46e5] text-white border-[#4338ca] dark:border-[#6366f1] shadow-2xs'
+                        : 'bg-[#f8fafc] dark:bg-[#0d1422] text-slate-900 dark:text-slate-100 border-[#cbd5e1] dark:border-[#334155] hover:border-[#4f46e5]'
                     }`}
                   >
                     Todas ({empresas.length})
@@ -1030,8 +1030,8 @@ export function AssistenteImportacaoPanel({
                     }}
                     className={`py-1.5 px-1.5 rounded text-[11px] font-mono font-bold border cursor-pointer transition truncate ${
                       modoSelecaoEmpresas === 'empresas'
-                        ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] dark:border-[#fbbf24] shadow-2xs'
-                        : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-900 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
+                        ? 'bg-[#4f46e5] dark:bg-[#4f46e5] text-white border-[#4338ca] dark:border-[#6366f1] shadow-2xs'
+                        : 'bg-[#f8fafc] dark:bg-[#0d1422] text-slate-900 dark:text-slate-100 border-[#cbd5e1] dark:border-[#334155] hover:border-[#4f46e5]'
                     }`}
                   >
                     Empresas
@@ -1044,8 +1044,8 @@ export function AssistenteImportacaoPanel({
                     }}
                     className={`py-1.5 px-1.5 rounded text-[11px] font-mono font-bold border cursor-pointer transition truncate ${
                       modoSelecaoEmpresas === 'nifs'
-                        ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] dark:border-[#fbbf24] shadow-2xs'
-                        : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-900 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
+                        ? 'bg-[#4f46e5] dark:bg-[#4f46e5] text-white border-[#4338ca] dark:border-[#6366f1] shadow-2xs'
+                        : 'bg-[#f8fafc] dark:bg-[#0d1422] text-slate-900 dark:text-slate-100 border-[#cbd5e1] dark:border-[#334155] hover:border-[#4f46e5]'
                     }`}
                   >
                     NIFs
@@ -1071,8 +1071,8 @@ export function AssistenteImportacaoPanel({
                         }}
                         className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition cursor-pointer ${
                           ativo
-                            ? 'bg-[#b45309] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#92400e] dark:border-[#fbbf24]'
-                            : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
+                            ? 'bg-[#4338ca] dark:bg-[#4f46e5] text-white border-[#3730a3] dark:border-[#6366f1]'
+                            : 'bg-[#f8fafc] dark:bg-[#0d1422] text-slate-800 dark:text-slate-200 border-[#cbd5e1] dark:border-[#334155] hover:border-[#4f46e5]'
                         }`}
                       >
                         {cat.label}
@@ -1082,21 +1082,21 @@ export function AssistenteImportacaoPanel({
                 </div>
 
                 {/* Lista Pesquisável de Empresas / NIFs */}
-                <div className="bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] rounded p-2 space-y-1.5">
-                  <div className="flex items-center justify-between gap-2 px-1.5 py-1 rounded bg-[#fef3c7] dark:bg-[#191309] border border-[#fde68a] dark:border-[#4d2f0c] text-[10px] font-mono font-bold text-slate-900 dark:text-amber-100">
+                <div className="bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#2a3a54] rounded p-2 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 px-1.5 py-1 rounded bg-[#e2e8f0] dark:bg-[#182235] border border-[#cbd5e1] dark:border-[#2a3a54] text-[10px] font-mono font-bold text-slate-900 dark:text-slate-100">
                     <span className="truncate">
                       {selecionadasIds.size === empresas.length && empresas.length > 0
                         ? `Todas já incluídas (${selecionadasIds.size}/${empresas.length})`
                         : `${selecionadasIds.size} de ${empresas.length} selecionada(s)`}
                     </span>
-                    <span className="text-amber-900 dark:text-amber-300 shrink-0 tabular-nums">
+                    <span className="text-[#4338ca] dark:text-[#a5b4fc] shrink-0 tabular-nums">
                       Vista: {empresasFiltradas.length}
                     </span>
                   </div>
 
                   <div className="flex items-center space-x-1">
                     <div className="relative flex-1">
-                      <Search className="w-3 h-3 text-amber-800 dark:text-amber-300 absolute left-2 top-2" />
+                      <Search className="w-3 h-3 text-slate-500 dark:text-slate-400 absolute left-2 top-2" />
                       <input
                         type="text"
                         value={pesquisaEmpresa}
@@ -1108,7 +1108,7 @@ export function AssistenteImportacaoPanel({
                               ? 'Pesquisar nome da empresa...'
                               : 'Pesquisar NIF, nome ou código...'
                         }
-                        className="w-full text-[11px] font-mono bg-white dark:bg-[#1c150a] border border-[#fcd34d] dark:border-[#5c3a11] rounded pl-6 pr-2 py-1 text-slate-900 dark:text-white focus:outline-none focus:border-[#d97706]"
+                        className="w-full text-[11px] font-mono bg-white dark:bg-[#111827] border border-[#cbd5e1] dark:border-[#334155] rounded pl-6 pr-2 py-1 text-slate-900 dark:text-white focus:outline-none focus:border-[#4f46e5]"
                       />
                     </div>
                     <button
@@ -1126,7 +1126,7 @@ export function AssistenteImportacaoPanel({
                         }
                         animarRatoParaAlvo('empresa-selector', `${empresasFiltradas.length} marcadas na matriz`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
                       }}
-                      className="px-2 py-1 rounded bg-[#d97706] hover:bg-[#b45309] disabled:opacity-45 disabled:cursor-not-allowed text-white text-[10px] font-mono font-bold cursor-pointer shrink-0 transition"
+                      className="px-2 py-1 rounded bg-[#4f46e5] hover:bg-[#4338ca] disabled:opacity-45 disabled:cursor-not-allowed text-white text-[10px] font-mono font-bold cursor-pointer shrink-0 transition"
                     >
                       Marcar ({empresasFiltradas.length})
                     </button>
@@ -1137,13 +1137,13 @@ export function AssistenteImportacaoPanel({
                         onLimparEmpresas();
                         animarRatoParaAlvo('empresa-selector', 'Seleção limpa na barra principal', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-2');
                       }}
-                      className="px-2 py-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] border border-[#f59e0b] dark:border-[#78350f] disabled:opacity-45 disabled:cursor-not-allowed text-[10px] font-mono font-semibold text-amber-950 dark:text-amber-200 cursor-pointer shrink-0"
+                      className="px-2 py-1 rounded bg-[#e2e8f0] dark:bg-[#1e293b] border border-[#cbd5e1] dark:border-[#334155] disabled:opacity-45 disabled:cursor-not-allowed text-[10px] font-mono font-semibold text-slate-900 dark:text-slate-200 cursor-pointer shrink-0"
                     >
                       Limpar
                     </button>
                   </div>
 
-                  <div className="max-h-40 overflow-y-auto divide-y divide-[#fde68a] dark:divide-[#36240c]">
+                  <div className="max-h-40 overflow-y-auto divide-y divide-[#e2e8f0] dark:divide-[#1e293b]">
                     {empresasFiltradas.map(emp => {
                       const checked = selecionadasIds.has(emp.id);
                       const nifExibido = modoPrivacidade ? mascararNif(emp.nif) : emp.nif;
@@ -1151,8 +1151,8 @@ export function AssistenteImportacaoPanel({
                       return (
                         <label
                           key={emp.id}
-                          className={`flex items-center space-x-2 py-1.5 px-1 cursor-pointer text-[11px] font-mono hover:bg-[#fef3c7] dark:hover:bg-[#1f170b] ${
-                            checked ? 'bg-[#fef3c7] dark:bg-[#241a0b]' : ''
+                          className={`flex items-center space-x-2 py-1.5 px-1 cursor-pointer text-[11px] font-mono hover:bg-[#eef2ff] dark:hover:bg-[#1e293b] ${
+                            checked ? 'bg-[#eef2ff] dark:bg-[#1e293b]' : ''
                           }`}
                         >
                           <input
@@ -1162,23 +1162,23 @@ export function AssistenteImportacaoPanel({
                               onToggleEmpresa(emp.id);
                               animarRatoParaAlvo('empresa-selector', `${checked ? 'Removida' : 'Selecionada'} na matriz`, undefined, undefined, 'zona-2');
                             }}
-                            className="w-3.5 h-3.5 rounded accent-[#d97706] cursor-pointer shrink-0"
+                            className="w-3.5 h-3.5 rounded accent-[#4f46e5] cursor-pointer shrink-0"
                           />
                           {modoSelecaoEmpresas === 'empresas' ? (
                             <>
-                              <span className="font-sans font-semibold text-slate-900 dark:text-amber-50 truncate flex-1">
+                              <span className="font-sans font-semibold text-slate-900 dark:text-slate-100 truncate flex-1">
                                 {nomeExibido}
                               </span>
-                              <span className="text-[#b45309] dark:text-[#fbbf24] font-bold shrink-0 text-[10.5px]">
+                              <span className="text-[#4338ca] dark:text-[#818cf8] font-bold shrink-0 text-[10.5px]">
                                 {nifExibido}
                               </span>
                             </>
                           ) : (
                             <>
-                              <span className="text-[#b45309] dark:text-[#fbbf24] font-bold shrink-0">
+                              <span className="text-[#4338ca] dark:text-[#818cf8] font-bold shrink-0">
                                 {nifExibido}
                               </span>
-                              <span className="font-sans text-slate-900 dark:text-amber-50 truncate flex-1">
+                              <span className="font-sans text-slate-900 dark:text-slate-100 truncate flex-1">
                                 {nomeExibido}
                               </span>
                             </>
@@ -1187,7 +1187,7 @@ export function AssistenteImportacaoPanel({
                       );
                     })}
                     {empresasFiltradas.length === 0 && (
-                      <div className="py-3 text-center text-[11px] font-mono text-slate-700 dark:text-amber-200">
+                      <div className="py-3 text-center text-[11px] font-mono text-slate-700 dark:text-slate-300">
                         Nenhuma entidade encontrada.
                       </div>
                     )}
@@ -1197,7 +1197,7 @@ export function AssistenteImportacaoPanel({
                 <button
                   type="button"
                   onClick={e => confirmarEAvancar(2, 3, e)}
-                  className="w-full py-2 px-3 rounded bg-[#d97706] hover:bg-[#b45309] text-white font-mono text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs transition"
+                  className="w-full py-2 px-3 rounded bg-[#4f46e5] hover:bg-[#4338ca] text-white font-mono text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs transition"
                 >
                   <span>
                     {selecionadasIds.size > 0
@@ -1212,21 +1212,21 @@ export function AssistenteImportacaoPanel({
             <button
               type="button"
               onClick={e => irParaPasso(2, e)}
-              className="w-full text-left rounded-md border border-[#fcd34d] dark:border-[#78350f] bg-[#fef3c7] dark:bg-[#191309] hover:border-[#d97706] dark:hover:border-[#f59e0b] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
+              className="w-full text-left rounded-md border border-[#cbd5e1] dark:border-[#2a3a54] bg-[#e2e8f0] dark:bg-[#162032] hover:border-[#4f46e5] dark:hover:border-[#6366f1] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
             >
               <div className="flex items-center space-x-2 min-w-0">
                 <span
                   className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-mono font-bold shrink-0 ${
-                    passosConfirmados.has(2) ? 'bg-[#b45309] dark:bg-[#d97706] text-white' : 'bg-[#d97706] text-white'
+                    passosConfirmados.has(2) ? 'bg-[#4338ca] dark:bg-[#4f46e5] text-white' : 'bg-[#4f46e5] text-white'
                   }`}
                 >
                   {passosConfirmados.has(2) ? <Check className="w-3 h-3" /> : '2'}
                 </span>
-                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-slate-100 truncate">
                   Empresas · {labelOperacaoCurto} · {selecionadasIds.size} selecionada(s)
                 </span>
               </div>
-              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-[9.5px] font-mono font-bold text-amber-900 dark:text-amber-300 shrink-0">
+              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#0d1422] border border-[#94a3b8] dark:border-[#334155] text-[9.5px] font-mono font-bold text-[#4338ca] dark:text-[#a5b4fc] shrink-0">
                 {passosConfirmados.has(2) ? 'Alterar' : 'Abrir'}
               </span>
             </button>
@@ -1236,33 +1236,33 @@ export function AssistenteImportacaoPanel({
           {passoAtivo === 3 ? (
             <div
               ref={step3Ref}
-              className="rounded-md border-2 border-[#d97706] dark:border-[#f59e0b] bg-white dark:bg-[#1c150a] p-3 shadow-md"
+              className="rounded-md border-2 border-[#4f46e5] dark:border-[#6366f1] bg-white dark:bg-[#162032] p-3 shadow-md"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center space-x-2 min-w-0">
                   <span
                     className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
                       passosConfirmados.has(3)
-                        ? 'bg-[#b45309] dark:bg-[#d97706] text-white'
-                        : 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008]'
+                        ? 'bg-[#4338ca] dark:bg-[#4f46e5] text-white'
+                        : 'bg-[#4f46e5] dark:bg-[#6366f1] text-white'
                     }`}
                   >
                     {passosConfirmados.has(3) ? <Check className="w-3.5 h-3.5" /> : '3'}
                   </span>
-                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-slate-50 truncate">
                     Que Período Importar
                   </span>
                 </div>
-                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#fef3c7] dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-amber-900 dark:text-amber-300 shrink-0">
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#eef2ff] dark:bg-[#0d1422] border border-[#c7d2fe] dark:border-[#3730a3] text-[#3730a3] dark:text-[#a5b4fc] shrink-0">
                   {ano}{mesesSelecionados ? ` · ${mesesSelecionados.size}m` : ''}
                 </span>
               </div>
 
               <div className="mt-2.5 space-y-2">
                 {/* Seletor de Ano */}
-                <div className="flex items-center justify-between bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] rounded px-2.5 py-1.5">
-                  <div className="flex items-center space-x-1.5 text-xs font-mono font-semibold text-slate-900 dark:text-amber-50">
-                    <Calendar className="w-3.5 h-3.5 text-[#d97706] dark:text-[#fbbf24]" />
+                <div className="flex items-center justify-between bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#2a3a54] rounded px-2.5 py-1.5">
+                  <div className="flex items-center space-x-1.5 text-xs font-mono font-semibold text-slate-900 dark:text-slate-100">
+                    <Calendar className="w-3.5 h-3.5 text-[#4f46e5] dark:text-[#818cf8]" />
                     <span>Exercício Fiscal</span>
                   </div>
                   <div className="flex items-center space-x-1">
@@ -1273,7 +1273,7 @@ export function AssistenteImportacaoPanel({
                         onAnoChange(novo);
                         animarRatoParaAlvo('ano-selector', `Exercício alterado para ${novo}`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
                       }}
-                      className="p-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] hover:bg-[#fde68a] dark:hover:bg-[#33240f] text-slate-900 dark:text-amber-100 cursor-pointer"
+                      className="p-1 rounded bg-[#e2e8f0] dark:bg-[#1e293b] hover:bg-[#c7d2fe] dark:hover:bg-[#2a3954] text-slate-900 dark:text-slate-100 cursor-pointer"
                       title="Ano Anterior"
                     >
                       <ChevronLeft className="w-3.5 h-3.5" />
@@ -1291,8 +1291,8 @@ export function AssistenteImportacaoPanel({
                         }
                       }}
                       disabled={ano >= anoAtual}
-                      className={`p-1 rounded bg-[#fef3c7] dark:bg-[#241a0b] text-slate-900 dark:text-amber-100 ${
-                        ano >= anoAtual ? 'opacity-25 cursor-not-allowed' : 'hover:bg-[#fde68a] dark:hover:bg-[#33240f] cursor-pointer'
+                      className={`p-1 rounded bg-[#e2e8f0] dark:bg-[#1e293b] text-slate-900 dark:text-slate-100 ${
+                        ano >= anoAtual ? 'opacity-25 cursor-not-allowed' : 'hover:bg-[#c7d2fe] dark:hover:bg-[#2a3954] cursor-pointer'
                       }`}
                       title="Ano Seguinte"
                     >
@@ -1312,7 +1312,7 @@ export function AssistenteImportacaoPanel({
                             onSelecionarAnoTodo();
                             animarRatoParaAlvo('periodo-ano-todo', 'Ano completo marcado na barra', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
                           }}
-                          className="px-2 py-1 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706] font-semibold text-slate-900 dark:text-amber-100 cursor-pointer"
+                          className="px-2 py-1 rounded bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#334155] hover:border-[#4f46e5] font-semibold text-slate-900 dark:text-slate-100 cursor-pointer"
                         >
                           Ano Completo
                         </button>
@@ -1324,7 +1324,7 @@ export function AssistenteImportacaoPanel({
                             onSelecionarMesAtual();
                             animarRatoParaAlvo('periodo-mes-atual', 'Mês atual marcado na barra', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
                           }}
-                          className="px-2 py-1 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706] font-semibold text-slate-900 dark:text-amber-100 cursor-pointer"
+                          className="px-2 py-1 rounded bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#334155] hover:border-[#4f46e5] font-semibold text-slate-900 dark:text-slate-100 cursor-pointer"
                         >
                           Mês Atual
                         </button>
@@ -1338,7 +1338,7 @@ export function AssistenteImportacaoPanel({
                               onSelecionarTrimestre(t);
                               animarRatoParaAlvo('zona-3', `T${t} selecionado na matriz`, { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-3');
                             }}
-                            className="px-1.5 py-1 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706] font-bold text-slate-900 dark:text-amber-100 cursor-pointer"
+                            className="px-1.5 py-1 rounded bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#334155] hover:border-[#4f46e5] font-bold text-slate-900 dark:text-slate-100 cursor-pointer"
                           >
                             T{t}
                           </button>
@@ -1361,10 +1361,10 @@ export function AssistenteImportacaoPanel({
                             }}
                             className={`py-1 rounded text-[11px] font-mono font-semibold border transition cursor-pointer ${
                               futuro
-                                ? 'opacity-30 cursor-not-allowed bg-[#f5e8c2] dark:bg-[#1a140b] border-[#e2cb85] dark:border-[#3c2b12] text-amber-800 dark:text-amber-500'
+                                ? 'opacity-30 cursor-not-allowed bg-[#e2e8f0] dark:bg-[#0d1422] border-[#cbd5e1] dark:border-[#1e293b] text-slate-500 dark:text-slate-500'
                                 : ativo
-                                  ? 'bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] border-[#b45309] font-bold'
-                                  : 'bg-[#fffdf5] dark:bg-[#120e07] text-slate-800 dark:text-amber-100 border-[#fcd34d] dark:border-[#5c3a11] hover:border-[#d97706]'
+                                  ? 'bg-[#4f46e5] dark:bg-[#4f46e5] text-white border-[#4338ca] font-bold'
+                                  : 'bg-[#f8fafc] dark:bg-[#0d1422] text-slate-800 dark:text-slate-200 border-[#cbd5e1] dark:border-[#334155] hover:border-[#4f46e5]'
                             }`}
                           >
                             {m.nome}
@@ -1374,7 +1374,7 @@ export function AssistenteImportacaoPanel({
                     </div>
                   </>
                 ) : (
-                  <div className="px-2.5 py-1.5 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] text-[11px] font-mono text-slate-800 dark:text-amber-200">
+                  <div className="px-2.5 py-1.5 rounded bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#2a3a54] text-[11px] font-mono text-slate-800 dark:text-slate-200">
                     Extração configurada para todo o exercício de <strong className="text-slate-950 dark:text-white">{ano}</strong>.
                   </div>
                 )}
@@ -1383,7 +1383,7 @@ export function AssistenteImportacaoPanel({
                   type="button"
                   disabled={mesesSelecionados ? mesesSelecionados.size === 0 : false}
                   onClick={e => confirmarEAvancar(3, 4, e)}
-                  className="w-full py-2 px-3 rounded bg-[#d97706] hover:bg-[#b45309] disabled:opacity-50 text-white font-mono text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs transition"
+                  className="w-full py-2 px-3 rounded bg-[#4f46e5] hover:bg-[#4338ca] disabled:opacity-50 text-white font-mono text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs transition"
                 >
                   <span>Confirmar Período e Avançar</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -1394,21 +1394,21 @@ export function AssistenteImportacaoPanel({
             <button
               type="button"
               onClick={e => irParaPasso(3, e)}
-              className="w-full text-left rounded-md border border-[#fcd34d] dark:border-[#78350f] bg-[#fef3c7] dark:bg-[#191309] hover:border-[#d97706] dark:hover:border-[#f59e0b] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
+              className="w-full text-left rounded-md border border-[#cbd5e1] dark:border-[#2a3a54] bg-[#e2e8f0] dark:bg-[#162032] hover:border-[#4f46e5] dark:hover:border-[#6366f1] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
             >
               <div className="flex items-center space-x-2 min-w-0">
                 <span
                   className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-mono font-bold shrink-0 ${
-                    passosConfirmados.has(3) ? 'bg-[#b45309] dark:bg-[#d97706] text-white' : 'bg-[#d97706] text-white'
+                    passosConfirmados.has(3) ? 'bg-[#4338ca] dark:bg-[#4f46e5] text-white' : 'bg-[#4f46e5] text-white'
                   }`}
                 >
                   {passosConfirmados.has(3) ? <Check className="w-3 h-3" /> : '3'}
                 </span>
-                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-slate-100 truncate">
                   Período · Exercício {ano}{mesesSelecionados ? ` (${mesesSelecionados.size}m)` : ' (Ano todo)'}
                 </span>
               </div>
-              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-[9.5px] font-mono font-bold text-amber-900 dark:text-amber-300 shrink-0">
+              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#0d1422] border border-[#94a3b8] dark:border-[#334155] text-[9.5px] font-mono font-bold text-[#4338ca] dark:text-[#a5b4fc] shrink-0">
                 {passosConfirmados.has(3) ? 'Alterar' : 'Abrir'}
               </span>
             </button>
@@ -1418,24 +1418,24 @@ export function AssistenteImportacaoPanel({
           {passoAtivo === 4 ? (
             <div
               ref={step4Ref}
-              className="rounded-md border-2 border-[#d97706] dark:border-[#f59e0b] bg-white dark:bg-[#1c150a] p-3 shadow-md"
+              className="rounded-md border-2 border-[#4f46e5] dark:border-[#6366f1] bg-white dark:bg-[#162032] p-3 shadow-md"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center space-x-2 min-w-0">
-                  <span className="w-6 h-6 rounded-full bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] flex items-center justify-center text-xs font-mono font-bold shrink-0">
+                  <span className="w-6 h-6 rounded-full bg-[#4f46e5] dark:bg-[#6366f1] text-white flex items-center justify-center text-xs font-mono font-bold shrink-0">
                     4
                   </span>
-                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                  <span className="text-xs font-mono font-bold text-slate-900 dark:text-slate-50 truncate">
                     Confirmar e Iniciar Importação
                   </span>
                 </div>
-                <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#d97706] dark:bg-[#f59e0b] text-white dark:text-[#141008] shrink-0">
+                <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#4f46e5] dark:bg-[#6366f1] text-white shrink-0">
                   Passo Final
                 </span>
               </div>
 
               <div className="mt-2.5 space-y-2">
-                <div className="p-2.5 rounded bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] text-[11px] font-mono space-y-1 text-slate-800 dark:text-amber-100">
+                <div className="p-2.5 rounded bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#2a3a54] text-[11px] font-mono space-y-1 text-slate-800 dark:text-slate-200">
                   <div className="flex items-start justify-between gap-2">
                     <span className="shrink-0 font-semibold">Destino:</span>
                     <span className="font-bold text-slate-950 dark:text-white break-all text-right">{caminhoExibido}</span>
@@ -1456,7 +1456,7 @@ export function AssistenteImportacaoPanel({
                 </div>
 
                 {opcoesExtras && (
-                  <div className="bg-[#fffdf5] dark:bg-[#120e07] border border-[#fcd34d] dark:border-[#5c3a11] rounded overflow-hidden">
+                  <div className="bg-[#f8fafc] dark:bg-[#0d1422] border border-[#cbd5e1] dark:border-[#2a3a54] rounded overflow-hidden">
                     <button
                       type="button"
                       onClick={e => {
@@ -1466,16 +1466,16 @@ export function AssistenteImportacaoPanel({
                           animarRatoParaAlvo('btn-opcoes', 'Estas opções também existem aqui na barra', { clientX: e.clientX, clientY: e.clientY }, undefined, 'zona-4');
                         }
                       }}
-                      className="w-full px-2.5 py-1.5 flex items-center justify-between text-[11px] font-mono font-semibold text-slate-800 dark:text-amber-200 hover:bg-[#fef3c7] dark:hover:bg-[#1f180b] cursor-pointer"
+                      className="w-full px-2.5 py-1.5 flex items-center justify-between text-[11px] font-mono font-semibold text-slate-800 dark:text-slate-200 hover:bg-[#e2e8f0] dark:hover:bg-[#1e293b] cursor-pointer"
                     >
                       <span className="flex items-center space-x-1.5">
-                        <SlidersHorizontal className="w-3 h-3 text-[#d97706] dark:text-[#fbbf24]" />
+                        <SlidersHorizontal className="w-3 h-3 text-[#4f46e5] dark:text-[#818cf8]" />
                         <span>Opções Avançadas</span>
                       </span>
                       <ChevronDown className={`w-3.5 h-3.5 transition-transform ${opcoesAbertas ? 'rotate-180' : ''}`} />
                     </button>
                     {opcoesAbertas && (
-                      <div className="p-2.5 border-t border-[#fcd34d] dark:border-[#5c3a11] space-y-2">
+                      <div className="p-2.5 border-t border-[#cbd5e1] dark:border-[#2a3a54] space-y-2">
                         {opcoesExtras}
                       </div>
                     )}
@@ -1501,17 +1501,17 @@ export function AssistenteImportacaoPanel({
             <button
               type="button"
               onClick={e => irParaPasso(4, e)}
-              className="w-full text-left rounded-md border border-[#fcd34d] dark:border-[#78350f] bg-[#fef3c7] dark:bg-[#191309] hover:border-[#d97706] dark:hover:border-[#f59e0b] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
+              className="w-full text-left rounded-md border border-[#cbd5e1] dark:border-[#2a3a54] bg-[#e2e8f0] dark:bg-[#162032] hover:border-[#4f46e5] dark:hover:border-[#6366f1] px-3 py-2 transition-colors cursor-pointer flex items-center justify-between gap-2"
             >
               <div className="flex items-center space-x-2 min-w-0">
-                <span className="w-5 h-5 rounded-full bg-[#d97706] text-white flex items-center justify-center text-[11px] font-mono font-bold shrink-0">
+                <span className="w-5 h-5 rounded-full bg-[#4f46e5] text-white flex items-center justify-center text-[11px] font-mono font-bold shrink-0">
                   4
                 </span>
-                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-amber-50 truncate">
+                <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-slate-100 truncate">
                   Iniciar · {selecionadasIds.size} selecionada(s) · {ano}
                 </span>
               </div>
-              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#120e07] border border-[#f59e0b] dark:border-[#78350f] text-[9.5px] font-mono font-bold text-amber-900 dark:text-amber-300 shrink-0">
+              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#0d1422] border border-[#94a3b8] dark:border-[#334155] text-[9.5px] font-mono font-bold text-[#4338ca] dark:text-[#a5b4fc] shrink-0">
                 Abrir
               </span>
             </button>
@@ -1519,15 +1519,15 @@ export function AssistenteImportacaoPanel({
         </div>
       </aside>
 
-      {/* Portal Global do Ponteiro de Rato Virtual (Padrão Vídeo Tutorial Gexcel) */}
+      {/* Portal Global do Ponteiro de Rato Virtual (Padrão Executivo Gexcel) */}
       {typeof document !== 'undefined' &&
         createPortal(
           <>
             <style>{`
               .evo-guide-spotlight {
-                outline: 3px solid #f59e0b !important;
+                outline: 3px solid #6366f1 !important;
                 outline-offset: 3px !important;
-                box-shadow: 0 0 24px rgba(245, 158, 11, 0.85) !important;
+                box-shadow: 0 0 24px rgba(99, 102, 241, 0.78) !important;
                 transition: outline 0.18s ease, box-shadow 0.2s ease !important;
               }
               @keyframes evoGuideRipple {
@@ -1542,10 +1542,10 @@ export function AssistenteImportacaoPanel({
               }
               @keyframes evoGuideHaloPulse {
                 0%, 100% {
-                  box-shadow: 0 0 12px rgba(245, 158, 11, 0.65);
+                  box-shadow: 0 0 12px rgba(99, 102, 241, 0.55);
                 }
                 50% {
-                  box-shadow: 0 0 22px rgba(251, 191, 36, 0.95);
+                  box-shadow: 0 0 22px rgba(129, 140, 248, 0.92);
                 }
               }
             `}</style>
@@ -1566,7 +1566,7 @@ export function AssistenteImportacaoPanel({
                   opacity: cursorOverlay.visivel ? 1 : 0,
                 }}
               >
-                {/* Halo Pulsante Âmbar */}
+                {/* Halo Pulsante Índigo Executivo */}
                 <div
                   style={{
                     position: 'absolute',
@@ -1575,8 +1575,8 @@ export function AssistenteImportacaoPanel({
                     width: '34px',
                     height: '34px',
                     borderRadius: '9999px',
-                    background: 'rgba(245, 158, 11, 0.28)',
-                    border: '2px solid #f59e0b',
+                    background: 'rgba(99, 102, 241, 0.24)',
+                    border: '2px solid #6366f1',
                     transform: cursorOverlay.clicando ? 'scale(0.65)' : 'scale(1)',
                     transition: 'transform 140ms ease',
                     animation: 'evoGuideHaloPulse 1.1s infinite ease-in-out',
@@ -1594,15 +1594,15 @@ export function AssistenteImportacaoPanel({
                       width: '56px',
                       height: '56px',
                       borderRadius: '9999px',
-                      border: '3px solid #ef4444',
-                      background: 'rgba(239, 68, 68, 0.3)',
-                      boxShadow: '0 0 18px rgba(239, 68, 68, 0.85)',
+                      border: '3px solid #6366f1',
+                      background: 'rgba(99, 102, 241, 0.28)',
+                      boxShadow: '0 0 18px rgba(99, 102, 241, 0.85)',
                       animation: 'evoGuideRipple 520ms cubic-bezier(0.1, 0.8, 0.2, 1) forwards',
                     }}
                   />
                 )}
 
-                {/* Ponteiro Dourado Gexcel */}
+                {/* Ponteiro Executivo Gexcel */}
                 <div
                   style={{
                     transform: cursorOverlay.clicando ? 'scale(0.84)' : 'scale(1)',
@@ -1614,8 +1614,8 @@ export function AssistenteImportacaoPanel({
                   <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
                     <path
                       d="M3 3L10.5 21L14 13.5L21.5 10L3 3Z"
-                      fill="#fbbf24"
-                      stroke="#000000"
+                      fill="#6366f1"
+                      stroke="#ffffff"
                       strokeWidth="1.9"
                       strokeLinejoin="round"
                     />
@@ -1630,12 +1630,12 @@ export function AssistenteImportacaoPanel({
                       left: cursorOverlay.x > window.innerWidth - 290 ? 'auto' : '22px',
                       right: cursorOverlay.x > window.innerWidth - 290 ? '18px' : 'auto',
                       top: cursorOverlay.y > window.innerHeight - 90 ? '-38px' : '24px',
-                      background: '#090d16',
-                      border: '2px solid #f59e0b',
-                      color: '#fbbf24',
+                      background: '#0f172a',
+                      border: '2px solid #6366f1',
+                      color: '#e0e7ff',
                       borderRadius: '8px',
                       padding: '5px 10px',
-                      boxShadow: '0 14px 32px rgba(0,0,0,0.72), 0 0 18px rgba(245,158,11,0.35)',
+                      boxShadow: '0 14px 32px rgba(0,0,0,0.72), 0 0 18px rgba(99,102,241,0.35)',
                       whiteSpace: 'nowrap',
                       display: 'flex',
                       alignItems: 'center',
@@ -1645,7 +1645,7 @@ export function AssistenteImportacaoPanel({
                       fontWeight: 700,
                     }}
                   >
-                    <MousePointer2 className="w-3.5 h-3.5 text-[#f59e0b] shrink-0" />
+                    <MousePointer2 className="w-3.5 h-3.5 text-[#818cf8] shrink-0" />
                     <span>{cursorOverlay.label}</span>
                   </div>
                 )}

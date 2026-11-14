@@ -1136,14 +1136,14 @@ export function RecibosVerdesView({
                 onClick={() => assistenteAberto && setPassoAssistente(1)}
                 className={`flex items-center space-x-2 px-2.5 py-1.5 rounded border text-xs font-mono transition ${
                   assistenteAberto && passoAssistente === 1
-                    ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
+                    ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
                     : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
                 }`}
               >
                 {assistenteAberto && (
                   <span
                     className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
-                      passoAssistente === 1 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                      passoAssistente === 1 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                     }`}
                   >
                     ① Destino
@@ -1188,14 +1188,14 @@ export function RecibosVerdesView({
                 onClick={() => assistenteAberto && setPassoAssistente(2)}
                 className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition ${
                   assistenteAberto && passoAssistente === 2
-                    ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
+                    ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
                     : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
                 }`}
               >
                 {assistenteAberto && (
                   <span
                     className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
-                      passoAssistente === 2 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                      passoAssistente === 2 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                     }`}
                   >
                     ② Empresas
@@ -1258,14 +1258,14 @@ export function RecibosVerdesView({
                 onClick={() => assistenteAberto && setPassoAssistente(3)}
                 className={`flex flex-wrap items-center gap-1.5 px-2 py-1 rounded border transition ${
                   assistenteAberto && passoAssistente === 3
-                    ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
+                    ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
                     : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
                 }`}
               >
                 {assistenteAberto && (
                   <span
                     className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
-                      passoAssistente === 3 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                      passoAssistente === 3 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                     }`}
                   >
                     ③ Período
@@ -1306,14 +1306,14 @@ export function RecibosVerdesView({
                 onClick={() => assistenteAberto && setPassoAssistente(4)}
                 className={`relative flex items-center space-x-2 px-2 py-1 rounded border transition ${
                   assistenteAberto && passoAssistente === 4
-                    ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
+                    ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
                     : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
                 }`}
               >
                 {assistenteAberto && (
                   <span
                     className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
-                      passoAssistente === 4 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                      passoAssistente === 4 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                     }`}
                   >
                     ④ Iniciar

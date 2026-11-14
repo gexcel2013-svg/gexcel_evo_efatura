@@ -1959,8 +1959,9 @@ def reconstruir_horizontal_vertical_de_sqlite(
             "Total Documento": round(float(tot_doc or 0.0), 2),
         })
 
-        if id_key not in docs_grouped:
-            docs_grouped[id_key] = {
+        doc_group_key = (id_key, str(fat_no or "").strip())
+        if doc_group_key not in docs_grouped:
+            docs_grouped[doc_group_key] = {
                 "id_doc": id_key,
                 "fat_no": str(fat_no or ""),
                 "atcud": str(atcud or "0") or "0",
@@ -1974,7 +1975,7 @@ def reconstruir_horizontal_vertical_de_sqlite(
                 "dt_upd": str(dt_upd or "").replace("T", " ") or now_fallback,
                 "linhas": [],
             }
-        docs_grouped[id_key]["linhas"].append((
+        docs_grouped[doc_group_key]["linhas"].append((
             str(tipo_imp or "IVA").strip().upper(),
             str(cod_taxa or "").strip().upper(),
             perc_float,
@@ -3694,6 +3695,10 @@ def _run_extracao_worker(
         return JOBS.get(job_id, {}).get("cancelar", False)
 
     acquired_concurrency = False
+    salvar_sqlite = False
+    tipo_str = "compras" if as_buyer else "vendas"
+    meses_status_atualizados = set()
+    meses_tocados_sqlite = set()
     pipeline_worker.sinalizar_primeiro_plano(True, nif=nif)
     try:
         # Separação estrita de NIF de 9 dígitos e subutilizador
@@ -3844,7 +3849,6 @@ def _run_extracao_worker(
         fetched_v_rows = []
         paginas_gravadas_no_callback = False
         total_linhas_gravadas_callback = 0
-        meses_status_atualizados = set()
 
         def on_scout_done(scout_items):
             if salvar_sqlite:
@@ -3860,6 +3864,17 @@ def _run_extracao_worker(
                         p_h, p_vert = efatura_api.invoices_to_rows(
                             nif, page_invoices, as_buyer=as_buyer, entity_name=nome_entidade
                         )
+                        meses_pagina = set()
+                        for r_v in p_vert:
+                            dt_v = str(r_v.get("Data") or "")[:10]
+                            if len(dt_v) >= 7 and dt_v[:4].isdigit() and dt_v[5:7].isdigit():
+                                meses_pagina.add((int(dt_v[:4]), int(dt_v[5:7])))
+                        if not meses_pagina and page_invoices:
+                            inv_sample = page_invoices[0]
+                            inv_date = getattr(inv_sample, "InvoiceDate", None)
+                            p_yr_fb = efatura_api._normalise_date(inv_date).year if inv_date else data_inicio.year
+                            p_mn_fb = efatura_api._normalise_date(inv_date).month if inv_date else data_inicio.month
+                            meses_pagina.add((p_yr_fb, p_mn_fb))
                         # 1. Staging persistente local (apenas se precisar de gerar XML / resposta em memória)
                         if not apenas_sqlite_direto and p_h and len(p_h) > 1:
                             inv_sample = page_invoices[0]
@@ -3867,7 +3882,7 @@ def _run_extracao_worker(
                             p_yr = efatura_api._normalise_date(inv_date).year if inv_date else data_inicio.year
                             p_mn = efatura_api._normalise_date(inv_date).month if inv_date else data_inicio.month
                             efatura_api.append_staging(nif, p_yr, p_mn, tipo_str, p_h[1:])
-                        # 2. SQLite (se modo_saida permitir)
+                        # 2. SQLite (se modo_saida permitir) e atualização intermédia de controlo_geral.db
                         if p_vert:
                             if not apenas_sqlite_direto:
                                 fetched_v_rows.extend(p_vert)
@@ -3878,6 +3893,9 @@ def _run_extracao_worker(
                                     pb_client.upsert_vendas_direto(p_vert)
                                 paginas_gravadas_no_callback = True
                                 total_linhas_gravadas_callback += len(p_vert)
+                                for p_yr_m, p_mn_m in meses_pagina:
+                                    meses_tocados_sqlite.add((p_yr_m, p_mn_m))
+                                    pb_client.atualizar_status_mes(nif, p_yr_m, p_mn_m, tipo_str, completo=False)
                 except Exception as pe:
                     LOGGER.error(f"Erro ao gravar página no SQLite/Staging: {pe}")
 
@@ -4223,6 +4241,7 @@ def _run_extracao_worker(
                         docs_gravados=None,
                         completo=(not foi_interrompido)
                     )
+                    meses_status_atualizados.add((p_start.year, p_start.month))
                 except Exception as ame:
                     LOGGER.warning(f"Aviso ao atualizar controlo mensal no job {job_id[:8]}: {ame}")
 
@@ -4404,6 +4423,12 @@ def _run_extracao_worker(
             JOBS[job_id]["mensagem"] = info_erro["mensagem_amigavel"] if info_erro["tipo_erro"] != "outro" else str(exc)
             JOBS[job_id]["erro"] = str(exc)
     finally:
+        if salvar_sqlite and meses_tocados_sqlite:
+            for (yr_t, mn_t) in sorted(meses_tocados_sqlite - meses_status_atualizados):
+                try:
+                    pb_client.atualizar_status_mes(nif, yr_t, mn_t, tipo_str, completo=False)
+                except Exception as _e_fin:
+                    LOGGER.warning(f"Aviso ao sincronizar estado final do mês {mn_t}/{yr_t} ({nif}): {_e_fin}")
         pipeline_worker.sinalizar_primeiro_plano(False)
         if 'executor_scraper' in locals() and executor_scraper:
             executor_scraper.shutdown(wait=False)

@@ -8,6 +8,13 @@ from typing import Optional, Dict, Any, List
 PB_URL = "http://127.0.0.1:8090"
 LOGGER = logging.getLogger("gexcel.efatura.pb")
 
+# Expressão SQL partilhada para contar documentos distintos sem fundir faturas diferentes que partilham ATCUD
+_EXPR_DOC_DISTINTO_SQL = (
+    "CASE WHEN fatura IS NOT NULL AND trim(fatura) != '' "
+    "THEN id_fatura_unico || '|' || trim(fatura) "
+    "ELSE id_fatura_unico END"
+)
+
 import sqlite3
 
 _ORIG_SQLITE3_CONNECT = getattr(sqlite3, "_orig_connect", sqlite3.connect)
@@ -1827,7 +1834,7 @@ def upsert_faturas_direto(vertical_rows):
             )
             row["id_fatura_unico"] = id_fatura
             if id_fatura:
-                faturas_a_substituir_id.add(id_fatura)
+                faturas_a_substituir_id.add((id_fatura, fatura_raw))
             else:
                 dt_curta = str(row.get("Data") or "")[:10]
                 if nif_emissor and fatura_raw and dt_curta:
@@ -1925,10 +1932,11 @@ def upsert_faturas_direto(vertical_rows):
                                 )
 
                 # Limpar linhas anteriores das faturas incluídas neste lote para impedir duplicação 2x/3x por variação de hash_linha
+                # Usa (id_fatura_unico, fatura) para nunca apagar duas faturas distintas que partilhem o mesmo ATCUD
                 if faturas_a_substituir_id:
                     c.executemany(
-                        "DELETE FROM efatura_linhas WHERE id_fatura_unico = ?",
-                        [(fid,) for fid in faturas_a_substituir_id]
+                        "DELETE FROM efatura_linhas WHERE id_fatura_unico = ? AND (fatura = ? OR COALESCE(fatura, '') = '')",
+                        list(faturas_a_substituir_id)
                     )
                 if faturas_a_substituir_chave:
                     c.executemany(
@@ -2067,7 +2075,7 @@ def upsert_vendas_direto(vertical_rows):
             )
             row["id_fatura_unico"] = id_fatura
             if id_fatura:
-                faturas_a_substituir_id.add(id_fatura)
+                faturas_a_substituir_id.add((id_fatura, fatura_raw))
             else:
                 dt_curta = str(row.get("Data") or "")[:10]
                 if fatura_raw and dt_curta:
@@ -2177,10 +2185,11 @@ def upsert_vendas_direto(vertical_rows):
                                 )
 
                 # Limpar linhas anteriores das faturas incluídas neste lote para impedir duplicação 2x/3x por variação de hash_linha
+                # Usa (id_fatura_unico, fatura) para nunca apagar duas faturas distintas que partilhem o mesmo ATCUD
                 if faturas_a_substituir_id:
                     c.executemany(
-                        "DELETE FROM efatura_vendas_linhas WHERE id_fatura_unico = ?",
-                        [(fid,) for fid in faturas_a_substituir_id]
+                        "DELETE FROM efatura_vendas_linhas WHERE id_fatura_unico = ? AND (fatura = ? OR COALESCE(fatura, '') = '')",
+                        list(faturas_a_substituir_id)
                     )
                 if faturas_a_substituir_chave:
                     c.executemany(
@@ -2378,7 +2387,7 @@ def contar_docs_na_bd(nif: str, ano: int, mes: int, tipo: str) -> int:
         with sqlite3.connect(db_path, timeout=10) as conn:
             c = conn.cursor()
             c.execute(f"""
-            SELECT count(DISTINCT id_fatura_unico)
+            SELECT count(DISTINCT {_EXPR_DOC_DISTINTO_SQL})
             FROM {tabela}
             WHERE strftime('%Y', data_emissao) = ?
               AND strftime('%m', data_emissao) = ?
@@ -2405,7 +2414,7 @@ def contar_docs_intervalo_na_bd(nif: str, data_inicio: str, data_fim: str, tipo:
         with sqlite3.connect(db_path, timeout=10) as conn:
             c = conn.cursor()
             c.execute(f"""
-            SELECT count(DISTINCT id_fatura_unico)
+            SELECT count(DISTINCT {_EXPR_DOC_DISTINTO_SQL})
             FROM {tabela}
             WHERE substr(data_emissao, 1, 10) >= ? AND substr(data_emissao, 1, 10) <= ?
             """, (d_ini, d_fim))
@@ -2556,7 +2565,7 @@ def atualizar_status_mes(nif, ano, mes, tipo, total_esperado=None, docs_gravados
             with sqlite3.connect(db_cli, timeout=10) as conn:
                 c = conn.cursor()
                 c.execute(f"""
-                SELECT count(DISTINCT id_fatura_unico), count(*), round(sum(base_incidencia), 2), round(sum(valor_imposto), 2)
+                SELECT count(DISTINCT {_EXPR_DOC_DISTINTO_SQL}), count(*), round(sum(base_incidencia), 2), round(sum(valor_imposto), 2)
                 FROM {tabela}
                 WHERE strftime('%Y', data_emissao) = ? AND strftime('%m', data_emissao) = ?
                 """, (str(ano), f"{int(mes):02d}"))
@@ -2767,7 +2776,7 @@ def periodo_tem_inconsistencia_faturas(nif: str, data_inicio, data_fim, tipo: st
                        SUM(base_incidencia + valor_imposto) as soma_l
                 FROM {tabela}
                 WHERE substr(data_emissao, 1, 10) >= ? AND substr(data_emissao, 1, 10) <= ?
-                GROUP BY id_fatura_unico
+                GROUP BY id_fatura_unico, fatura
             """, (d_ini_s, d_fim_s))
             for id_fat, est_doc, tot_d, soma_l in c.fetchall():
                 if str(est_doc or "").strip().upper() in ("A", "ANULADA", "ANULADO"):
@@ -2837,7 +2846,7 @@ def recalibrar_controlo_mensal_de_bases_reais(ano: int = None, tipo: str = "ambo
                     query = f"""
                     SELECT cast(strftime('%Y', data_emissao) as integer) as a,
                            cast(strftime('%m', data_emissao) as integer) as m,
-                           count(DISTINCT id_fatura_unico) as docs,
+                           count(DISTINCT {_EXPR_DOC_DISTINTO_SQL}) as docs,
                            count(*) as linhas,
                            round(sum(base_incidencia), 2) as base,
                            round(sum(valor_imposto), 2) as iva

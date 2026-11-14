@@ -1106,12 +1106,13 @@ export default function CommandCenter({
                 shouldRefreshMatrix = true;
               }
             } else if (res.status === 404) {
-              // Se o job não existe no servidor (ex: motor reiniciado), remove da lista ativa
+              // Se o job não existe no servidor (ex: motor reiniciado), remove da lista ativa e atualiza matriz
               setActiveJobs(prev => {
                 const next = { ...prev };
                 delete next[entId];
                 return next;
               });
+              shouldRefreshMatrix = true;
             }
           } catch (err) {
              console.error("Erro no polling do job", jobId, err);
@@ -1692,8 +1693,8 @@ export default function CommandCenter({
             onClick={() => (assistenteAberto ? fecharAssistente() : abrirAssistente())}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-bold transition shadow-xs cursor-pointer ${
               assistenteAberto
-                ? 'bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border border-[#0284c7] dark:border-sky-500'
-                : 'bg-[#0284c7] hover:bg-[#0369a1] text-white border border-[#0284c7]'
+                ? 'bg-[#eef2ff] dark:bg-[#162032] text-[#4338ca] dark:text-[#a5b4fc] border border-[#4f46e5] dark:border-[#6366f1]'
+                : 'bg-[#4f46e5] hover:bg-[#4338ca] text-white border border-[#4f46e5]'
             }`}
             title="Abrir ou fechar o Assistente Guiado Passo a Passo"
           >
@@ -1963,13 +1964,13 @@ export default function CommandCenter({
               onClick={() => assistenteAberto && setPassoAssistente(1)}
               className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded border text-[11px] font-mono transition ${
                 assistenteAberto && passoAssistente === 1
-                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
+                  ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
                   : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
               }`}
             >
               {assistenteAberto && (
                 <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
-                  passoAssistente === 1 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  passoAssistente === 1 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                 }`}>
                   ① Destino
                 </span>
@@ -2003,13 +2004,13 @@ export default function CommandCenter({
               onClick={() => assistenteAberto && setPassoAssistente(2)}
               className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition ${
                 assistenteAberto && passoAssistente === 2
-                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
+                  ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
                   : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
               }`}
             >
               {assistenteAberto && (
                 <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
-                  passoAssistente === 2 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  passoAssistente === 2 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                 }`}>
                   ② Empresas
                 </span>
@@ -2071,13 +2072,13 @@ export default function CommandCenter({
               onClick={() => assistenteAberto && setPassoAssistente(3)}
               className={`flex flex-wrap items-center gap-1.5 px-2 py-1 rounded border transition ${
                 assistenteAberto && passoAssistente === 3
-                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
+                  ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
                   : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
               }`}
             >
               {assistenteAberto && (
                 <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
-                  passoAssistente === 3 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  passoAssistente === 3 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                 }`}>
                   ③ Período
                 </span>
@@ -2151,13 +2152,13 @@ export default function CommandCenter({
               onClick={() => assistenteAberto && setPassoAssistente(4)}
               className={`relative flex items-center space-x-2 px-2 py-1 rounded border transition ${
                 assistenteAberto && passoAssistente === 4
-                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c150a] border-amber-500 shadow-md'
+                  ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
                   : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
               }`}
             >
               {assistenteAberto && (
                 <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
-                  passoAssistente === 4 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  passoAssistente === 4 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                 }`}>
                   ④ Iniciar
                 </span>

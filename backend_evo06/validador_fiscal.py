@@ -193,7 +193,7 @@ def validar_lote_extracao(
     """
     erros: List[str] = []
     ids_invalidos: List[str] = []
-    seen_ids: Dict[str, str] = {}
+    seen_ids: Dict[str, Tuple[str, str, str]] = {}
 
     h_data = [
         r for r in (horizontal_rows or [])
@@ -207,14 +207,26 @@ def validar_lote_extracao(
         fat_no = str(row.get("Nº Fatura") or "").strip().lstrip("'")
         dt_em = str(row.get("Data Emissão") or "").strip()[:10]
         cp_nif = str(row.get("NIF ComercianteConsumidor") or "").strip()
+        atcud_h = str(row.get("ATCUD") or "").strip()
 
         if id_doc:
-            if id_doc in seen_ids and seen_ids[id_doc] != f"{cp_nif}|{fat_no}|{dt_em}":
-                erros.append(
-                    f"Colisão de IdDocumento '{id_doc}' entre '{seen_ids[id_doc]}' e '{cp_nif}|{fat_no}|{dt_em}'."
-                )
-                ids_invalidos.append(id_doc)
-            seen_ids[id_doc] = f"{cp_nif}|{fat_no}|{dt_em}"
+            sig_atual = f"{cp_nif}|{fat_no}|{dt_em}"
+            if id_doc in seen_ids:
+                prev_sig, prev_cp_nif, prev_atcud = seen_ids[id_doc]
+                if prev_sig != sig_atual:
+                    # Permite dois documentos distintos do mesmo emitente que partilham o mesmo ATCUD real na AT (ex: FR A/024 e A/024)
+                    mesmo_atcud_real = (
+                        prev_cp_nif == cp_nif
+                        and atcud_h == prev_atcud
+                        and atcud_h.upper() not in ("", "0", "0-0", "NULL", "NONE")
+                    )
+                    if not mesmo_atcud_real:
+                        erros.append(
+                            f"Colisão de IdDocumento '{id_doc}' entre '{prev_sig}' e '{sig_atual}'."
+                        )
+                        ids_invalidos.append(id_doc)
+            else:
+                seen_ids[id_doc] = (sig_atual, cp_nif, atcud_h)
 
         mapa_h_por_fatura[(cp_nif, fat_no, dt_em)] = row
 
