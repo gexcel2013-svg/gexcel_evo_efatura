@@ -1,9 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   ShieldAlert,
   ShieldCheck,
   Search,
-  Building2,
   RotateCcw,
   Loader2,
   X,
@@ -12,11 +11,21 @@ import {
   AlertTriangle,
   Database,
   FileX2,
-  Layers
+  Layers,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  ShoppingCart,
+  TrendingUp,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
+import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
 
 interface Entidade {
   id: string;
+  cod?: string;
   nif: string;
   nif_cc?: string;
   nomecli: string;
@@ -44,12 +53,36 @@ interface AnuladaRow {
   data_deteccao: string;
 }
 
+const MESES_NOMES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
 interface InconformidadesViewProps {
+  ano?: number;
+  onAnoChange?: (ano: number) => void;
   onApiStatusChange?: (online: boolean) => void;
   modoPrivacidade?: boolean;
 }
 
-export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false }: InconformidadesViewProps) {
+export function InconformidadesView({
+  ano: anoProp,
+  onAnoChange,
+  onApiStatusChange,
+  modoPrivacidade = false,
+}: InconformidadesViewProps) {
+  const hoje = new Date();
+  const anoAtual = hoje.getFullYear();
+  const mesAtual = hoje.getMonth() + 1;
+  const [anoLocal, setAnoLocal] = useState<number>(anoProp ?? anoAtual);
+  const anoAtivo = anoProp ?? anoLocal;
+
+  const atualizarAno = useCallback(
+    (novoAno: number) => {
+      setAnoLocal(novoAno);
+      onAnoChange?.(novoAno);
+      setScrapeAno(novoAno);
+    },
+    [onAnoChange]
+  );
+
   const [anuladas, setAnuladas] = useState<AnuladaRow[]>([]);
   const [totalFiltrado, setTotalFiltrado] = useState<number>(0);
   const [totalGlobal, setTotalGlobal] = useState<number>(0);
@@ -68,6 +101,9 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
   const [nifFiltro, setNifFiltro] = useState<string>('');
   const [moduloFiltro, setModuloFiltro] = useState<'todos' | 'compras' | 'vendas'>('todos');
   const [origemFiltro, setOrigemFiltro] = useState<'todos' | 'inconformidades' | 'origem'>('todos');
+  const [filtroTemporal, setFiltroTemporal] = useState<'todas' | 'ano_todo' | 'mes' | 'trimestre' | 'manual'>('todas');
+  const [mesAtivo, setMesAtivo] = useState<number>(0);
+  const [trimestreAtivo, setTrimestreAtivo] = useState<number | null>(null);
   const [dataInicio, setDataInicio] = useState<string>('');
   const [dataFim, setDataFim] = useState<string>('');
   const [pesquisa, setPesquisa] = useState<string>('');
@@ -81,11 +117,103 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
   const [modoSync, setModoSync] = useState<'individual' | 'lote'>('individual');
   const [scrapeNif, setScrapeNif] = useState<string>('');
   const [scrapeModulo, setScrapeModulo] = useState<'compras' | 'vendas' | 'ambos'>('compras');
-  const [scrapeAno, setScrapeAno] = useState<number>(new Date().getFullYear());
+  const [scrapeAno, setScrapeAno] = useState<number>(anoAtivo);
   const [scrapeMes, setScrapeMes] = useState<number>(0); // 0 = Ano completo
   const [scrapeExecutando, setScrapeExecutando] = useState<boolean>(false);
   const [scrapeResultado, setScrapeResultado] = useState<any | null>(null);
   const [scrapeErro, setScrapeErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (anoProp !== undefined) {
+      setAnoLocal(anoProp);
+    }
+  }, [anoProp]);
+
+  useEffect(() => {
+    if (filtroTemporal === 'todas') {
+      setDataInicio('');
+      setDataFim('');
+    } else if (filtroTemporal === 'ano_todo') {
+      setDataInicio(`${anoAtivo}-01-01`);
+      setDataFim(`${anoAtivo}-12-31`);
+    } else if (filtroTemporal === 'mes' && mesAtivo > 0) {
+      const ultimoDia = new Date(anoAtivo, mesAtivo, 0).getDate();
+      setDataInicio(`${anoAtivo}-${String(mesAtivo).padStart(2, '0')}-01`);
+      setDataFim(`${anoAtivo}-${String(mesAtivo).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`);
+    } else if (filtroTemporal === 'trimestre' && trimestreAtivo) {
+      const mIni = (trimestreAtivo - 1) * 3 + 1;
+      const mFim = trimestreAtivo * 3;
+      const ultimoDia = new Date(anoAtivo, mFim, 0).getDate();
+      setDataInicio(`${anoAtivo}-${String(mIni).padStart(2, '0')}-01`);
+      setDataFim(`${anoAtivo}-${String(mFim).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`);
+    }
+  }, [anoAtivo, filtroTemporal, mesAtivo, trimestreAtivo]);
+
+  const mapaEntidades = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const ent of entidades) {
+      const n = (ent.nif || '').trim();
+      const ncc = (ent.nif_cc || '').trim();
+      if (n && ent.nomecli) map.set(n, ent.nomecli);
+      if (ncc && ent.nomecli) map.set(ncc, ent.nomecli);
+    }
+    return map;
+  }, [entidades]);
+
+  const resolverNomeEntidade = useCallback(
+    (nif: string, fallback?: string) => {
+      const n = (nif || '').trim();
+      const oficial = mapaEntidades.get(n);
+      if (oficial) return oficial;
+      const fb = (fallback || '').trim();
+      if (fb && fb !== '[Sem Nome Registado]') return fb;
+      return n ? `Entidade ${n}` : '—';
+    },
+    [mapaEntidades]
+  );
+
+  const entidadesCombobox = useMemo(
+    () =>
+      entidades.map(ent => ({
+        id: ent.id,
+        cod: ent.cod,
+        nif: (ent.nif || ent.nif_cc || '').trim(),
+        nif_cc: ent.nif_cc,
+        nomecli: ent.nomecli,
+      })),
+    [entidades]
+  );
+
+  const selecionarTodasDatas = () => {
+    setFiltroTemporal('todas');
+    setMesAtivo(0);
+    setTrimestreAtivo(null);
+  };
+
+  const selecionarAnoTodo = () => {
+    setFiltroTemporal('ano_todo');
+    setMesAtivo(0);
+    setTrimestreAtivo(null);
+  };
+
+  const selecionarMesAtual = () => {
+    if (anoAtivo !== anoAtual) atualizarAno(anoAtual);
+    setFiltroTemporal('mes');
+    setMesAtivo(mesAtual);
+    setTrimestreAtivo(null);
+  };
+
+  const selecionarMes = (m: number) => {
+    setFiltroTemporal('mes');
+    setMesAtivo(m);
+    setTrimestreAtivo(null);
+  };
+
+  const selecionarTrimestre = (t: number) => {
+    setFiltroTemporal('trimestre');
+    setTrimestreAtivo(t);
+    setMesAtivo(0);
+  };
 
   // Monitorização do Worker de Segundo Plano (scrape_anuladas em pipeline_worker)
   const [tarefaWorkerAnuladas, setTarefaWorkerAnuladas] = useState<{
@@ -219,8 +347,10 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
   };
 
   const renderSortIcon = (col: string) => {
-    if (sortCol !== col) return <span className="text-slate-400 dark:text-slate-500 ml-1">⇅</span>;
-    return <span className="text-[#0284c7] dark:text-sky-400 ml-1">{sortDir === 'asc' ? '▲' : '▼'}</span>;
+    if (sortCol !== col) return <ArrowUpDown className="w-3 h-3 text-slate-400 dark:text-slate-500 ml-1 inline shrink-0" />;
+    return sortDir === 'asc'
+      ? <ArrowUp className="w-3 h-3 text-[#0284c7] dark:text-sky-400 ml-1 inline shrink-0" />
+      : <ArrowDown className="w-3 h-3 text-[#0284c7] dark:text-sky-400 ml-1 inline shrink-0" />;
   };
 
   const executarSincronizacaoAnuladas = async () => {
@@ -296,14 +426,47 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
             </span>
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
           </div>
-          <h1 className="text-xl text-foreground font-display font-light tracking-tight flex items-center space-x-2 mt-0.5">
+          <h1 className="text-xl text-foreground font-display font-light tracking-tight flex items-center flex-wrap gap-2 mt-0.5">
             <ShieldAlert className="w-5 h-5 text-amber-500 shrink-0" />
             <span>Documentos Anulados e Inconformidades</span>
+            <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-mono font-bold bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border border-[#0284c7] dark:border-sky-700 shadow-2xs">
+              <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+              {filtroTemporal === 'todas' ? 'Todos os Exercícios' : `Exercício ${anoAtivo}`}
+            </span>
           </h1>
         </div>
 
         {/* Ações do Topo */}
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Seletor de Exercício (< Ano >) */}
+          <div className="flex items-center space-x-1 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-500 rounded-md px-2 py-1 shadow-2xs">
+            <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+            <button
+              type="button"
+              onClick={() => atualizarAno(anoAtivo - 1)}
+              className="p-0.5 hover:bg-sky-200 dark:hover:bg-[#14304d] rounded text-foreground transition-colors cursor-pointer"
+              title="Exercício Anterior"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <span className="font-mono font-bold text-xs text-foreground dark:text-white px-1 min-w-[38px] text-center">
+              {anoAtivo}
+            </span>
+            <button
+              type="button"
+              onClick={() => atualizarAno(anoAtivo < anoAtual ? anoAtivo + 1 : anoAtivo)}
+              disabled={anoAtivo >= anoAtual}
+              className={`p-0.5 rounded transition-colors ${
+                anoAtivo >= anoAtual
+                  ? 'opacity-25 cursor-not-allowed text-slate-400'
+                  : 'hover:bg-sky-200 dark:hover:bg-[#14304d] text-foreground cursor-pointer'
+              }`}
+              title="Exercício Seguinte"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={() => setModalScrapeAberto(true)}
@@ -464,54 +627,49 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
 
           {/* Filtro Módulo (Compras / Vendas) */}
           <div className="flex items-center space-x-1 bg-slate-100 dark:bg-[#132233] p-1 rounded border border-slate-300 dark:border-[#253a52] text-xs font-mono">
-            {(['todos', 'compras', 'vendas'] as const).map(mod => (
-              <button
-                key={mod}
-                type="button"
-                onClick={() => setModuloFiltro(mod)}
-                className={`px-2 py-0.5 rounded font-semibold capitalize cursor-pointer ${
-                  moduloFiltro === mod ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                {mod === 'todos' ? 'Compras & Vendas' : mod}
-              </button>
-            ))}
-          </div>
-
-          {/* Seletor de Empresa */}
-          <div className="flex items-center space-x-1.5 min-w-[200px] max-w-[260px]">
-            <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-            <select
-              value={nifFiltro}
-              onChange={e => setNifFiltro(e.target.value)}
-              className="w-full text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1 text-foreground cursor-pointer truncate"
+            <button
+              type="button"
+              onClick={() => setModuloFiltro('todos')}
+              className={`px-2 py-0.5 rounded font-semibold cursor-pointer transition ${
+                moduloFiltro === 'todos' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
+              }`}
             >
-              <option value="">Todas as Empresas ({entidades.length})</option>
-              {entidades.map(ent => {
-                const n = (ent.nif || ent.nif_cc || '').trim();
-                return (
-                  <option key={ent.id} value={n}>
-                    {ofuscarNif(n)} · {ofuscarNome(ent.nomecli, n)}
-                  </option>
-                );
-              })}
-            </select>
+              Compras & Vendas
+            </button>
+            <button
+              type="button"
+              onClick={() => setModuloFiltro('compras')}
+              className={`px-2 py-0.5 rounded font-semibold cursor-pointer flex items-center space-x-1 transition ${
+                moduloFiltro === 'compras' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              <ShoppingCart className="w-3 h-3" />
+              <span>Compras</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setModuloFiltro('vendas')}
+              className={`px-2 py-0.5 rounded font-semibold cursor-pointer flex items-center space-x-1 transition ${
+                moduloFiltro === 'vendas' ? 'bg-emerald-600 text-white' : 'text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              <TrendingUp className="w-3 h-3" />
+              <span>Vendas</span>
+            </button>
           </div>
 
-          {/* Datas */}
-          <input
-            type="date"
-            value={dataInicio}
-            onChange={e => setDataInicio(e.target.value)}
-            className="text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1 text-foreground"
-            title="Data de Emissão Inicial"
-          />
-          <input
-            type="date"
-            value={dataFim}
-            onChange={e => setDataFim(e.target.value)}
-            className="text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1 text-foreground"
-            title="Data de Emissão Final"
+          {/* Seletor de Empresa (Combobox com seleção prévia) */}
+          <EmpresaSelectorCombobox
+            entidades={entidadesCombobox}
+            value={nifFiltro}
+            onChange={setNifFiltro}
+            modoPrivacidade={modoPrivacidade}
+            allLabel={`Todas as Empresas (${entidadesCombobox.length})`}
+            placeholder="Pesquisar NIF, nome ou código..."
+            className="min-w-[240px] max-w-[320px]"
+            dropdownClassName="w-80 md:w-[400px]"
+            align="left"
+            title="Pesquisar e selecionar empresa"
           />
 
           {/* Pesquisa */}
@@ -539,10 +697,184 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
         <div className="text-xs font-mono text-slate-600 dark:text-slate-300 font-semibold">
           {anuladas.length.toLocaleString('pt-PT')} de {totalFiltrado.toLocaleString('pt-PT')} registos
         </div>
+
+        {/* Barra Temporal Padronizada */}
+        <div className="w-full flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200 dark:border-[#1e2c3d] text-[10.5px] font-mono">
+          <div className="flex items-center space-x-1 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-700 rounded px-1.5 py-0.5 mr-1">
+            <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+            <button
+              type="button"
+              onClick={() => {
+                atualizarAno(anoAtivo - 1);
+                if (filtroTemporal === 'todas') setFiltroTemporal('ano_todo');
+              }}
+              className="p-0.5 hover:bg-sky-200 dark:hover:bg-[#14304d] rounded cursor-pointer"
+              title="Exercício Anterior"
+            >
+              <ChevronLeft className="w-3 h-3" />
+            </button>
+            <span className="font-bold text-foreground px-0.5">{anoAtivo}</span>
+            <button
+              type="button"
+              onClick={() => {
+                if (anoAtivo < anoAtual) {
+                  atualizarAno(anoAtivo + 1);
+                  if (filtroTemporal === 'todas') setFiltroTemporal('ano_todo');
+                }
+              }}
+              disabled={anoAtivo >= anoAtual}
+              className={`p-0.5 rounded ${anoAtivo >= anoAtual ? 'opacity-25 cursor-not-allowed' : 'hover:bg-sky-200 dark:hover:bg-[#14304d] cursor-pointer'}`}
+              title="Exercício Seguinte"
+            >
+              <ChevronRight className="w-3 h-3" />
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={selecionarTodasDatas}
+            className={`px-2 py-1 rounded border font-semibold cursor-pointer transition ${
+              filtroTemporal === 'todas'
+                ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
+            }`}
+          >
+            Todas as Datas
+          </button>
+
+          <button
+            type="button"
+            onClick={selecionarAnoTodo}
+            className={`px-2 py-1 rounded border font-semibold cursor-pointer transition ${
+              filtroTemporal === 'ano_todo'
+                ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
+            }`}
+          >
+            Ano Todo
+          </button>
+
+          {anoAtivo === anoAtual && (
+            <button
+              type="button"
+              onClick={selecionarMesAtual}
+              className={`px-2 py-1 rounded border font-semibold cursor-pointer transition ${
+                filtroTemporal === 'mes' && mesAtivo === mesAtual
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
+              }`}
+            >
+              Mês Atual
+            </button>
+          )}
+
+          <div className="flex items-center space-x-0.5 border-l border-slate-300 dark:border-[#253a52] pl-1.5">
+            {[1, 2, 3, 4].map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => selecionarTrimestre(t)}
+                className={`px-1.5 py-1 rounded border font-bold cursor-pointer transition ${
+                  filtroTemporal === 'trimestre' && trimestreAtivo === t
+                    ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                    : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
+                }`}
+                title={`${t}º Trimestre de ${anoAtivo}`}
+              >
+                T{t}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-0.5 border-l border-slate-300 dark:border-[#253a52] pl-1.5">
+            {MESES_NOMES.map((mNome, idx) => {
+              const mNum = idx + 1;
+              const ativo = filtroTemporal === 'mes' && mesAtivo === mNum;
+              return (
+                <button
+                  key={mNum}
+                  type="button"
+                  onClick={() => selecionarMes(mNum)}
+                  className={`px-1.5 py-1 rounded border font-semibold cursor-pointer transition ${
+                    ativo
+                      ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                      : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
+                  }`}
+                >
+                  {mNome}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center space-x-1 ml-auto border-l border-slate-300 dark:border-[#253a52] pl-2">
+            <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+            <input
+              type="date"
+              value={dataInicio}
+              onChange={e => {
+                setDataInicio(e.target.value);
+                setFiltroTemporal('manual');
+                setMesAtivo(0);
+                setTrimestreAtivo(null);
+              }}
+              className="text-[11px] font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-1.5 py-0.5 text-foreground cursor-pointer"
+              title="Data de Emissão Inicial"
+            />
+            <span className="text-slate-400">—</span>
+            <input
+              type="date"
+              value={dataFim}
+              onChange={e => {
+                setDataFim(e.target.value);
+                setFiltroTemporal('manual');
+                setMesAtivo(0);
+                setTrimestreAtivo(null);
+              }}
+              className="text-[11px] font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-1.5 py-0.5 text-foreground cursor-pointer"
+              title="Data de Emissão Final"
+            />
+          </div>
+        </div>
       </div>
 
       {/* 4. Tabela de Documentos Anulados e Inconformidades */}
       <div className="flex-1 min-h-0 bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] shadow-2xs overflow-hidden flex flex-col relative">
+        <div className="relative evo-card-signature flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 border-b border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] shrink-0 before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+          <div className="flex items-center flex-wrap gap-2">
+            <span className="text-xs font-mono font-bold uppercase tracking-wider text-foreground">
+              Registos de Anulação e Inconformidades
+            </span>
+            <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] text-[10.5px] font-mono font-bold text-foreground tabular-nums">
+              {anuladas.length.toLocaleString('pt-PT')} / {totalFiltrado.toLocaleString('pt-PT')}
+            </span>
+            {nifFiltro ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-600 text-[11px] font-mono text-[#0284c7] dark:text-sky-300 font-bold">
+                <span>{ofuscarNif(nifFiltro)}</span>
+                <span>·</span>
+                <span className="font-sans truncate max-w-[260px]">
+                  {ofuscarNome(resolverNomeEntidade(nifFiltro), nifFiltro)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setNifFiltro('')}
+                  title="Limpar filtro de empresa"
+                  className="ml-1 hover:opacity-75 cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ) : (
+              <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">
+                Todas as Empresas ({entidadesCombobox.length})
+              </span>
+            )}
+          </div>
+          <div className="text-[11px] font-mono text-slate-600 dark:text-slate-300 tabular-nums">
+            Total Anulado: <strong className="text-foreground">{formatarMoeda(somaTotal)} €</strong>
+          </div>
+        </div>
+
         {carregando && (
           <div className="absolute inset-0 bg-white dark:bg-[#0c1520] flex items-center justify-center z-30">
             <div className="flex items-center space-x-2 px-4 py-2 rounded-md bg-slate-100 dark:bg-[#132233] border border-[#d7e0ea] dark:border-[#222f3e] shadow-md">
@@ -590,7 +922,7 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
                     Nº Documento / ATCUD {renderSortIcon('fatura')}
                   </th>
                   <th onClick={() => handleSort('nif_cliente')} className="py-2 px-3 cursor-pointer hover:text-[#0284c7]">
-                    Empresa Titular {renderSortIcon('nif_cliente')}
+                    Empresa Nossa {renderSortIcon('nif_cliente')}
                   </th>
                   <th onClick={() => handleSort('contraparte_nome')} className="py-2 px-3 cursor-pointer hover:text-[#0284c7]">
                     Contraparte (Emitente / Adquirente) {renderSortIcon('contraparte_nome')}
@@ -616,6 +948,8 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
                 {anuladas.map((item, idx) => {
                   const isVendas = item.modulo === 'vendas';
                   const isForense = item.is_inconformidade;
+                  const nomeEmpresaNossa = resolverNomeEntidade(item.nif_cliente, item.nome_cliente);
+                  const nomeContraparte = resolverNomeEntidade(item.contraparte_nif, item.contraparte_nome);
 
                   return (
                     <tr key={`${item.id_fatura_unico}_${idx}`} className="hover:bg-slate-50 dark:hover:bg-[#111d2b] transition-colors">
@@ -624,13 +958,14 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
                       </td>
                       <td className="py-2 px-2 text-center whitespace-nowrap">
                         <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
                             isVendas
-                              ? 'bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border-sky-300 dark:border-sky-700'
-                              : 'bg-emerald-50 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700'
+                              ? 'bg-emerald-50 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700'
+                              : 'bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border-sky-300 dark:border-sky-700'
                           }`}
                         >
-                          {isVendas ? 'Vendas' : 'Compras'}
+                          {isVendas ? <TrendingUp className="w-3 h-3" /> : <ShoppingCart className="w-3 h-3" />}
+                          <span>{isVendas ? 'Vendas' : 'Compras'}</span>
                         </span>
                       </td>
                       <td className="py-2 px-2.5 whitespace-nowrap text-slate-700 dark:text-slate-300 font-semibold">
@@ -642,17 +977,17 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
                           <div className="text-[10px] font-normal text-slate-500">{item.atcud}</div>
                         )}
                       </td>
-                      <td className="py-2 px-3 max-w-[200px] truncate" title={`${item.nif_cliente} · ${item.nome_cliente}`}>
-                        <span className="font-bold text-foreground">{ofuscarNif(item.nif_cliente)}</span>
-                        <span className="text-slate-600 dark:text-slate-300 ml-1.5 font-sans text-[11px]">
-                          {ofuscarNome(item.nome_cliente, item.nif_cliente)}
-                        </span>
+                      <td className="py-2 px-3 max-w-[230px]" title={`${item.nif_cliente} · ${nomeEmpresaNossa}`}>
+                        <div className="font-bold text-[#0284c7] dark:text-sky-400 text-[11px]">{ofuscarNif(item.nif_cliente)}</div>
+                        <div className="text-slate-700 dark:text-slate-300 font-sans text-[11px] font-medium truncate">
+                          {ofuscarNome(nomeEmpresaNossa, item.nif_cliente)}
+                        </div>
                       </td>
-                      <td className="py-2 px-3 max-w-[220px] truncate" title={`${item.contraparte_nif} · ${item.contraparte_nome}`}>
-                        <span className="font-bold text-foreground">{ofuscarNif(item.contraparte_nif)}</span>
-                        <span className="text-slate-700 dark:text-slate-200 ml-1.5 font-sans text-[11px]">
-                          {ofuscarNome(item.contraparte_nome, item.contraparte_nif)}
-                        </span>
+                      <td className="py-2 px-3 max-w-[240px]" title={`${item.contraparte_nif} · ${nomeContraparte}`}>
+                        <div className="font-bold text-foreground text-[11px]">{ofuscarNif(item.contraparte_nif || '—')}</div>
+                        <div className="text-slate-700 dark:text-slate-200 font-sans text-[11px] truncate">
+                          {item.contraparte_nif ? ofuscarNome(nomeContraparte, item.contraparte_nif) : '—'}
+                        </div>
                       </td>
                       <td className="py-2 px-2.5 text-right tabular-nums whitespace-nowrap text-slate-700 dark:text-slate-300">
                         {formatarMoeda(item.total_liquido)}
@@ -743,24 +1078,22 @@ export function InconformidadesView({ onApiStatusChange, modoPrivacidade = false
               {/* Seleção de Empresa */}
               <div>
                 <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 block mb-1">
-                  Empresa Titular:
+                  Empresa Nossa:
                 </label>
-                <select
+                <EmpresaSelectorCombobox
+                  entidades={entidadesCombobox}
                   value={scrapeNif}
-                  onChange={e => setScrapeNif(e.target.value)}
+                  onChange={setScrapeNif}
+                  modoPrivacidade={modoPrivacidade}
+                  allowAll={modoSync === 'lote'}
+                  allLabel="Todas as Empresas com Senha AT"
+                  placeholder="Pesquisar NIF, nome ou código..."
                   disabled={scrapeExecutando}
-                  className="w-full bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded p-2 text-foreground cursor-pointer"
-                >
-                  {modoSync === 'lote' && <option value="">Todas as Empresas com Senha AT</option>}
-                  {entidades.map(ent => {
-                    const n = (ent.nif || ent.nif_cc || '').trim();
-                    return (
-                      <option key={ent.id} value={n}>
-                        {ofuscarNif(n)} — {ofuscarNome(ent.nomecli, n)}
-                      </option>
-                    );
-                  })}
-                </select>
+                  className="w-full"
+                  dropdownClassName="w-full"
+                  align="left"
+                  title="Selecionar Empresa para Sincronizar Anulados"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-2">

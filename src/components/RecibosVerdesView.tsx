@@ -11,20 +11,30 @@ import {
   Check,
   FileCheck2,
   Loader2,
-  Building2,
   KeyRound,
-  ExternalLink,
   Save,
   Table2,
   ListFilter,
   Trash2,
-  X
+  X,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  ShoppingCart,
+  TrendingUp,
+  Globe,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpRight
 } from 'lucide-react';
+import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
 
 interface Entidade {
   id: string;
   cod: string;
   nif: string;
+  nif_cc?: string;
   nomecli: string;
   tem_credenciais_at: boolean;
   subutilizador?: string;
@@ -147,9 +157,28 @@ export function RecibosVerdesView({
   const [matrizEmpresas, setMatrizEmpresas] = useState<Record<string, EmpresaMatrizRV>>({});
   const [senhasInvalidas, setSenhasInvalidas] = useState<Record<string, any>>({});
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
-  const [pesquisaMatriz, setPesquisaMatriz] = useState<string>('');
+  const [nifMatrizFiltro, setNifMatrizFiltro] = useState<string>('');
   const [filtroMatriz, setFiltroMatriz] = useState<'todas' | 'com_dados' | 'com_rv' | 'com_rendas'>('todas');
   const [carregandoMatriz, setCarregandoMatriz] = useState<boolean>(false);
+
+  const mapaEntidades = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const ent of entidades) {
+      const n = (ent.nif || '').trim();
+      const ncc = (ent.nif_cc || '').trim();
+      if (n && ent.nomecli) map.set(n, ent.nomecli);
+      if (ncc && ent.nomecli) map.set(ncc, ent.nomecli);
+    }
+    return map;
+  }, [entidades]);
+
+  const resolverNomeEntidade = useCallback(
+    (nif: string, fallback?: string) => {
+      const n = (nif || '').trim();
+      return mapaEntidades.get(n) || fallback || `Entidade ${n}`;
+    },
+    [mapaEntidades]
+  );
 
   // Ordenação da Matriz
   const [sortColMatriz, setSortColMatriz] = useState<string>('total_docs_ano');
@@ -163,8 +192,16 @@ export function RecibosVerdesView({
   const pollingRef = useRef<number | null>(null);
 
   // Estado da Consulta Detalhada de Documentos
+  const hoje = new Date();
+  const anoAtual = hoje.getFullYear();
+  const mesAtual = hoje.getMonth() + 1;
+
   const [nifDetalhe, setNifDetalhe] = useState<string>('');
   const [mesDetalhe, setMesDetalhe] = useState<number>(0); // 0 = Todos os meses
+  const [trimestreDetalhe, setTrimestreDetalhe] = useState<number | null>(null);
+  const [filtroTemporalAtivo, setFiltroTemporalAtivo] = useState<'ano_todo' | 'mes' | 'trimestre' | 'manual'>('ano_todo');
+  const [dataInicioDetalhe, setDataInicioDetalhe] = useState<string>(`${ano}-01-01`);
+  const [dataFimDetalhe, setDataFimDetalhe] = useState<string>(`${ano}-12-31`);
   const [categoriaDetalhe, setCategoriaDetalhe] = useState<'todos' | 'rv' | 'rendas'>('todos');
   const [situacaoDetalhe, setSituacaoDetalhe] = useState<string>('');
   const [apenasAnoEmissao, setApenasAnoEmissao] = useState<boolean>(true);
@@ -185,6 +222,24 @@ export function RecibosVerdesView({
   const [carregandoDetalhe, setCarregandoDetalhe] = useState<boolean>(false);
   const [sortColDetalhe, setSortColDetalhe] = useState<string>('dta_emissao');
   const [sortDirDetalhe, setSortDirDetalhe] = useState<'asc' | 'desc'>('desc');
+
+  // Sincronizar datas do filtro temporal quando o ano muda
+  useEffect(() => {
+    if (filtroTemporalAtivo === 'ano_todo') {
+      setDataInicioDetalhe(`${ano}-01-01`);
+      setDataFimDetalhe(`${ano}-12-31`);
+    } else if (filtroTemporalAtivo === 'mes' && mesDetalhe > 0) {
+      const ultimoDia = new Date(ano, mesDetalhe, 0).getDate();
+      setDataInicioDetalhe(`${ano}-${String(mesDetalhe).padStart(2, '0')}-01`);
+      setDataFimDetalhe(`${ano}-${String(mesDetalhe).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`);
+    } else if (filtroTemporalAtivo === 'trimestre' && trimestreDetalhe) {
+      const mIni = (trimestreDetalhe - 1) * 3 + 1;
+      const mFim = trimestreDetalhe * 3;
+      const ultimoDia = new Date(ano, mFim, 0).getDate();
+      setDataInicioDetalhe(`${ano}-${String(mIni).padStart(2, '0')}-01`);
+      setDataFimDetalhe(`${ano}-${String(mFim).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`);
+    }
+  }, [ano, filtroTemporalAtivo, mesDetalhe, trimestreDetalhe]);
 
   const formatarMoeda = (val: number) =>
     (val || 0).toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -262,14 +317,14 @@ export function RecibosVerdesView({
       params.set('tipo', tipoFluxo);
       params.set('ano', String(ano));
       if (nifDetalhe) params.set('nif', nifDetalhe);
-      if (mesDetalhe > 0) params.set('mes', String(mesDetalhe));
+      if (filtroTemporalAtivo === 'mes' && mesDetalhe > 0) params.set('mes', String(mesDetalhe));
       params.set('categoria', categoriaDetalhe);
       if (situacaoDetalhe) params.set('situacao', situacaoDetalhe);
       params.set('apenas_ano_emissao', String(apenasAnoEmissao));
       if (pesquisaDetalhe.trim()) params.set('pesquisa', pesquisaDetalhe.trim());
       params.set('ordenar_por', sortColDetalhe);
       params.set('ordem', sortDirDetalhe);
-      params.set('limite', '500');
+      params.set('limite', filtroTemporalAtivo === 'trimestre' || filtroTemporalAtivo === 'manual' ? '2000' : '500');
 
       const res = await fetch(`http://127.0.0.1:8015/api/recibos-verdes/consultar?${params.toString()}`);
       if (res.ok) {
@@ -294,7 +349,60 @@ export function RecibosVerdesView({
     } finally {
       setCarregandoDetalhe(false);
     }
-  }, [ano, tipoFluxo, nifDetalhe, mesDetalhe, categoriaDetalhe, situacaoDetalhe, apenasAnoEmissao, pesquisaDetalhe, sortColDetalhe, sortDirDetalhe, onApiStatusChange]);
+  }, [ano, tipoFluxo, nifDetalhe, filtroTemporalAtivo, mesDetalhe, categoriaDetalhe, situacaoDetalhe, apenasAnoEmissao, pesquisaDetalhe, sortColDetalhe, sortDirDetalhe, onApiStatusChange]);
+
+  const documentosFiltrados = useMemo(() => {
+    if (filtroTemporalAtivo !== 'trimestre' && filtroTemporalAtivo !== 'manual') {
+      return documentos;
+    }
+    return documentos.filter(doc => {
+      const dt = (doc.dta_emissao || '').slice(0, 10);
+      if (!dt) return false;
+      if (dataInicioDetalhe && dt < dataInicioDetalhe) return false;
+      if (dataFimDetalhe && dt > dataFimDetalhe) return false;
+      return true;
+    });
+  }, [documentos, filtroTemporalAtivo, dataInicioDetalhe, dataFimDetalhe]);
+
+  const resumoExibido = useMemo(() => {
+    if (filtroTemporalAtivo !== 'trimestre' && filtroTemporalAtivo !== 'manual') {
+      return resumoDetalhe;
+    }
+    let total_rv = 0;
+    let total_rendas = 0;
+    let total_anulados = 0;
+    let total_pdfs_baixados = 0;
+    let soma_base = 0;
+    let soma_iva = 0;
+    let soma_irs = 0;
+    let soma_selo = 0;
+    let soma_liquido = 0;
+
+    for (const d of documentosFiltrados) {
+      if (d.tipo_doc === 'RECIBO-RENDA') total_rendas++;
+      else total_rv++;
+      if ((d.situacao || '').toLowerCase().includes('anulado')) total_anulados++;
+      if (d.baixado === 'sim' && d.caminho_pdf) total_pdfs_baixados++;
+      soma_base += d.valor_base || 0;
+      soma_iva += d.valor_iva || 0;
+      soma_irs += d.valor_irs || 0;
+      soma_selo += d.imposto_selo || 0;
+      soma_liquido += d.importancia_recebida || 0;
+    }
+
+    return {
+      total_documentos: documentosFiltrados.length,
+      total_rv,
+      total_rendas,
+      total_anulados,
+      total_pdfs_baixados,
+      soma_base,
+      soma_iva,
+      soma_irs,
+      soma_selo,
+      soma_liquido,
+    };
+  }, [filtroTemporalAtivo, documentosFiltrados, resumoDetalhe]);
 
   useEffect(() => {
     carregarConfigEEntidades();
@@ -542,11 +650,33 @@ export function RecibosVerdesView({
   };
 
   // 7. Construção das Linhas da Matriz com todas as Entidades + NIFs presentes em BdsRV
+  const entidadesCombobox = useMemo(() => {
+    const mapa = new Map<string, Entidade>();
+    for (const e of entidades) {
+      const n = (e.nif || '').trim();
+      if (n) {
+        mapa.set(n, { ...e, nomecli: resolverNomeEntidade(n, e.nomecli) });
+      }
+    }
+    for (const nifXml of Object.keys(matrizEmpresas)) {
+      if (!mapa.has(nifXml)) {
+        mapa.set(nifXml, {
+          id: nifXml,
+          cod: '',
+          nif: nifXml,
+          nomecli: resolverNomeEntidade(nifXml, `Entidade ${nifXml}`),
+          tem_credenciais_at: false,
+        });
+      }
+    }
+    return Array.from(mapa.values()).sort((a, b) => (a.nomecli || '').localeCompare(b.nomecli || ''));
+  }, [entidades, matrizEmpresas, resolverNomeEntidade]);
+
   const linhasMatriz = useMemo(() => {
     const mapaEnt = new Map<string, Entidade>();
     for (const e of entidades) {
       const n = (e.nif || '').trim();
-      if (n) mapaEnt.set(n, e);
+      if (n) mapaEnt.set(n, { ...e, nomecli: resolverNomeEntidade(n, e.nomecli) });
     }
     for (const nifXml of Object.keys(matrizEmpresas)) {
       if (!mapaEnt.has(nifXml)) {
@@ -554,24 +684,18 @@ export function RecibosVerdesView({
           id: nifXml,
           cod: '',
           nif: nifXml,
-          nomecli: `Entidade ${nifXml}`,
+          nomecli: resolverNomeEntidade(nifXml, `Entidade ${nifXml}`),
           tem_credenciais_at: false,
         });
       }
     }
 
-    const termo = pesquisaMatriz.trim().toLowerCase();
     const lista = Array.from(mapaEnt.values()).filter(ent => {
       const dados = matrizEmpresas[ent.nif];
       if (filtroMatriz === 'com_dados' && (!dados || dados.total_docs_ano === 0)) return false;
       if (filtroMatriz === 'com_rv' && (!dados || dados.total_rv_ano === 0)) return false;
       if (filtroMatriz === 'com_rendas' && (!dados || dados.total_rendas_ano === 0)) return false;
-      if (termo) {
-        const matchNif = ent.nif.toLowerCase().includes(termo);
-        const matchNome = (ent.nomecli || '').toLowerCase().includes(termo);
-        const matchCod = (ent.cod || '').toLowerCase().includes(termo);
-        if (!matchNif && !matchNome && !matchCod) return false;
-      }
+      if (nifMatrizFiltro && ent.nif !== nifMatrizFiltro) return false;
       return true;
     });
 
@@ -599,7 +723,7 @@ export function RecibosVerdesView({
     });
 
     return lista;
-  }, [entidades, matrizEmpresas, pesquisaMatriz, filtroMatriz, sortColMatriz, sortDirMatriz]);
+  }, [entidades, matrizEmpresas, nifMatrizFiltro, filtroMatriz, sortColMatriz, sortDirMatriz, resolverNomeEntidade]);
 
   // Totais Globais da Matriz
   const totaisGlobaisMatriz = useMemo(() => {
@@ -633,8 +757,10 @@ export function RecibosVerdesView({
   };
 
   const renderSortIconMatriz = (col: string) => {
-    if (sortColMatriz !== col) return <span className="text-slate-400 dark:text-slate-500 ml-1">⇅</span>;
-    return <span className="text-[#0284c7] dark:text-sky-400 ml-1">{sortDirMatriz === 'asc' ? '▲' : '▼'}</span>;
+    if (sortColMatriz !== col) return <ArrowUpDown className="w-3 h-3 text-slate-400 dark:text-slate-500 ml-1 inline shrink-0" />;
+    return sortDirMatriz === 'asc'
+      ? <ArrowUp className="w-3 h-3 text-[#0284c7] dark:text-sky-400 ml-1 inline shrink-0" />
+      : <ArrowDown className="w-3 h-3 text-[#0284c7] dark:text-sky-400 ml-1 inline shrink-0" />;
   };
 
   const handleSortDetalhe = (col: string) => {
@@ -647,8 +773,10 @@ export function RecibosVerdesView({
   };
 
   const renderSortIconDetalhe = (col: string) => {
-    if (sortColDetalhe !== col) return <span className="text-slate-400 dark:text-slate-500 ml-1">⇅</span>;
-    return <span className="text-[#0284c7] dark:text-sky-400 ml-1">{sortDirDetalhe === 'asc' ? '▲' : '▼'}</span>;
+    if (sortColDetalhe !== col) return <ArrowUpDown className="w-3 h-3 text-slate-400 dark:text-slate-500 ml-1 inline shrink-0" />;
+    return sortDirDetalhe === 'asc'
+      ? <ArrowUp className="w-3 h-3 text-[#0284c7] dark:text-sky-400 ml-1 inline shrink-0" />
+      : <ArrowDown className="w-3 h-3 text-[#0284c7] dark:text-sky-400 ml-1 inline shrink-0" />;
   };
 
   const toggleSelecionarTodas = () => {
@@ -668,9 +796,45 @@ export function RecibosVerdesView({
     });
   };
 
+  const aplicarAnoTodo = () => {
+    setFiltroTemporalAtivo('ano_todo');
+    setMesDetalhe(0);
+    setTrimestreDetalhe(null);
+  };
+
+  const aplicarMesAtual = () => {
+    if (ano !== anoAtual) onAnoChange(anoAtual);
+    setFiltroTemporalAtivo('mes');
+    setMesDetalhe(mesAtual);
+    setTrimestreDetalhe(null);
+  };
+
+  const aplicarMesEspecifico = (m: number) => {
+    if (m === 0) {
+      aplicarAnoTodo();
+      return;
+    }
+    setFiltroTemporalAtivo('mes');
+    setMesDetalhe(m);
+    setTrimestreDetalhe(null);
+  };
+
+  const aplicarTrimestre = (t: number) => {
+    setFiltroTemporalAtivo('trimestre');
+    setTrimestreDetalhe(t);
+    setMesDetalhe(0);
+  };
+
   const abrirDrilldown = (nif: string, mes: number = 0, categoria: 'todos' | 'rv' | 'rendas' = 'todos') => {
     setNifDetalhe(nif);
-    setMesDetalhe(mes);
+    setTrimestreDetalhe(null);
+    if (mes > 0) {
+      setFiltroTemporalAtivo('mes');
+      setMesDetalhe(mes);
+    } else {
+      setFiltroTemporalAtivo('ano_todo');
+      setMesDetalhe(0);
+    }
     setCategoriaDetalhe(categoria);
     setVista('documentos');
   };
@@ -686,9 +850,13 @@ export function RecibosVerdesView({
             </span>
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
           </div>
-          <h1 className="text-xl text-foreground font-display font-light tracking-tight flex items-center space-x-2 mt-0.5">
+          <h1 className="text-xl text-foreground font-display font-light tracking-tight flex items-center flex-wrap gap-2 mt-0.5">
             <FileText className="w-5 h-5 text-[#0284c7] dark:text-sky-400 shrink-0" />
             <span>Recibos Verdes e Recibos de Renda</span>
+            <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-mono font-bold bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border border-[#0284c7] dark:border-sky-700 shadow-2xs">
+              <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+              Exercício {ano}
+            </span>
           </h1>
         </div>
 
@@ -727,39 +895,57 @@ export function RecibosVerdesView({
             <button
               type="button"
               onClick={() => setTipoFluxo('compras')}
-              className={`px-2.5 py-1 rounded text-xs font-mono font-semibold cursor-pointer transition ${
+              className={`px-2.5 py-1 rounded text-xs font-mono font-semibold flex items-center space-x-1.5 cursor-pointer transition ${
                 tipoFluxo === 'compras'
-                  ? 'bg-emerald-600 text-white'
-                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#152334]'
-              }`}
-            >
-              Adquirente / Locatário (C)
-            </button>
-            <button
-              type="button"
-              onClick={() => setTipoFluxo('vendas')}
-              className={`px-2.5 py-1 rounded text-xs font-mono font-semibold cursor-pointer transition ${
-                tipoFluxo === 'vendas'
                   ? 'bg-[#0284c7] text-white'
                   : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#152334]'
               }`}
             >
-              Prestador / Senhorio (V)
+              <ShoppingCart className="w-3.5 h-3.5" />
+              <span>Compras (Adquirente)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTipoFluxo('vendas')}
+              className={`px-2.5 py-1 rounded text-xs font-mono font-semibold flex items-center space-x-1.5 cursor-pointer transition ${
+                tipoFluxo === 'vendas'
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#152334]'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span>Vendas (Prestador)</span>
             </button>
           </div>
 
-          {/* Seletor de Ano */}
-          <select
-            value={ano}
-            onChange={e => onAnoChange(parseInt(e.target.value, 10))}
-            className="px-2.5 py-1.5 rounded-md bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] text-xs font-mono font-bold text-foreground cursor-pointer"
-          >
-            {[2026, 2025, 2024, 2023, 2022, 2021, 2020].map(y => (
-              <option key={y} value={y}>
-                Ano {y}
-              </option>
-            ))}
-          </select>
+          {/* Seletor de Exercício (< Ano >) */}
+          <div className="flex items-center space-x-1 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-500 rounded-md px-2 py-1 shadow-2xs">
+            <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+            <button
+              type="button"
+              onClick={() => onAnoChange(ano - 1)}
+              className="p-0.5 hover:bg-sky-200 dark:hover:bg-[#14304d] rounded text-foreground transition-colors cursor-pointer"
+              title="Exercício Anterior"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <span className="font-mono font-bold text-xs text-foreground dark:text-white px-1 min-w-[38px] text-center">
+              {ano}
+            </span>
+            <button
+              type="button"
+              onClick={() => onAnoChange(ano < anoAtual ? ano + 1 : ano)}
+              disabled={ano >= anoAtual}
+              className={`p-0.5 rounded transition-colors ${
+                ano >= anoAtual
+                  ? 'opacity-25 cursor-not-allowed text-slate-400'
+                  : 'hover:bg-sky-200 dark:hover:bg-[#14304d] text-foreground cursor-pointer'
+              }`}
+              title="Exercício Seguinte"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
 
           {/* Botão Atualizar */}
           <button
@@ -805,7 +991,7 @@ export function RecibosVerdesView({
             </span>
             <div className="flex items-baseline space-x-2 mt-0.5">
               <span className="text-lg font-mono font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
-                {(vista === 'documentos' ? resumoDetalhe.total_rv : totaisGlobaisMatriz.totalRv).toLocaleString('pt-PT')}
+                {(vista === 'documentos' ? resumoExibido.total_rv : totaisGlobaisMatriz.totalRv).toLocaleString('pt-PT')}
               </span>
               <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">documentos</span>
             </div>
@@ -826,7 +1012,7 @@ export function RecibosVerdesView({
             </span>
             <div className="flex items-baseline space-x-2 mt-0.5">
               <span className="text-lg font-mono font-bold text-[#0284c7] dark:text-sky-400 tabular-nums">
-                {(vista === 'documentos' ? resumoDetalhe.total_rendas : totaisGlobaisMatriz.totalRendas).toLocaleString('pt-PT')}
+                {(vista === 'documentos' ? resumoExibido.total_rendas : totaisGlobaisMatriz.totalRendas).toLocaleString('pt-PT')}
               </span>
               <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">recibos</span>
             </div>
@@ -844,7 +1030,7 @@ export function RecibosVerdesView({
             </span>
             <div className="flex items-baseline space-x-2 mt-0.5">
               <span className="text-lg font-mono font-bold text-amber-700 dark:text-amber-400 tabular-nums">
-                {(vista === 'documentos' ? resumoDetalhe.total_pdfs_baixados : totaisGlobaisMatriz.totalPdfs).toLocaleString('pt-PT')}
+                {(vista === 'documentos' ? resumoExibido.total_pdfs_baixados : totaisGlobaisMatriz.totalPdfs).toLocaleString('pt-PT')}
               </span>
               <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">ficheiros PDF</span>
             </div>
@@ -867,10 +1053,10 @@ export function RecibosVerdesView({
             </span>
             <div className="flex items-baseline space-x-2 mt-0.5">
               <span className="text-lg font-mono font-bold text-foreground tabular-nums">
-                {formatarMoeda(vista === 'documentos' ? resumoDetalhe.soma_base : totaisGlobaisMatriz.totalBase)} €
+                {formatarMoeda(vista === 'documentos' ? resumoExibido.soma_base : totaisGlobaisMatriz.totalBase)} €
               </span>
               <span className="text-[10px] font-mono text-slate-600 dark:text-slate-300">
-                IRS: {formatarMoeda(vista === 'documentos' ? resumoDetalhe.soma_irs : totaisGlobaisMatriz.totalIrs)} €
+                IRS: {formatarMoeda(vista === 'documentos' ? resumoExibido.soma_irs : totaisGlobaisMatriz.totalIrs)} €
               </span>
             </div>
           </div>
@@ -1030,16 +1216,18 @@ export function RecibosVerdesView({
           {/* Barra de Pesquisa e Filtros da Matriz */}
           <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2 shadow-2xs flex flex-wrap items-center justify-between gap-2 shrink-0">
             <div className="flex flex-wrap items-center gap-2 flex-1">
-              <div className="relative min-w-[240px] max-w-[340px] flex-1">
-                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
-                <input
-                  type="text"
-                  placeholder="Filtrar empresa por NIF, nome ou código..."
-                  value={pesquisaMatriz}
-                  onChange={e => setPesquisaMatriz(e.target.value)}
-                  className="w-full text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded pl-8 pr-2 py-1 text-foreground"
-                />
-              </div>
+              <EmpresaSelectorCombobox
+                entidades={entidadesCombobox}
+                value={nifMatrizFiltro}
+                onChange={setNifMatrizFiltro}
+                modoPrivacidade={modoPrivacidade}
+                allLabel={`Todas as Empresas (${entidadesCombobox.length})`}
+                placeholder="Pesquisar NIF, nome ou código..."
+                className="min-w-[260px] max-w-[360px]"
+                dropdownClassName="w-80 md:w-[420px]"
+                align="left"
+                title="Pesquisar e selecionar empresa na Matriz"
+              />
 
               <div className="flex items-center space-x-1 bg-slate-100 dark:bg-[#132233] p-1 rounded border border-slate-300 dark:border-[#253a52] text-[11px] font-mono">
                 {[
@@ -1188,19 +1376,41 @@ export function RecibosVerdesView({
                             className="rounded border-slate-400 cursor-pointer"
                           />
                         </td>
-                        <td className="py-1.5 px-2 font-bold text-foreground whitespace-nowrap">
-                          <div className="flex items-center space-x-1">
-                            <span>{ofuscarNif(ent.nif)}</span>
-                            {senhaInvalida && (
-                              <span title="Senha recusada pela AT" className="text-rose-600 dark:text-rose-400">
-                                <KeyRound className="w-3 h-3" />
-                              </span>
-                            )}
+                        <td className="py-1.5 px-2 font-bold text-[#0284c7] dark:text-sky-400 whitespace-nowrap">
+                          <div className="flex items-center justify-between space-x-1 group/nif">
+                            <div className="flex items-center space-x-1">
+                              <span>{ofuscarNif(ent.nif)}</span>
+                              {senhaInvalida && (
+                                <span title="Senha recusada pela AT" className="text-rose-600 dark:text-rose-400">
+                                  <KeyRound className="w-3 h-3" />
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                abrirPortalBrowser(ent.nif, resolverNomeEntidade(ent.nif, ent.nomecli));
+                              }}
+                              disabled={loginEmCurso === ent.nif}
+                              title={`Abrir Portal das Finanças autenticado (${resolverNomeEntidade(ent.nif, ent.nomecli)})`}
+                              className={`p-1 rounded transition-all cursor-pointer ${
+                                loginEmCurso === ent.nif
+                                  ? 'opacity-100 bg-sky-100 dark:bg-[#14304d] text-[#0284c7] dark:text-sky-300'
+                                  : 'opacity-40 group-hover/nif:opacity-100 hover:opacity-100 hover:bg-sky-100 dark:hover:bg-[#14304d] text-slate-500 dark:text-slate-400 hover:text-[#0284c7] dark:hover:text-sky-300'
+                              }`}
+                            >
+                              {loginEmCurso === ent.nif ? (
+                                <Loader2 className="w-3 h-3 animate-spin text-[#0284c7]" />
+                              ) : (
+                                <Globe className="w-3 h-3" />
+                              )}
+                            </button>
                           </div>
                         </td>
                         <td className="py-1.5 px-2 max-w-[230px]">
-                          <div className="truncate font-sans font-medium text-foreground" title={ofuscarNome(ent.nomecli, ent.nif)}>
-                            {ofuscarNome(ent.nomecli, ent.nif)}
+                          <div className="truncate font-sans font-medium text-foreground" title={ofuscarNome(resolverNomeEntidade(ent.nif, ent.nomecli), ent.nif)}>
+                            {ofuscarNome(resolverNomeEntidade(ent.nif, ent.nomecli), ent.nif)}
                           </div>
                           {job && (
                             <div className="mt-0.5 flex items-center space-x-1.5 text-[10px]">
@@ -1235,9 +1445,10 @@ export function RecibosVerdesView({
                                   type="button"
                                   onClick={() => abrirDrilldown(ent.nif, mNum, 'todos')}
                                   title={`Mês ${mNum}: ${rvMes} Recibo(s) Verde(s) + ${rrMes} Recibo(s) de Renda · Base: ${formatarMoeda(mInfo?.base || 0)} € · Clique para ver documentos`}
-                                  className="px-1.5 py-0.5 rounded text-[11px] font-bold tabular-nums cursor-pointer bg-emerald-50 dark:bg-[#09221c] text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 dark:hover:bg-[#0f332a]"
+                                  className="group/badge inline-flex items-center space-x-0.5 px-1.5 py-0.5 rounded text-[11px] font-bold tabular-nums cursor-pointer bg-emerald-50 dark:bg-[#09221c] text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 dark:hover:bg-[#0f332a]"
                                 >
-                                  {docsMes}
+                                  <span>{docsMes}</span>
+                                  <ArrowUpRight className="w-2.5 h-2.5 opacity-60 group-hover/badge:opacity-100 shrink-0" />
                                 </button>
                               ) : (
                                 <span className="text-slate-300 dark:text-slate-700">·</span>
@@ -1283,7 +1494,7 @@ export function RecibosVerdesView({
                             </button>
                             <button
                               type="button"
-                              onClick={() => abrirPortalBrowser(ent.nif, ent.nomecli)}
+                              onClick={() => abrirPortalBrowser(ent.nif, resolverNomeEntidade(ent.nif, ent.nomecli))}
                               disabled={loginEmCurso === ent.nif}
                               title="Abrir Portal das Finanças autenticado no navegador"
                               className="p-1 rounded bg-slate-100 dark:bg-[#16273b] border border-slate-300 dark:border-[#2a405a] text-slate-700 dark:text-slate-200 hover:border-[#0284c7] disabled:opacity-50 cursor-pointer"
@@ -1291,7 +1502,7 @@ export function RecibosVerdesView({
                               {loginEmCurso === ent.nif ? (
                                 <Loader2 className="w-3 h-3 animate-spin text-[#0284c7]" />
                               ) : (
-                                <ExternalLink className="w-3 h-3" />
+                                <Globe className="w-3 h-3" />
                               )}
                             </button>
                             {dados?.caminho_xml && (
@@ -1327,106 +1538,206 @@ export function RecibosVerdesView({
       ) : (
         /* VISTA DE CONSULTA DETALHADA DE DOCUMENTOS (RECIBOS VERDES & RENDAS) */
         <>
-          {/* Barra de Filtros de Documentos */}
-          <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 shadow-2xs flex flex-wrap items-center justify-between gap-2 shrink-0">
-            <div className="flex flex-wrap items-center gap-2 flex-1">
-              {/* Filtro de Categoria: Todos vs Recibos Verdes vs Rendas */}
-              <div className="flex items-center space-x-1 bg-slate-100 dark:bg-[#132233] p-1 rounded border border-slate-300 dark:border-[#253a52] text-xs font-mono">
-                <button
-                  type="button"
-                  onClick={() => setCategoriaDetalhe('todos')}
-                  className={`px-2.5 py-0.5 rounded font-semibold cursor-pointer ${
-                    categoriaDetalhe === 'todos' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  Todos ({resumoDetalhe.total_documentos})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCategoriaDetalhe('rv')}
-                  className={`px-2.5 py-0.5 rounded font-semibold cursor-pointer ${
-                    categoriaDetalhe === 'rv' ? 'bg-emerald-600 text-white' : 'text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  Recibos Verdes ({resumoDetalhe.total_rv})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCategoriaDetalhe('rendas')}
-                  className={`px-2.5 py-0.5 rounded font-semibold cursor-pointer ${
-                    categoriaDetalhe === 'rendas' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  Recibos de Renda ({resumoDetalhe.total_rendas})
-                </button>
-              </div>
+          {/* Barra de Filtros e Seletores Temporais de Documentos */}
+          <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 shadow-2xs flex flex-col gap-2 shrink-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2 flex-1">
+                {/* Filtro de Categoria: Todos vs Recibos Verdes vs Rendas */}
+                <div className="flex items-center space-x-1 bg-slate-100 dark:bg-[#132233] p-1 rounded border border-slate-300 dark:border-[#253a52] text-xs font-mono">
+                  <button
+                    type="button"
+                    onClick={() => setCategoriaDetalhe('todos')}
+                    className={`px-2.5 py-0.5 rounded font-semibold cursor-pointer ${
+                      categoriaDetalhe === 'todos' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    Todos ({resumoExibido.total_documentos})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCategoriaDetalhe('rv')}
+                    className={`px-2.5 py-0.5 rounded font-semibold cursor-pointer ${
+                      categoriaDetalhe === 'rv' ? 'bg-emerald-600 text-white' : 'text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    Recibos Verdes ({resumoExibido.total_rv})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCategoriaDetalhe('rendas')}
+                    className={`px-2.5 py-0.5 rounded font-semibold cursor-pointer ${
+                      categoriaDetalhe === 'rendas' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    Recibos de Renda ({resumoExibido.total_rendas})
+                  </button>
+                </div>
 
-              {/* Seletor de Entidade */}
-              <div className="flex items-center space-x-1.5 min-w-[200px] max-w-[260px]">
-                <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                <select
+                {/* Seletor de Entidade (Combobox com seleção prévia) */}
+                <EmpresaSelectorCombobox
+                  entidades={entidadesCombobox}
                   value={nifDetalhe}
-                  onChange={e => setNifDetalhe(e.target.value)}
-                  className="w-full text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1 text-foreground cursor-pointer truncate"
+                  onChange={setNifDetalhe}
+                  modoPrivacidade={modoPrivacidade}
+                  allLabel="Todas as Empresas"
+                  placeholder="Pesquisar NIF, nome ou código..."
+                  className="min-w-[240px] max-w-[320px]"
+                  dropdownClassName="w-80 md:w-[400px]"
+                  align="left"
+                  title="Selecionar Entidade"
+                />
+
+                {/* Situação */}
+                <select
+                  value={situacaoDetalhe}
+                  onChange={e => setSituacaoDetalhe(e.target.value)}
+                  className="text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1.5 text-foreground cursor-pointer"
                 >
-                  <option value="">Todas as Empresas</option>
-                  {Object.keys(matrizEmpresas).map(nifKey => {
-                    const entObj = entidades.find(e => e.nif === nifKey);
-                    const nome = entObj ? entObj.nomecli : `Entidade ${nifKey}`;
-                    return (
-                      <option key={nifKey} value={nifKey}>
-                        {ofuscarNif(nifKey)} · {ofuscarNome(nome, nifKey)}
-                      </option>
-                    );
-                  })}
+                  <option value="">Todas as Situações</option>
+                  <option value="emitido">Emitido</option>
+                  <option value="anulado">Anulado</option>
                 </select>
+
+                {/* Incluir Histórico de Rendas */}
+                <label className="flex items-center space-x-1.5 text-xs font-mono text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!apenasAnoEmissao}
+                    onChange={e => setApenasAnoEmissao(!e.target.checked)}
+                    className="rounded border-slate-400 cursor-pointer"
+                  />
+                  <span>Histórico multi-ano de Rendas</span>
+                </label>
+
+                {/* Pesquisa livre no detalhe */}
+                <div className="relative min-w-[200px] flex-1 max-w-[280px]">
+                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
+                  <input
+                    type="text"
+                    placeholder="Pesquisar NIF, prestador, nº doc..."
+                    value={pesquisaDetalhe}
+                    onChange={e => setPesquisaDetalhe(e.target.value)}
+                    className="w-full text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded pl-8 pr-2 py-1 text-foreground"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Barra Temporal Padronizada (Ano Todo / Mês Atual / T1..T4 / Jan..Dez / Datas Início-Fim) */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200 dark:border-[#1e2c3d] text-[10.5px] font-mono">
+              <div className="flex items-center space-x-1 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-700 rounded px-1.5 py-0.5 mr-1">
+                <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+                <button
+                  type="button"
+                  onClick={() => onAnoChange(ano - 1)}
+                  className="p-0.5 hover:bg-sky-200 dark:hover:bg-[#14304d] rounded cursor-pointer"
+                  title="Exercício Anterior"
+                >
+                  <ChevronLeft className="w-3 h-3" />
+                </button>
+                <span className="font-bold text-foreground px-0.5">{ano}</span>
+                <button
+                  type="button"
+                  onClick={() => onAnoChange(ano < anoAtual ? ano + 1 : ano)}
+                  disabled={ano >= anoAtual}
+                  className={`p-0.5 rounded ${ano >= anoAtual ? 'opacity-25 cursor-not-allowed' : 'hover:bg-sky-200 dark:hover:bg-[#14304d] cursor-pointer'}`}
+                  title="Exercício Seguinte"
+                >
+                  <ChevronRight className="w-3 h-3" />
+                </button>
               </div>
 
-              {/* Seletor de Mês */}
-              <select
-                value={mesDetalhe}
-                onChange={e => setMesDetalhe(parseInt(e.target.value, 10))}
-                className="text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1 text-foreground cursor-pointer"
+              <button
+                type="button"
+                onClick={aplicarAnoTodo}
+                className={`px-2 py-1 rounded border font-semibold cursor-pointer transition ${
+                  filtroTemporalAtivo === 'ano_todo'
+                    ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                    : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
+                }`}
               >
-                <option value={0}>Todos os Meses</option>
-                {MESES_NOMES.map((mNome, idx) => (
-                  <option key={idx + 1} value={idx + 1}>
-                    {idx + 1} - {mNome}
-                  </option>
+                Ano Todo
+              </button>
+
+              {ano === anoAtual && (
+                <button
+                  type="button"
+                  onClick={aplicarMesAtual}
+                  className={`px-2 py-1 rounded border font-semibold cursor-pointer transition ${
+                    filtroTemporalAtivo === 'mes' && mesDetalhe === mesAtual
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
+                  }`}
+                >
+                  Mês Atual
+                </button>
+              )}
+
+              <div className="flex items-center space-x-0.5 border-l border-slate-300 dark:border-[#253a52] pl-1.5">
+                {[1, 2, 3, 4].map(t => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => aplicarTrimestre(t)}
+                    className={`px-1.5 py-1 rounded border font-bold cursor-pointer transition ${
+                      filtroTemporalAtivo === 'trimestre' && trimestreDetalhe === t
+                        ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                        : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
+                    }`}
+                    title={`${t}º Trimestre de ${ano}`}
+                  >
+                    T{t}
+                  </button>
                 ))}
-              </select>
+              </div>
 
-              {/* Situação */}
-              <select
-                value={situacaoDetalhe}
-                onChange={e => setSituacaoDetalhe(e.target.value)}
-                className="text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1 text-foreground cursor-pointer"
-              >
-                <option value="">Todas as Situações</option>
-                <option value="emitido">Emitido</option>
-                <option value="anulado">Anulado</option>
-              </select>
+              <div className="flex flex-wrap items-center gap-0.5 border-l border-slate-300 dark:border-[#253a52] pl-1.5">
+                {MESES_NOMES.map((mNome, idx) => {
+                  const mNum = idx + 1;
+                  const ativo = filtroTemporalAtivo === 'mes' && mesDetalhe === mNum;
+                  return (
+                    <button
+                      key={mNum}
+                      type="button"
+                      onClick={() => aplicarMesEspecifico(mNum)}
+                      className={`px-1.5 py-1 rounded border font-semibold cursor-pointer transition ${
+                        ativo
+                          ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                          : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
+                      }`}
+                    >
+                      {mNome}
+                    </button>
+                  );
+                })}
+              </div>
 
-              {/* Incluir Histórico de Rendas */}
-              <label className="flex items-center space-x-1.5 text-xs font-mono text-slate-700 dark:text-slate-300 cursor-pointer">
+              <div className="flex items-center space-x-1 ml-auto border-l border-slate-300 dark:border-[#253a52] pl-2">
+                <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                 <input
-                  type="checkbox"
-                  checked={!apenasAnoEmissao}
-                  onChange={e => setApenasAnoEmissao(!e.target.checked)}
-                  className="rounded border-slate-400 cursor-pointer"
+                  type="date"
+                  value={dataInicioDetalhe}
+                  onChange={e => {
+                    setDataInicioDetalhe(e.target.value);
+                    setFiltroTemporalAtivo('manual');
+                    setMesDetalhe(0);
+                    setTrimestreDetalhe(null);
+                  }}
+                  className="text-[11px] font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-1.5 py-0.5 text-foreground cursor-pointer"
+                  title="Data Inicial"
                 />
-                <span>Incluir histórico multi-ano de Rendas</span>
-              </label>
-
-              {/* Pesquisa */}
-              <div className="relative min-w-[200px] flex-1 max-w-[300px]">
-                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
+                <span className="text-slate-400">—</span>
                 <input
-                  type="text"
-                  placeholder="Pesquisar NIF, prestador, senhorio, nº doc..."
-                  value={pesquisaDetalhe}
-                  onChange={e => setPesquisaDetalhe(e.target.value)}
-                  className="w-full text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded pl-8 pr-2 py-1 text-foreground"
+                  type="date"
+                  value={dataFimDetalhe}
+                  onChange={e => {
+                    setDataFimDetalhe(e.target.value);
+                    setFiltroTemporalAtivo('manual');
+                    setMesDetalhe(0);
+                    setTrimestreDetalhe(null);
+                  }}
+                  className="text-[11px] font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-1.5 py-0.5 text-foreground cursor-pointer"
+                  title="Data Final"
                 />
               </div>
             </div>
@@ -1434,6 +1745,42 @@ export function RecibosVerdesView({
 
           {/* Tabela Detalhada de Recibos Verdes e Rendas */}
           <div className="flex-1 min-h-0 bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] shadow-2xs overflow-hidden flex flex-col">
+            <div className="relative evo-card-signature flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 border-b border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] shrink-0 before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+              <div className="flex items-center flex-wrap gap-2">
+                <span className="text-xs font-mono font-bold uppercase tracking-wider text-foreground">
+                  Documentos Registados
+                </span>
+                <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] text-[10.5px] font-mono font-bold text-foreground tabular-nums">
+                  {documentosFiltrados.length.toLocaleString('pt-PT')} linhas
+                </span>
+                {nifDetalhe ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-600 text-[11px] font-mono text-[#0284c7] dark:text-sky-300 font-bold">
+                    <span>{ofuscarNif(nifDetalhe)}</span>
+                    <span>·</span>
+                    <span className="font-sans truncate max-w-[260px]">
+                      {ofuscarNome(resolverNomeEntidade(nifDetalhe), nifDetalhe)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setNifDetalhe('')}
+                      title="Limpar filtro de empresa"
+                      className="ml-1 hover:opacity-75 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">
+                    Todas as Empresas
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] font-mono text-slate-600 dark:text-slate-300 tabular-nums">
+                Base: <strong className="text-foreground">{formatarMoeda(resumoExibido.soma_base)} €</strong>
+                <span className="mx-1.5">·</span>
+                Líquido: <strong className="text-foreground">{formatarMoeda(resumoExibido.soma_liquido)} €</strong>
+              </div>
+            </div>
             <div className="flex-1 overflow-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="sticky top-0 bg-slate-100 dark:bg-[#132233] border-b border-[#d7e0ea] dark:border-[#222f3e] z-20">
@@ -1448,10 +1795,10 @@ export function RecibosVerdesView({
                       Nº Doc / ATCUD {renderSortIconDetalhe('n_documento')}
                     </th>
                     <th onClick={() => handleSortDetalhe('nif_cliente')} className="py-2 px-3 cursor-pointer hover:text-[#0284c7]">
-                      Empresa Titular {renderSortIconDetalhe('nif_cliente')}
+                      Empresa Nossa {renderSortIconDetalhe('nif_cliente')}
                     </th>
                     <th onClick={() => handleSortDetalhe('contraparte_nome')} className="py-2 px-3 cursor-pointer hover:text-[#0284c7]">
-                      {tipoFluxo === 'compras' ? 'Prestador / Senhorio' : 'Adquirente / Inquilino'} {renderSortIconDetalhe('contraparte_nome')}
+                      {tipoFluxo === 'compras' ? 'Contraparte (Prestador / Senhorio)' : 'Contraparte (Adquirente / Inquilino)'} {renderSortIconDetalhe('contraparte_nome')}
                     </th>
                     <th onClick={() => handleSortDetalhe('situacao')} className="py-2 px-2 text-center cursor-pointer hover:text-[#0284c7] whitespace-nowrap">
                       Situação {renderSortIconDetalhe('situacao')}
@@ -1474,10 +1821,14 @@ export function RecibosVerdesView({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#d7e0ea] dark:divide-[#1e2c3d] font-mono">
-                  {documentos.map((doc, idx) => {
+                  {documentosFiltrados.map((doc, idx) => {
                     const isRenda = doc.tipo_doc === 'RECIBO-RENDA';
                     const isAnulado = (doc.situacao || '').toLowerCase().includes('anulado');
                     const temPdf = doc.baixado === 'sim' && Boolean(doc.caminho_pdf);
+                    const nomeClienteResolvido = resolverNomeEntidade(doc.nif_cliente, doc.nome_cliente);
+                    const nomeContraparteResolvido = doc.contraparte_nome && doc.contraparte_nome.trim() && doc.contraparte_nome !== doc.contraparte_nif
+                      ? resolverNomeEntidade(doc.contraparte_nif, doc.contraparte_nome)
+                      : resolverNomeEntidade(doc.contraparte_nif, '—');
 
                     return (
                       <tr key={`${doc.id_documento}_${idx}`} className="hover:bg-slate-50 dark:hover:bg-[#111d2b] transition-colors">
@@ -1501,17 +1852,17 @@ export function RecibosVerdesView({
                             <div className="text-[10px] font-normal text-slate-500">{doc.atcud}</div>
                           )}
                         </td>
-                        <td className="py-2 px-3 max-w-[180px] truncate" title={`${doc.nif_cliente} · ${doc.nome_cliente}`}>
-                          <span className="font-bold text-foreground">{ofuscarNif(doc.nif_cliente)}</span>
-                          <span className="text-slate-600 dark:text-slate-300 ml-1.5 font-sans text-[11px]">
-                            {ofuscarNome(doc.nome_cliente, doc.nif_cliente)}
-                          </span>
+                        <td className="py-2 px-3 max-w-[230px]" title={`${doc.nif_cliente} · ${nomeClienteResolvido}`}>
+                          <div className="font-bold text-[#0284c7] dark:text-sky-400 text-[11px]">{ofuscarNif(doc.nif_cliente)}</div>
+                          <div className="text-slate-700 dark:text-slate-300 font-sans text-[11px] font-medium truncate">
+                            {ofuscarNome(nomeClienteResolvido, doc.nif_cliente)}
+                          </div>
                         </td>
-                        <td className="py-2 px-3 max-w-[240px] truncate" title={doc.descricao || doc.contraparte_nome}>
-                          <span className="font-bold text-foreground">{ofuscarNif(doc.contraparte_nif)}</span>
-                          <span className="text-slate-700 dark:text-slate-200 ml-1.5 font-sans text-[11px]">
-                            {ofuscarNome(doc.contraparte_nome, doc.contraparte_nif)}
-                          </span>
+                        <td className="py-2 px-3 max-w-[250px]" title={doc.descricao || `${doc.contraparte_nif} · ${nomeContraparteResolvido}`}>
+                          <div className="font-bold text-foreground text-[11px]">{ofuscarNif(doc.contraparte_nif || '—')}</div>
+                          <div className="text-slate-700 dark:text-slate-200 font-sans text-[11px] truncate">
+                            {doc.contraparte_nif ? ofuscarNome(nomeContraparteResolvido, doc.contraparte_nif) : (doc.contraparte_nome || '—')}
+                          </div>
                         </td>
                         <td className="py-2 px-2 text-center whitespace-nowrap">
                           <span

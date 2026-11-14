@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   FileSpreadsheet,
   Search,
-  Building2,
   Calendar,
   ChevronLeft,
   ChevronRight,
@@ -25,6 +24,7 @@ import {
   Filter,
   FilterX
 } from 'lucide-react';
+import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
 
 function testarFiltroNumerico(valor: number, filtroStr: string): boolean {
   const f = filtroStr.trim().replace(',', '.');
@@ -284,11 +284,6 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
     setFiltrosColunas({});
   };
 
-  // Dropdown Customizado de Entidades (Combobox com Pesquisa e Dark Mode Nativo)
-  const [dropdownEmpresasAberto, setDropdownEmpresasAberto] = useState<boolean>(false);
-  const [pesquisaEmpresa, setPesquisaEmpresa] = useState<string>("");
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
   // Paginação
   const [pagina, setPagina] = useState<number>(1);
   const [limite, setLimite] = useState<number>(200);
@@ -378,17 +373,6 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
   const colunasVisiveisConfig = useMemo(() => {
     return TODAS_AS_COLUNAS.filter(c => colunasAtivas.includes(c.id));
   }, [colunasAtivas]);
-
-  // Fechar dropdown ao clicar fora
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setDropdownEmpresasAberto(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
   // 1. Carregar lista de empresas clientes da API (via tCredenciais.xml / legado_bridge)
   useEffect(() => {
@@ -526,17 +510,6 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
       };
     });
   }, [linhasProcessadas]);
-
-  // Filtro de empresas dentro do Dropdown
-  const entidadesFiltradasDropdown = useMemo(() => {
-    if (!pesquisaEmpresa.trim()) return entidades;
-    const q = pesquisaEmpresa.toLowerCase();
-    return entidades.filter(e =>
-      e.nomecli.toLowerCase().includes(q) ||
-      (e.nif && e.nif.includes(q)) ||
-      (e.nif_cc && e.nif_cc.includes(q))
-    );
-  }, [entidades, pesquisaEmpresa]);
 
   // 3. Execução da Consulta à API Local (:8015)
   const executarConsulta = useCallback(async () => {
@@ -1026,29 +999,29 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
 
       {/* Banner de Execução em Segundo Plano do Worker */}
       {tarefaWorkerNomes && (
-        <div className="bg-sky-500/10 border border-sky-500/30 rounded-md p-2.5 flex items-center justify-between text-xs font-mono text-sky-800 dark:text-sky-300 animate-in fade-in shrink-0">
+        <div className="bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-700 rounded-md p-2.5 flex items-center justify-between text-xs font-mono text-sky-800 dark:text-sky-300 animate-in fade-in shrink-0">
           <div className="flex items-center space-x-2">
             <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-500 shrink-0" />
             <span>
               <strong>Worker 2.º Plano Ativo:</strong> {tarefaWorkerNomes.tipo_tarefa === 'completar_nomes_vendas' ? 'A resolver nomes de clientes particulares (vendas) na base e XMLs...' : 'A extrair faturas anuladas...'} (NIF {tarefaWorkerNomes.nif})
             </span>
           </div>
-          <span className="text-[10px] bg-sky-500/20 text-sky-700 dark:text-sky-300 px-2 py-0.5 rounded font-bold">
+          <span className="text-[10px] bg-[#0284c7] text-white px-2 py-0.5 rounded font-bold">
             Auto-Sync em Background
           </span>
         </div>
       )}
 
       {/* 2. Card de Controlos e Filtros (Padrão Canónico evoGex.com com assinatura lateral) */}
-      <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-2.5 space-y-2.5 shadow-2xs text-foreground flex flex-col shrink-0 overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+      <div className="relative evo-card-signature bg-slate-100 dark:bg-[#122436] rounded-md border border-slate-300 dark:border-[#1e344f] p-2.5 space-y-2.5 shadow-2xs text-foreground flex flex-col shrink-0 overflow-visible before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
         
         {/* Cabeçalho do Card de Filtros */}
-        <div className="px-1 pt-0.5 pb-1.5 flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] text-[10px] font-mono font-bold uppercase tracking-wider text-muted-foreground dark:text-slate-300 select-none">
+        <div className="px-1 pt-0.5 pb-1.5 flex items-center justify-between border-b border-slate-300 dark:border-[#283e58] text-[10px] font-mono font-bold uppercase tracking-wider text-muted-foreground dark:text-slate-300 select-none">
           <div className="flex items-center space-x-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-[#0284c7] dark:bg-sky-400" />
             <span className="text-foreground dark:text-slate-200 font-semibold">Parâmetros de Pesquisa & Filtros</span>
           </div>
-          <span className="text-[9px] font-mono text-muted-foreground dark:text-slate-200 font-bold bg-white/70 dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
+          <span className="text-[9px] font-mono text-slate-700 dark:text-slate-200 font-bold bg-white dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
             {tipoOperacao === 'compras' ? 'Compras / Fornecedores' : 'Vendas / Clientes'}
           </span>
         </div>
@@ -1057,7 +1030,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
         <div className="flex flex-wrap items-center gap-2">
           
           {/* Alternador Compras vs Vendas */}
-          <div className="grid grid-cols-2 gap-1 p-1 bg-white/60 dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded shrink-0">
+          <div className="grid grid-cols-2 gap-1 p-1 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded shrink-0">
             <button
               type="button"
               onClick={() => { setTipoOperacao('compras'); setPagina(1); }}
@@ -1086,141 +1059,22 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
             </button>
           </div>
 
-          {/* Seletor Customizado de Empresa (Combobox com Destaque e Espaço Alargado) */}
-          <div className="relative shrink-0" ref={dropdownRef}>
-            <button
-              type="button"
-              onClick={() => setDropdownEmpresasAberto(v => !v)}
-              className={`flex items-center space-x-2 rounded px-3 py-1.5 text-xs transition cursor-pointer shadow-2xs min-w-[320px] md:min-w-[420px] max-w-[580px] justify-between ${
-                nifSelecionado
-                  ? 'bg-sky-500/10 dark:bg-sky-500/15 border border-sky-500/40 dark:border-sky-400/50 hover:bg-sky-500/15'
-                  : 'bg-white dark:bg-[#0c1520] hover:bg-slate-50 dark:hover:bg-[#152332] border border-slate-300/80 dark:border-[#222f3e]'
-              }`}
-              title="Selecionar empresa para filtrar faturas"
-            >
-              <div className="flex items-center space-x-2 truncate min-w-0">
-                <Building2 className={`w-3.5 h-3.5 shrink-0 ${nifSelecionado ? 'text-[#0284c7] dark:text-sky-400' : 'text-muted-foreground'}`} />
-                <div className="truncate flex items-center space-x-1.5 text-xs">
-                  {nifSelecionado ? (
-                    <>
-                      <span className="font-mono text-[#0284c7] dark:text-sky-400 font-bold bg-white dark:bg-[#07121c] px-1.5 py-0.5 rounded text-[11px] border border-sky-400/30 shrink-0">
-                        {modoPrivacidade ? '■■■■■■■■■' : nifSelecionado}
-                      </span>
-                      <span className={`font-sans font-semibold text-foreground dark:text-slate-100 truncate ${modoPrivacidade ? 'font-mono' : ''}`}>
-                        {modoPrivacidade 
-                          ? mascararTexto(mapaEntidades.get(nifSelecionado) || nifSelecionado)
-                          : (mapaEntidades.get(nifSelecionado) || nifSelecionado)}
-                      </span>
-                    </>
-                  ) : (
-                    <span className="text-muted-foreground dark:text-slate-300 font-medium">Todas as Empresas ({entidades.length})</span>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center space-x-1 shrink-0 ml-1.5">
-                {nifSelecionado && (
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setNifSelecionado("");
-                      setPagina(1);
-                    }}
-                    title="Limpar seleção (mostrar todas)"
-                    className="p-0.5 rounded-full hover:bg-sky-200 dark:hover:bg-sky-900/60 text-muted-foreground hover:text-foreground cursor-pointer transition"
-                  >
-                    <X className="w-3 h-3" />
-                  </span>
-                )}
-                <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${dropdownEmpresasAberto ? 'rotate-180' : ''}`} />
-              </div>
-            </button>
-
-            {/* Menu Popover Dropdown Totalmente Adaptado ao Dark Mode EVO */}
-            {dropdownEmpresasAberto && (
-              <div className="absolute left-0 mt-1 w-96 md:w-[480px] max-w-[92vw] bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] rounded-md shadow-2xl z-50 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100">
-                {/* Campo de Pesquisa Dentro do Dropdown */}
-                <div className="p-2 border-b border-slate-200 dark:border-[#1c2e42] bg-slate-50 dark:bg-[#101b28]">
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-muted-foreground dark:text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Pesquisar NIF ou Nome da Empresa..."
-                      value={pesquisaEmpresa}
-                      onChange={e => setPesquisaEmpresa(e.target.value)}
-                      autoFocus
-                      className="w-full pl-8 pr-7 py-1 bg-white dark:bg-[#07121c] border border-slate-200 dark:border-[#222f3e] rounded text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary font-mono"
-                    />
-                    {pesquisaEmpresa && (
-                      <button
-                        type="button"
-                        onClick={() => setPesquisaEmpresa("")}
-                        className="absolute right-2 top-1.5 text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Lista de Empresas com Scroll */}
-                <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-[#162536]">
-                  {/* Opção Geral: Todas as Empresas */}
-                  <button
-                    type="button"
-                    onClick={() => { setNifSelecionado(""); setDropdownEmpresasAberto(false); setPagina(1); }}
-                    className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between transition cursor-pointer ${
-                      !nifSelecionado
-                        ? 'bg-sky-50 dark:bg-sky-500/15 text-[#0284c7] dark:text-sky-300 font-semibold'
-                        : 'hover:bg-slate-100 dark:hover:bg-[#142333] text-foreground dark:text-slate-200'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500" />
-                      <span>Todas as Empresas</span>
-                    </div>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-[#1a2d42] text-muted-foreground dark:text-slate-400">
-                      {entidades.length}
-                    </span>
-                  </button>
-
-                  {/* Lista Filtrada de Entidades */}
-                  {entidadesFiltradasDropdown.length === 0 ? (
-                    <div className="px-3 py-4 text-center text-xs text-muted-foreground font-mono">
-                      Nenhuma empresa encontrada
-                    </div>
-                  ) : (
-                    entidadesFiltradasDropdown.map(ent => {
-                      const isSelected = nifSelecionado === ent.nif;
-                      return (
-                        <button
-                          key={ent.id}
-                          type="button"
-                          onClick={() => { setNifSelecionado(ent.nif); setDropdownEmpresasAberto(false); setPagina(1); }}
-                          className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between transition cursor-pointer ${
-                            isSelected
-                              ? 'bg-sky-50 dark:bg-sky-500/15 text-foreground font-semibold border-l-2 border-[#0284c7] dark:border-sky-400'
-                              : 'hover:bg-slate-100 dark:hover:bg-[#142333] text-foreground dark:text-slate-200'
-                          }`}
-                        >
-                          <div className="flex flex-col min-w-0 pr-2">
-                            <span className={`truncate font-sans font-medium text-xs text-foreground dark:text-slate-100 ${modoPrivacidade ? 'font-mono' : ''}`}>
-                              {modoPrivacidade ? mascararTexto(ent.nomecli) : ent.nomecli}
-                            </span>
-                            <span className="font-mono text-[10.5px] text-[#0284c7] dark:text-sky-400">
-                              {modoPrivacidade ? '■■■■■■■■■' : ent.nif}
-                            </span>
-                          </div>
-                          {isSelected && (
-                            <Check className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0" />
-                          )}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Seletor Padronizado de Empresa (Combobox com Seleção Prévia) */}
+          <EmpresaSelectorCombobox
+            entidades={entidades}
+            value={nifSelecionado}
+            onChange={(nif) => {
+              setNifSelecionado(nif);
+              setPagina(1);
+            }}
+            modoPrivacidade={modoPrivacidade}
+            allLabel={`Todas as Empresas (${entidades.length})`}
+            placeholder="Pesquisar NIF, nome ou código..."
+            className="min-w-[280px] md:min-w-[380px] max-w-[520px]"
+            dropdownClassName="w-96 md:w-[460px]"
+            align="left"
+            title="Pesquisar e selecionar empresa para filtrar faturas"
+          />
 
           {/* Campo de Pesquisa de Faturas / Contraparte */}
           <div className="relative w-64 md:w-80 shrink-0">
@@ -1230,13 +1084,13 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
               value={pesquisa}
               onChange={e => { setPesquisa(e.target.value); setPagina(1); }}
               placeholder="Pesquisar Fatura, NIF, Nome..."
-              className="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-[#0c1520] border border-slate-300/80 dark:border-[#222f3e] rounded text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary shadow-2xs"
+              className="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] rounded text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary shadow-2xs"
             />
           </div>
 
           {/* Seletor de Taxa de IVA */}
-          <div className="flex items-center space-x-1 bg-white/60 dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] p-1 rounded shrink-0">
-            <span className="text-[10px] font-mono text-muted-foreground dark:text-slate-400 px-1 font-semibold">IVA:</span>
+          <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] p-1 rounded shrink-0">
+            <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 px-1 font-semibold">IVA:</span>
             {[
               { val: "", label: "Todas" },
               { val: "23", label: "23%" },
@@ -1261,10 +1115,10 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
         </div>
 
         {/* Linha 2: Seletor de Exercício + Atalhos Temporais + 12 Meses + Datas Manuais */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/80 dark:border-[#22364c] text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-300 dark:border-[#22364c] text-xs">
           
           {/* Seletor de Ano com Chevrons */}
-          <div className="flex items-center space-x-1.5 shrink-0 bg-white/70 dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#1c2e42]">
+          <div className="flex items-center space-x-1.5 shrink-0 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#1c2e42]">
             <span className="font-mono text-[10px] text-muted-foreground dark:text-slate-400 uppercase tracking-wider font-semibold">
               Ano:
             </span>
@@ -1353,7 +1207,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
           </div>
 
           {/* Intervalo Manual de Datas */}
-          <div className="flex items-center space-x-1.5 font-mono text-xs bg-white/70 dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#1c2e42] shrink-0">
+          <div className="flex items-center space-x-1.5 font-mono text-xs bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#1c2e42] shrink-0">
             <Calendar className="w-3.5 h-3.5 text-muted-foreground dark:text-slate-400 shrink-0" />
             <input
               type="date"
@@ -1372,99 +1226,99 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
         </div>
       </div>
 
-      {/* 3. Ribbon de Cards KPIs Estruturados no Padrão Oficial EVO */}
+      {/* 3. Ribbon de Cards KPIs Estruturados no Padrão Oficial EVO (100% Opacos) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 shrink-0">
         
         {/* Card 1: Documentos Únicos */}
-        <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-2 space-y-1.5 shadow-2xs text-foreground flex flex-col justify-between overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-          <div className="px-1 pt-0.5 pb-1 flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] text-[9.5px] font-mono font-bold uppercase tracking-wider text-muted-foreground dark:text-slate-300 select-none">
+        <div className="relative evo-card-signature bg-slate-100 dark:bg-[#122436] rounded-md border border-slate-300 dark:border-[#1e344f] p-2 space-y-1.5 shadow-2xs text-foreground flex flex-col justify-between overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+          <div className="px-1 pt-0.5 pb-1 flex items-center justify-between border-b border-slate-300 dark:border-[#283e58] text-[9.5px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 select-none">
             <div className="flex items-center space-x-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-[#0284c7] dark:bg-sky-400" />
               <span className="text-foreground dark:text-slate-200 font-semibold">Documentos Únicos</span>
             </div>
-            <Receipt className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 opacity-80" />
+            <Receipt className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
           </div>
-          <div className="px-2.5 py-1.5 bg-white/70 dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded flex items-center justify-between">
+          <div className="px-2.5 py-1.5 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded flex items-center justify-between">
             <span className="text-base font-mono font-bold text-foreground tabular-nums">
               {dados.total_documentos.toLocaleString('pt-PT')}
             </span>
-            <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-sky-500/10 text-[#0284c7] dark:text-sky-400 border border-sky-500/20">
+            <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-400 border border-sky-300 dark:border-sky-800">
               Faturas
             </span>
           </div>
         </div>
 
         {/* Card 2: Total de Linhas */}
-        <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-2 space-y-1.5 shadow-2xs text-foreground flex flex-col justify-between overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-          <div className="px-1 pt-0.5 pb-1 flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] text-[9.5px] font-mono font-bold uppercase tracking-wider text-muted-foreground dark:text-slate-300 select-none">
+        <div className="relative evo-card-signature bg-slate-100 dark:bg-[#122436] rounded-md border border-slate-300 dark:border-[#1e344f] p-2 space-y-1.5 shadow-2xs text-foreground flex flex-col justify-between overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+          <div className="px-1 pt-0.5 pb-1 flex items-center justify-between border-b border-slate-300 dark:border-[#283e58] text-[9.5px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 select-none">
             <div className="flex items-center space-x-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-indigo-400" />
               <span className="text-foreground dark:text-slate-200 font-semibold">Total de Linhas</span>
             </div>
-            <Table2 className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400 opacity-80" />
+            <Table2 className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
           </div>
-          <div className="px-2.5 py-1.5 bg-white/70 dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded flex items-center justify-between">
+          <div className="px-2.5 py-1.5 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded flex items-center justify-between">
             <span className="text-base font-mono font-bold text-foreground tabular-nums">
               {dados.total_linhas.toLocaleString('pt-PT')}
             </span>
-            <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+            <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-indigo-50 dark:bg-[#131730] text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800">
               Linhas
             </span>
           </div>
         </div>
 
         {/* Card 3: Base Incidência */}
-        <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-2 space-y-1.5 shadow-2xs text-foreground flex flex-col justify-between overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-          <div className="px-1 pt-0.5 pb-1 flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] text-[9.5px] font-mono font-bold uppercase tracking-wider text-muted-foreground dark:text-slate-300 select-none">
+        <div className="relative evo-card-signature bg-slate-100 dark:bg-[#122436] rounded-md border border-slate-300 dark:border-[#1e344f] p-2 space-y-1.5 shadow-2xs text-foreground flex flex-col justify-between overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+          <div className="px-1 pt-0.5 pb-1 flex items-center justify-between border-b border-slate-300 dark:border-[#283e58] text-[9.5px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 select-none">
             <div className="flex items-center space-x-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
               <span className="text-foreground dark:text-slate-200 font-semibold">Base Incidência</span>
             </div>
-            <Euro className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400 opacity-80" />
+            <Euro className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
           </div>
-          <div className="px-2.5 py-1.5 bg-white/70 dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded flex items-center justify-between">
+          <div className="px-2.5 py-1.5 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded flex items-center justify-between">
             <span className="text-base font-mono font-bold text-foreground tabular-nums">
               € {dados.soma_base.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+            <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-[#091e1a] text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
               Tributável
             </span>
           </div>
         </div>
 
         {/* Card 4: Total IVA */}
-        <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-2 space-y-1.5 shadow-2xs text-foreground flex flex-col justify-between overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-          <div className="px-1 pt-0.5 pb-1 flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] text-[9.5px] font-mono font-bold uppercase tracking-wider text-muted-foreground dark:text-slate-300 select-none">
+        <div className="relative evo-card-signature bg-slate-100 dark:bg-[#122436] rounded-md border border-slate-300 dark:border-[#1e344f] p-2 space-y-1.5 shadow-2xs text-foreground flex flex-col justify-between overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+          <div className="px-1 pt-0.5 pb-1 flex items-center justify-between border-b border-slate-300 dark:border-[#283e58] text-[9.5px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 select-none">
             <div className="flex items-center space-x-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-[#0284c7] dark:bg-sky-400" />
               <span className="text-foreground dark:text-slate-200 font-semibold">Total IVA</span>
             </div>
-            <Percent className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 opacity-80" />
+            <Percent className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
           </div>
-          <div className="px-2.5 py-1.5 bg-white/70 dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded flex items-center justify-between">
+          <div className="px-2.5 py-1.5 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded flex items-center justify-between">
             <span className="text-base font-mono font-bold text-[#0284c7] dark:text-sky-400 tabular-nums">
               € {dados.soma_iva.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-sky-500/10 text-[#0284c7] dark:text-sky-400 border border-sky-500/20">
+            <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-400 border border-sky-300 dark:border-sky-800">
               Imposto
             </span>
           </div>
         </div>
 
         {/* Card 5: Total Global */}
-        <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-2 space-y-1.5 shadow-2xs text-foreground flex flex-col justify-between col-span-2 sm:col-span-1 overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-          <div className="px-1 pt-0.5 pb-1 flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] text-[9.5px] font-mono font-bold uppercase tracking-wider text-muted-foreground dark:text-slate-300 select-none">
+        <div className="relative evo-card-signature bg-slate-100 dark:bg-[#122436] rounded-md border border-slate-300 dark:border-[#1e344f] p-2 space-y-1.5 shadow-2xs text-foreground flex flex-col justify-between col-span-2 sm:col-span-1 overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+          <div className="px-1 pt-0.5 pb-1 flex items-center justify-between border-b border-slate-300 dark:border-[#283e58] text-[9.5px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 select-none">
             <div className="flex items-center space-x-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400" />
               <span className="text-foreground dark:text-slate-200 font-semibold">Total Global</span>
             </div>
-            <Euro className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 opacity-80" />
+            <Euro className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
           </div>
-          <div className="px-2.5 py-1.5 bg-white/70 dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded flex items-center justify-between">
+          <div className="px-2.5 py-1.5 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded flex items-center justify-between">
             <span className="text-base font-mono font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
               € {dados.soma_total.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+            <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-[#091e1a] text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
               Líquido + IVA
             </span>
           </div>
@@ -1485,11 +1339,11 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
               <span className="font-semibold text-xs text-foreground truncate">
                 Registos de Linhas de Fatura
               </span>
-              <span className="text-[10px] font-mono font-bold uppercase px-2 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30 shrink-0">
+              <span className="text-[10px] font-mono font-bold uppercase px-2 py-0.5 rounded bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border border-sky-300 dark:border-sky-800 shrink-0">
                 {tipoOperacao === 'compras' ? 'Compras e-Fatura' : 'Vendas e-Fatura'}
               </span>
               {nifSelecionado && (
-                <div className="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-md bg-sky-500/10 dark:bg-sky-500/15 border border-sky-400/40 dark:border-sky-500/30 shrink-0 max-w-[460px]">
+                <div className="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-md bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-600 shrink-0 max-w-[460px]">
                   <span className="text-[10px] font-mono font-bold text-[#0284c7] dark:text-sky-400">
                     {modoPrivacidade ? '■■■■■■■■■' : nifSelecionado}
                   </span>

@@ -8,7 +8,6 @@ import {
   ChevronLeft, 
   ChevronRight, 
   Calendar,
-  Search, 
   RefreshCw, 
   ArrowUpDown, 
   ArrowUp, 
@@ -31,9 +30,11 @@ import {
   X
 } from 'lucide-react';
 import { getMotorSource, type MotorSourceType } from '../lib/apiBridge';
+import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
 
 interface Entidade {
   id: string;
+  cod?: string;
   nif: string;
   nif_cc?: string;
   nomecli: string;
@@ -163,7 +164,7 @@ export default function CommandCenter({
 }: CommandCenterProps) {
   const [entidades, setEntidades] = useState<Entidade[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [pesquisa, setPesquisa] = useState<string>("");
+  const [nifFiltroEmpresa, setNifFiltroEmpresa] = useState<string>("");
 
   // Gestão de Concorrência e Telemetria em Tempo Real da Máquina
   const [perfConfig, setPerfConfig] = useState<PerformanceStatus>({
@@ -1285,11 +1286,9 @@ export default function CommandCenter({
   // Filtragem e Ordenação Inteligente com Salto de Jobs Ativos para o Topo
   const entidadesFiltradasEOrdenadas = useMemo(() => {
     const filtradas = entidades.filter(e => {
-      const termo = pesquisa.toLowerCase().trim();
-      if (!termo) return true;
-      const nif = (e.nif || e.nif_cc || '').toLowerCase();
-      const nome = (e.nomecli || '').toLowerCase();
-      return nif.includes(termo) || nome.includes(termo);
+      if (!nifFiltroEmpresa) return true;
+      const nif = (e.nif || e.nif_cc || '').trim();
+      return nif === nifFiltroEmpresa;
     });
 
     return [...filtradas].sort((a, b) => {
@@ -1338,7 +1337,7 @@ export default function CommandCenter({
 
       return sortDir === 'asc' ? comp : -comp;
     });
-  }, [entidades, pesquisa, matriz, estimativasVolume, senhasInvalidas, activeJobs, syncStatus, entidadeErros, sortCol, sortDir, batchSyncIds]);
+  }, [entidades, nifFiltroEmpresa, matriz, estimativasVolume, senhasInvalidas, activeJobs, syncStatus, entidadeErros, sortCol, sortDir, batchSyncIds]);
 
   // Totais agregados calculados para a barra de rodapé e contadores mensais
   const { totalGeralDocs, totaisPorMes } = useMemo(() => {
@@ -1630,7 +1629,7 @@ export default function CommandCenter({
           </span>
           <h1 className="page-title text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center flex-wrap gap-2">
             <span>Matriz de Extração e Controlo e-Fatura</span>
-            <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-mono font-bold bg-[#0284c7]/10 dark:bg-sky-400/15 text-[#0284c7] dark:text-sky-300 border border-[#0284c7]/30 dark:border-sky-500/30 shadow-2xs">
+            <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-mono font-bold bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border border-[#0284c7] dark:border-sky-700 shadow-2xs">
               <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
               Exercício {ano}
             </span>
@@ -1899,12 +1898,12 @@ export default function CommandCenter({
             const isPermissao = alerta.tipo_erro === 'permissao_subuser';
 
             const cardBg = isInvalidPass
-              ? "bg-rose-50/95 dark:bg-[#1c0f16] border-rose-300/80 dark:border-rose-900/60 before:bg-rose-500"
+              ? "bg-rose-50 dark:bg-[#1c0f16] border-rose-300 dark:border-rose-900 before:bg-rose-500"
               : isServerError || isTimeout || isRateLimit
-              ? "bg-amber-50/95 dark:bg-[#1f1a10] border-amber-300/80 dark:border-amber-900/60 before:bg-amber-500"
+              ? "bg-amber-50 dark:bg-[#1f1a10] border-amber-300 dark:border-amber-900 before:bg-amber-500"
               : isPermissao
-              ? "bg-orange-50/95 dark:bg-[#1f140e] border-orange-300/80 dark:border-orange-900/60 before:bg-orange-500"
-              : "bg-rose-50/95 dark:bg-[#1c0f16] border-rose-300/80 dark:border-rose-900/60 before:bg-rose-500";
+              ? "bg-orange-50 dark:bg-[#1f140e] border-orange-300 dark:border-orange-900 before:bg-orange-500"
+              : "bg-rose-50 dark:bg-[#1c0f16] border-rose-300 dark:border-rose-900 before:bg-rose-500";
 
             return (
               <div 
@@ -1984,17 +1983,17 @@ export default function CommandCenter({
         <div className="xl:col-span-3 space-y-3 flex flex-col min-h-0">
           
           {/* Card 1: Seletor Operacional Canónico (Compras vs Vendas) */}
-          <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-2 space-y-2 shadow-2xs text-foreground flex flex-col shrink-0 overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-            <div className="px-1 pt-0.5 pb-1.5 flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] text-[10px] font-mono font-bold uppercase tracking-wider text-muted-foreground dark:text-slate-300 select-none">
+          <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2 space-y-2 shadow-2xs text-foreground flex flex-col shrink-0 overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+            <div className="px-1 pt-0.5 pb-1.5 flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] text-[10px] font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 select-none">
               <div className="flex items-center space-x-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#0284c7] dark:bg-sky-400" />
                 <span className="text-foreground dark:text-slate-200 font-semibold">Operação Fiscal</span>
               </div>
-              <span className="text-[9px] font-mono text-muted-foreground dark:text-slate-200 font-bold bg-white/70 dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
+              <span className="text-[9px] font-mono text-slate-700 dark:text-slate-200 font-bold bg-slate-100 dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
                 {tipoOperacao === 'compras' ? 'Recebidas' : 'Emitidas'}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-1.5 p-1 bg-white/60 dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded">
+            <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 dark:bg-[#132233] border border-slate-200 dark:border-[#1c2e42] rounded">
               <button
                 type="button"
                 onClick={() => setTipoOperacao('compras')}
@@ -2025,13 +2024,13 @@ export default function CommandCenter({
           </div>
 
           {/* Card 2: Ações de Sincronização & Execução */}
-          <div className="relative evo-card-signature bg-slate-100/90 dark:bg-[#122436] rounded-md border border-slate-300/80 dark:border-[#1e344f] p-2.5 space-y-2.5 shadow-2xs text-foreground flex flex-col shrink-0 overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-            <div className="px-1 pt-0.5 pb-1.5 flex items-center justify-between border-b border-slate-300/70 dark:border-[#283e58] text-[10px] font-mono font-bold uppercase tracking-wider text-muted-foreground dark:text-slate-300 select-none">
+          <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 space-y-2.5 shadow-2xs text-foreground flex flex-col shrink-0 overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+            <div className="px-1 pt-0.5 pb-1.5 flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] text-[10px] font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 select-none">
               <div className="flex items-center space-x-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#0284c7] dark:bg-sky-400" />
                 <span className="text-foreground dark:text-slate-200 font-semibold">Extração & Execução</span>
               </div>
-              <span className="text-[9px] font-mono text-muted-foreground dark:text-slate-300 font-bold bg-white/70 dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
+              <span className="text-[9px] font-mono text-slate-700 dark:text-slate-300 font-bold bg-slate-100 dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
                 {meses.size} {meses.size === 1 ? 'Mês' : 'Meses'}
               </span>
             </div>
@@ -2126,14 +2125,14 @@ export default function CommandCenter({
 
             {/* Aviso Informativo de Segundo Plano (Background Autónomo) */}
             {isSyncing ? (
-              <div className="flex items-start space-x-2 p-2 rounded bg-sky-500/10 border border-sky-500/25 text-sky-800 dark:text-sky-300 text-[10px] font-mono leading-relaxed">
+              <div className="flex items-start space-x-2 p-2 rounded bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800 text-sky-800 dark:text-sky-300 text-[10px] font-mono leading-relaxed">
                 <Zap className="w-3.5 h-3.5 text-sky-500 shrink-0 mt-0.5" />
                 <span>
                   <strong className="font-semibold">Segundo Plano Ativo:</strong> Pode fechar esta aplicação a qualquer momento. O motor continuará a descarregar até ao fim. Use <em>"Parar"</em> apenas se quiser cancelar a fila.
                 </span>
               </div>
             ) : (
-              <div className="flex items-start space-x-2 p-2 rounded bg-slate-100/80 dark:bg-[#132232] border border-slate-200 dark:border-border/60 text-muted-foreground text-[10px] font-mono leading-relaxed">
+              <div className="flex items-start space-x-2 p-2 rounded bg-slate-100 dark:bg-[#132232] border border-slate-200 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 text-[10px] font-mono leading-relaxed">
                 <Info className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
                 <span>
                   <strong className="font-semibold text-foreground">Dica:</strong> Após iniciar a sincronização, pode fechar a janela livremente. O motor em background processa todas as empresas selecionadas até ao fim.
@@ -2160,7 +2159,7 @@ export default function CommandCenter({
             {/* Lado Esquerdo: Seletor de Exercício + Atalhos Rápidos + Recarregar */}
             <div className="flex flex-wrap items-center gap-1.5">
               {/* Seletor Executivo de Exercício Fiscal evoGex.com */}
-              <div className="flex items-center space-x-1.5 bg-gradient-to-r from-sky-500/15 via-sky-500/5 to-transparent dark:from-sky-500/20 dark:via-sky-950/40 dark:to-transparent border-2 border-sky-500/40 dark:border-sky-400/50 rounded-lg px-2 py-1 shadow-sm">
+              <div className="flex items-center space-x-1.5 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-500 rounded-lg px-2 py-1 shadow-2xs">
                 <div className="flex items-center space-x-1 text-sky-700 dark:text-sky-300 mr-0.5">
                   <Calendar className="w-4 h-4 shrink-0 text-[#0284c7] dark:text-sky-400" />
                   <span className="text-[10px] font-mono uppercase tracking-wider font-bold hidden sm:inline">Ano</span>
@@ -2168,7 +2167,7 @@ export default function CommandCenter({
                 <button
                   type="button"
                   onClick={() => setAno(a => a - 1)}
-                  className="p-1 hover:bg-sky-500/20 dark:hover:bg-sky-400/20 rounded text-foreground transition-colors cursor-pointer"
+                  className="p-1 hover:bg-sky-200 dark:hover:bg-[#14304d] rounded text-foreground transition-colors cursor-pointer"
                   title="Exercício Anterior"
                 >
                   <ChevronLeft className="w-4 h-4" />
@@ -2183,7 +2182,7 @@ export default function CommandCenter({
                   className={`p-1 rounded transition-colors ${
                     ano >= anoAtual 
                       ? "opacity-20 cursor-not-allowed text-muted-foreground" 
-                      : "hover:bg-sky-500/20 dark:hover:bg-sky-400/20 text-foreground cursor-pointer"
+                      : "hover:bg-sky-200 dark:hover:bg-[#14304d] text-foreground cursor-pointer"
                   }`}
                   title="Exercício Seguinte"
                 >
@@ -2246,20 +2245,22 @@ export default function CommandCenter({
               </button>
             </div>
 
-            {/* Lado Direito: Caixa de Pesquisa e Contador */}
+            {/* Lado Direito: Seletor de Empresa (pesquisa interna + filtro após seleção) e Contador */}
             <div className="flex items-center space-x-2.5 ml-auto">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-muted-foreground" />
-                <input 
-                  type="text"
-                  placeholder="Filtrar por NIF ou Nome..."
-                  value={pesquisa}
-                  onChange={(e) => setPesquisa(e.target.value)}
-                  className="pl-8 pr-3 py-1 bg-white dark:bg-[#07121c] border border-slate-300 dark:border-[#1e344f] rounded text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary transition font-mono w-44 md:w-56"
-                />
-              </div>
+              <EmpresaSelectorCombobox
+                entidades={entidades}
+                value={nifFiltroEmpresa}
+                onChange={setNifFiltroEmpresa}
+                modoPrivacidade={modoPrivacidade}
+                allLabel="Todas as Empresas"
+                placeholder="Pesquisar NIF, nome ou código..."
+                className="min-w-[260px] sm:min-w-[320px] max-w-[400px]"
+                dropdownClassName="w-80 md:w-[420px]"
+                align="right"
+                title="Pesquisar e selecionar empresa na Matriz"
+              />
 
-              <span className="text-xs font-mono text-muted-foreground shrink-0 select-none">
+              <span className="text-xs font-mono text-slate-600 dark:text-slate-300 shrink-0 select-none">
                 <strong className="text-foreground">{entidadesFiltradasEOrdenadas.length}</strong> de {entidades.length}
               </span>
             </div>
@@ -2855,7 +2856,7 @@ export default function CommandCenter({
                 {entidadesFiltradasEOrdenadas.length === 0 && (
                   <tr>
                     <td colSpan={17} className="p-8 text-center text-muted-foreground font-mono text-sm">
-                      Nenhuma empresa encontrada com o filtro "{pesquisa}".
+                      Nenhuma empresa encontrada para a seleção atual.
                     </td>
                   </tr>
                 )}

@@ -273,6 +273,8 @@ function AppContent() {
             />
           ) : activeTab === 'anulados' ? (
             <InconformidadesView
+              ano={anoGlobal}
+              onAnoChange={setAnoGlobal}
               onApiStatusChange={setApiOnline}
               modoPrivacidade={modoPrivacidade}
             />
