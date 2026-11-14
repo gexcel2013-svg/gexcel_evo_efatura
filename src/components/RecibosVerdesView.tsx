@@ -26,9 +26,14 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  ArrowUpRight
+  ArrowUpRight,
+  Sparkles,
+  SlidersHorizontal,
+  ChevronDown
 } from 'lucide-react';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
+import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
+import { obterLocalFsCentroConfig } from '../lib/localFsBridge';
 
 interface Entidade {
   id: string;
@@ -158,8 +163,34 @@ export function RecibosVerdesView({
   const [senhasInvalidas, setSenhasInvalidas] = useState<Record<string, any>>({});
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   const [nifMatrizFiltro, setNifMatrizFiltro] = useState<string>('');
-  const [filtroMatriz, setFiltroMatriz] = useState<'todas' | 'com_dados' | 'com_rv' | 'com_rendas'>('todas');
   const [carregandoMatriz, setCarregandoMatriz] = useState<boolean>(false);
+  const [apiOnlineLocal, setApiOnlineLocal] = useState<boolean | null>(null);
+  const [assistenteAberto, setAssistenteAberto] = useState<boolean>(() => localStorage.getItem('gexcel_rv_assistente_fechado') !== 'true');
+  const [passoAssistente, setPassoAssistente] = useState<1 | 2 | 3 | 4>(1);
+  const [opcoesPopoverAberto, setOpcoesPopoverAberto] = useState<boolean>(false);
+  const [caminhoDestinoLocal, setCaminhoDestinoLocal] = useState<string>(
+    () => obterLocalFsCentroConfig()?.pasta_v4_display || 'C:\\Dados_evoGex\\BdsefaturaV4'
+  );
+
+  const abrirAssistente = () => {
+    setVista('matriz');
+    setAssistenteAberto(true);
+    localStorage.setItem('gexcel_rv_assistente_fechado', 'false');
+  };
+
+  const fecharAssistente = () => {
+    setAssistenteAberto(false);
+    localStorage.setItem('gexcel_rv_assistente_fechado', 'true');
+  };
+
+  useEffect(() => {
+    const onFsUpdated = () => {
+      const cfg = obterLocalFsCentroConfig();
+      if (cfg?.pasta_v4_display) setCaminhoDestinoLocal(cfg.pasta_v4_display);
+    };
+    window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
+    return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
+  }, []);
 
   const mapaEntidades = useMemo(() => {
     const map = new Map<string, string>();
@@ -272,6 +303,7 @@ export function RecibosVerdesView({
           localStorage.setItem('gexcel_alimentar_xml_legado', String(cfg.alimentar_xml_legado));
         }
         onApiStatusChange?.(true);
+        setApiOnlineLocal(true);
       }
       if (resEnt.ok) {
         const dataEnt = await resEnt.json();
@@ -279,6 +311,7 @@ export function RecibosVerdesView({
       }
     } catch {
       onApiStatusChange?.(false);
+      setApiOnlineLocal(false);
     }
   }, [onApiStatusChange]);
 
@@ -691,10 +724,6 @@ export function RecibosVerdesView({
     }
 
     const lista = Array.from(mapaEnt.values()).filter(ent => {
-      const dados = matrizEmpresas[ent.nif];
-      if (filtroMatriz === 'com_dados' && (!dados || dados.total_docs_ano === 0)) return false;
-      if (filtroMatriz === 'com_rv' && (!dados || dados.total_rv_ano === 0)) return false;
-      if (filtroMatriz === 'com_rendas' && (!dados || dados.total_rendas_ano === 0)) return false;
       if (nifMatrizFiltro && ent.nif !== nifMatrizFiltro) return false;
       return true;
     });
@@ -723,11 +752,10 @@ export function RecibosVerdesView({
     });
 
     return lista;
-  }, [entidades, matrizEmpresas, nifMatrizFiltro, filtroMatriz, sortColMatriz, sortDirMatriz, resolverNomeEntidade]);
+  }, [entidades, matrizEmpresas, nifMatrizFiltro, sortColMatriz, sortDirMatriz, resolverNomeEntidade]);
 
   // Totais Globais da Matriz
   const totaisGlobaisMatriz = useMemo(() => {
-    let empresasComDados = 0;
     let totalDocs = 0;
     let totalRv = 0;
     let totalRendas = 0;
@@ -736,7 +764,6 @@ export function RecibosVerdesView({
     let totalIrs = 0;
 
     for (const emp of Object.values(matrizEmpresas)) {
-      if (emp.total_docs_ano > 0) empresasComDados++;
       totalDocs += emp.total_docs_ano || 0;
       totalRv += emp.total_rv_ano || 0;
       totalRendas += emp.total_rendas_ano || 0;
@@ -744,7 +771,7 @@ export function RecibosVerdesView({
       totalBase += emp.total_base_ano || 0;
       totalIrs += emp.total_irs_ano || 0;
     }
-    return { empresasComDados, totalDocs, totalRv, totalRendas, totalPdfs, totalBase, totalIrs };
+    return { totalDocs, totalRv, totalRendas, totalPdfs, totalBase, totalIrs };
   }, [matrizEmpresas]);
 
   const handleSortMatriz = (col: string) => {
@@ -860,7 +887,7 @@ export function RecibosVerdesView({
           </h1>
         </div>
 
-        {/* Alternadores de Vista, Fluxo (Compras/Vendas) e Ano */}
+        {/* Alternadores de Vista, Assistente, Fluxo e Ano */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Sub-vista: Matriz vs Documentos */}
           <div className="flex items-center bg-white dark:bg-[#0c1520] p-1 rounded-md border border-[#d7e0ea] dark:border-[#222f3e]">
@@ -890,62 +917,81 @@ export function RecibosVerdesView({
             </button>
           </div>
 
-          {/* Compras vs Vendas */}
-          <div className="flex items-center bg-white dark:bg-[#0c1520] p-1 rounded-md border border-[#d7e0ea] dark:border-[#222f3e]">
-            <button
-              type="button"
-              onClick={() => setTipoFluxo('compras')}
-              className={`px-2.5 py-1 rounded text-xs font-mono font-semibold flex items-center space-x-1.5 cursor-pointer transition ${
-                tipoFluxo === 'compras'
-                  ? 'bg-[#0284c7] text-white'
-                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#152334]'
-              }`}
-            >
-              <ShoppingCart className="w-3.5 h-3.5" />
-              <span>Compras (Adquirente)</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setTipoFluxo('vendas')}
-              className={`px-2.5 py-1 rounded text-xs font-mono font-semibold flex items-center space-x-1.5 cursor-pointer transition ${
-                tipoFluxo === 'vendas'
-                  ? 'bg-emerald-600 text-white'
-                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#152334]'
-              }`}
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>Vendas (Prestador)</span>
-            </button>
-          </div>
+          {vista === 'documentos' && (
+            <>
+              {/* Compras vs Vendas (na vista de Documentos) */}
+              <div className="flex items-center bg-white dark:bg-[#0c1520] p-1 rounded-md border border-[#d7e0ea] dark:border-[#222f3e]">
+                <button
+                  type="button"
+                  onClick={() => setTipoFluxo('compras')}
+                  className={`px-2.5 py-1 rounded text-xs font-mono font-semibold flex items-center space-x-1.5 cursor-pointer transition ${
+                    tipoFluxo === 'compras'
+                      ? 'bg-[#0284c7] text-white'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#152334]'
+                  }`}
+                >
+                  <ShoppingCart className="w-3.5 h-3.5" />
+                  <span>Compras (Adquirente)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTipoFluxo('vendas')}
+                  className={`px-2.5 py-1 rounded text-xs font-mono font-semibold flex items-center space-x-1.5 cursor-pointer transition ${
+                    tipoFluxo === 'vendas'
+                      ? 'bg-emerald-600 text-white'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#152334]'
+                  }`}
+                >
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span>Vendas (Prestador)</span>
+                </button>
+              </div>
 
-          {/* Seletor de Exercício (< Ano >) */}
-          <div className="flex items-center space-x-1 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-500 rounded-md px-2 py-1 shadow-2xs">
-            <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
-            <button
-              type="button"
-              onClick={() => onAnoChange(ano - 1)}
-              className="p-0.5 hover:bg-sky-200 dark:hover:bg-[#14304d] rounded text-foreground transition-colors cursor-pointer"
-              title="Exercício Anterior"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <span className="font-mono font-bold text-xs text-foreground dark:text-white px-1 min-w-[38px] text-center">
-              {ano}
-            </span>
-            <button
-              type="button"
-              onClick={() => onAnoChange(ano < anoAtual ? ano + 1 : ano)}
-              disabled={ano >= anoAtual}
-              className={`p-0.5 rounded transition-colors ${
-                ano >= anoAtual
-                  ? 'opacity-25 cursor-not-allowed text-slate-400'
-                  : 'hover:bg-sky-200 dark:hover:bg-[#14304d] text-foreground cursor-pointer'
-              }`}
-              title="Exercício Seguinte"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
+              {/* Seletor de Exercício (< Ano >) na vista de Documentos */}
+              <div className="flex items-center space-x-1 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-500 rounded-md px-2 py-1 shadow-2xs">
+                <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => onAnoChange(ano - 1)}
+                  className="p-0.5 hover:bg-sky-200 dark:hover:bg-[#14304d] rounded text-foreground transition-colors cursor-pointer"
+                  title="Exercício Anterior"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span className="font-mono font-bold text-xs text-foreground dark:text-white px-1 min-w-[38px] text-center">
+                  {ano}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onAnoChange(ano < anoAtual ? ano + 1 : ano)}
+                  disabled={ano >= anoAtual}
+                  className={`p-0.5 rounded transition-colors ${
+                    ano >= anoAtual
+                      ? 'opacity-25 cursor-not-allowed text-slate-400'
+                      : 'hover:bg-sky-200 dark:hover:bg-[#14304d] text-foreground cursor-pointer'
+                  }`}
+                  title="Exercício Seguinte"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Botão Destacado: Assistente Passo a Passo */}
+          <button
+            type="button"
+            onClick={() => (assistenteAberto ? fecharAssistente() : abrirAssistente())}
+            className={`px-3 py-1.5 rounded-md border font-mono text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer shadow-xs ${
+              assistenteAberto
+                ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] text-[#0284c7] dark:text-sky-300'
+                : 'bg-[#0284c7] hover:bg-[#0369a1] border-[#0284c7] text-white'
+            }`}
+            title="Abrir ou ocultar o Assistente Passo a Passo sincronizado com a interface"
+          >
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+            <span>{assistenteAberto ? 'Assistente Aberto' : 'Assistente Passo a Passo'}</span>
+          </button>
 
           {/* Botão Atualizar */}
           <button
@@ -962,7 +1008,7 @@ export function RecibosVerdesView({
         </div>
       </header>
 
-      {/* 2. Cartões KPI Sólidos Opacos (gexcel-evo-design) */}
+      {/* Banner de estado de login */}
       {loginStatusMsg && (
         <div
           className={`px-3 py-2 rounded-md border text-xs font-mono flex items-center justify-between shrink-0 ${
@@ -979,328 +1025,481 @@ export function RecibosVerdesView({
           </button>
         </div>
       )}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 shrink-0">
-        {/* Card 1: Recibos Verdes */}
-        <div
-          onClick={() => abrirDrilldown(nifDetalhe, mesDetalhe, 'rv')}
-          className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between cursor-pointer hover:border-[#0284c7] transition before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-emerald-500 before:z-20"
-        >
-          <div className="min-w-0">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
-              Recibos Verdes (Fatura-Recibo)
-            </span>
-            <div className="flex items-baseline space-x-2 mt-0.5">
-              <span className="text-lg font-mono font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
-                {(vista === 'documentos' ? resumoExibido.total_rv : totaisGlobaisMatriz.totalRv).toLocaleString('pt-PT')}
-              </span>
-              <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">documentos</span>
-            </div>
-          </div>
-          <div className="w-9 h-9 rounded-lg bg-emerald-50 dark:bg-[#091e1a] border border-emerald-200 dark:border-emerald-800 flex items-center justify-center text-emerald-700 dark:text-emerald-400 shrink-0">
-            <FileText className="w-4 h-4" />
-          </div>
-        </div>
 
-        {/* Card 2: Recibos de Renda */}
-        <div
-          onClick={() => abrirDrilldown(nifDetalhe, mesDetalhe, 'rendas')}
-          className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between cursor-pointer hover:border-[#0284c7] transition before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] before:z-20"
-        >
-          <div className="min-w-0">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
-              Recibos de Renda (RECIBO-RENDA)
-            </span>
-            <div className="flex items-baseline space-x-2 mt-0.5">
-              <span className="text-lg font-mono font-bold text-[#0284c7] dark:text-sky-400 tabular-nums">
-                {(vista === 'documentos' ? resumoExibido.total_rendas : totaisGlobaisMatriz.totalRendas).toLocaleString('pt-PT')}
-              </span>
-              <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">recibos</span>
-            </div>
-          </div>
-          <div className="w-9 h-9 rounded-lg bg-sky-50 dark:bg-[#0a1929] border border-sky-200 dark:border-sky-800 flex items-center justify-center text-[#0284c7] dark:text-sky-400 shrink-0">
-            <Home className="w-4 h-4" />
-          </div>
-        </div>
-
-        {/* Card 3: PDFs Baixados */}
-        <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-amber-500 before:z-20">
-          <div className="min-w-0">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
-              PDFs Oficiais Descarregados
-            </span>
-            <div className="flex items-baseline space-x-2 mt-0.5">
-              <span className="text-lg font-mono font-bold text-amber-700 dark:text-amber-400 tabular-nums">
-                {(vista === 'documentos' ? resumoExibido.total_pdfs_baixados : totaisGlobaisMatriz.totalPdfs).toLocaleString('pt-PT')}
-              </span>
-              <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">ficheiros PDF</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => abrirNoExplorador(pastaPdfs)}
-            title={`Abrir pasta de PDFs no Explorador do Windows: ${pastaPdfs}`}
-            className="w-9 h-9 rounded-lg bg-amber-50 dark:bg-[#231a09] border border-amber-200 dark:border-amber-800 flex items-center justify-center text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-[#31240c] cursor-pointer shrink-0"
+      {/* KPI Cards exibidos apenas na sub-vista Analítica de Documentos */}
+      {vista === 'documentos' && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 shrink-0">
+          {/* Card 1: Recibos Verdes */}
+          <div
+            onClick={() => abrirDrilldown(nifDetalhe, mesDetalhe, 'rv')}
+            className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between cursor-pointer hover:border-[#0284c7] transition before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-emerald-500 before:z-20"
           >
-            <FolderOpen className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Card 4: Volume Financeiro Base & Retenção IRS */}
-        <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-purple-500 before:z-20">
-          <div className="min-w-0">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
-              Base Tributável ({ano})
-            </span>
-            <div className="flex items-baseline space-x-2 mt-0.5">
-              <span className="text-lg font-mono font-bold text-foreground tabular-nums">
-                {formatarMoeda(vista === 'documentos' ? resumoExibido.soma_base : totaisGlobaisMatriz.totalBase)} €
+            <div className="min-w-0">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
+                Recibos Verdes (Fatura-Recibo)
               </span>
-              <span className="text-[10px] font-mono text-slate-600 dark:text-slate-300">
-                IRS: {formatarMoeda(vista === 'documentos' ? resumoExibido.soma_irs : totaisGlobaisMatriz.totalIrs)} €
-              </span>
-            </div>
-          </div>
-          <div className="w-9 h-9 rounded-lg bg-purple-50 dark:bg-[#1a1128] border border-purple-200 dark:border-purple-800 flex items-center justify-center text-purple-700 dark:text-purple-300 shrink-0">
-            <FileCheck2 className="w-4 h-4" />
-          </div>
-        </div>
-      </div>
-
-      {/* 3. Barra de Configuração de Extração, Download Opcional de PDFs e Pastas Locais */}
-      <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 shadow-2xs flex flex-wrap items-center justify-between gap-3 shrink-0">
-        {/* Checkboxes de Opções */}
-        <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
-          <label className="flex items-center space-x-1.5 cursor-pointer text-slate-800 dark:text-slate-200 font-medium">
-            <input
-              type="checkbox"
-              checked={incluirRv}
-              onChange={e => setIncluirRv(e.target.checked)}
-              className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7] cursor-pointer"
-            />
-            <span>Recibos Verdes (Fatura-Recibo)</span>
-          </label>
-
-          <label className="flex items-center space-x-1.5 cursor-pointer text-slate-800 dark:text-slate-200 font-medium">
-            <input
-              type="checkbox"
-              checked={incluirRendas}
-              onChange={e => setIncluirRendas(e.target.checked)}
-              className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7] cursor-pointer"
-            />
-            <span>Recibos de Renda (RECIBO-RENDA)</span>
-          </label>
-
-          <label className="flex items-center space-x-1.5 cursor-pointer px-2 py-0.5 rounded bg-amber-50 dark:bg-[#231a09] border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-300 font-semibold">
-            <input
-              type="checkbox"
-              checked={baixarPdfs}
-              onChange={e => setBaixarPdfs(e.target.checked)}
-              className="rounded border-amber-500 text-amber-600 focus:ring-amber-500 cursor-pointer"
-            />
-            <span>Descarregar PDFs Oficiais</span>
-          </label>
-
-          <label className="flex items-center space-x-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
-            <input
-              type="checkbox"
-              checked={reimportarTudo}
-              onChange={e => setReimportarTudo(e.target.checked)}
-              className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7] cursor-pointer"
-            />
-            <span>Reimportar Tudo</span>
-          </label>
-
-          <label
-            className="flex items-center space-x-1.5 cursor-pointer px-2 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-300 font-semibold"
-            title="Além de guardar na base SQLite moderna (BdsefaturaV4), mantém os ficheiros XML BdsRV sincronizados para o evoGex Apps (Excel)"
-          >
-            <input
-              type="checkbox"
-              checked={gerarXmlLegado}
-              onChange={e => toggleGerarXmlLegado(e.target.checked)}
-              className="rounded border-emerald-500 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-            />
-            <span>Alimentar Excel Apps (XML BdsRV)</span>
-          </label>
-        </div>
-
-        {/* Endereço Completo da Pasta de PDFs + Botões Abrir no Windows (📂) e Copiar (📋) */}
-        <div className="flex flex-wrap items-center gap-2 flex-1 justify-end min-w-[280px]">
-          <div className="flex items-center space-x-1.5 bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1 max-w-full">
-            <span className="text-[10px] font-mono uppercase font-bold text-slate-600 dark:text-slate-300 shrink-0">
-              Pasta PDFs:
-            </span>
-            {editandoPastaPdfs ? (
-              <div className="flex items-center space-x-1">
-                <input
-                  type="text"
-                  value={pastaPdfsEdit}
-                  onChange={e => setPastaPdfsEdit(e.target.value)}
-                  className="text-[11px] font-mono bg-white dark:bg-[#0c1520] border border-[#0284c7] rounded px-1.5 py-0.5 text-foreground w-64"
-                />
-                <button
-                  type="button"
-                  onClick={guardarPastaPdfs}
-                  className="p-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
-                  title="Guardar caminho da pasta de PDFs"
-                >
-                  <Save className="w-3 h-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPastaPdfsEdit(pastaPdfs);
-                    setEditandoPastaPdfs(false);
-                  }}
-                  className="p-1 rounded bg-slate-300 dark:bg-slate-700 text-foreground cursor-pointer"
-                >
-                  <X className="w-3 h-3" />
-                </button>
+              <div className="flex items-baseline space-x-2 mt-0.5">
+                <span className="text-lg font-mono font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
+                  {resumoExibido.total_rv.toLocaleString('pt-PT')}
+                </span>
+                <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">documentos</span>
               </div>
-            ) : (
-              <>
-                <span
-                  onClick={() => setEditandoPastaPdfs(true)}
-                  title={`Clique para editar · Endereço completo: ${pastaPdfs}`}
-                  className="text-[11px] font-mono text-slate-800 dark:text-slate-200 break-all cursor-pointer hover:underline"
-                >
-                  {pastaPdfs || 'Não definido'}
+            </div>
+            <div className="w-9 h-9 rounded-lg bg-emerald-50 dark:bg-[#091e1a] border border-emerald-200 dark:border-emerald-800 flex items-center justify-center text-emerald-700 dark:text-emerald-400 shrink-0">
+              <FileText className="w-4 h-4" />
+            </div>
+          </div>
+
+          {/* Card 2: Recibos de Renda */}
+          <div
+            onClick={() => abrirDrilldown(nifDetalhe, mesDetalhe, 'rendas')}
+            className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between cursor-pointer hover:border-[#0284c7] transition before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] before:z-20"
+          >
+            <div className="min-w-0">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
+                Recibos de Renda (RECIBO-RENDA)
+              </span>
+              <div className="flex items-baseline space-x-2 mt-0.5">
+                <span className="text-lg font-mono font-bold text-[#0284c7] dark:text-sky-400 tabular-nums">
+                  {resumoExibido.total_rendas.toLocaleString('pt-PT')}
+                </span>
+                <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">recibos</span>
+              </div>
+            </div>
+            <div className="w-9 h-9 rounded-lg bg-sky-50 dark:bg-[#0a1929] border border-sky-200 dark:border-sky-800 flex items-center justify-center text-[#0284c7] dark:text-sky-400 shrink-0">
+              <Home className="w-4 h-4" />
+            </div>
+          </div>
+
+          {/* Card 3: PDFs Baixados */}
+          <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-amber-500 before:z-20">
+            <div className="min-w-0">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
+                PDFs Oficiais Descarregados
+              </span>
+              <div className="flex items-baseline space-x-2 mt-0.5">
+                <span className="text-lg font-mono font-bold text-amber-700 dark:text-amber-400 tabular-nums">
+                  {resumoExibido.total_pdfs_baixados.toLocaleString('pt-PT')}
+                </span>
+                <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">ficheiros PDF</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => abrirNoExplorador(pastaPdfs)}
+              title={`Abrir pasta de PDFs no Explorador do Windows: ${pastaPdfs}`}
+              className="w-9 h-9 rounded-lg bg-amber-50 dark:bg-[#231a09] border border-amber-200 dark:border-amber-800 flex items-center justify-center text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-[#31240c] cursor-pointer shrink-0"
+            >
+              <FolderOpen className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Card 4: Volume Financeiro Base & Retenção IRS */}
+          <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-purple-500 before:z-20">
+            <div className="min-w-0">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
+                Base Tributável ({ano})
+              </span>
+              <div className="flex items-baseline space-x-2 mt-0.5">
+                <span className="text-lg font-mono font-bold text-foreground tabular-nums">
+                  {formatarMoeda(resumoExibido.soma_base)} €
+                </span>
+                <span className="text-[10px] font-mono text-slate-600 dark:text-slate-300">
+                  IRS: {formatarMoeda(resumoExibido.soma_irs)} €
+                </span>
+              </div>
+            </div>
+            <div className="w-9 h-9 rounded-lg bg-purple-50 dark:bg-[#1a1128] border border-purple-200 dark:border-purple-800 flex items-center justify-center text-purple-700 dark:text-purple-300 shrink-0">
+              <FileCheck2 className="w-4 h-4" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Conteúdo Principal: Vista de Matriz Anual Minimalista OU Vista de Documentos Detalhados */}
+      {vista === 'matriz' ? (
+        <div className="flex flex-col lg:flex-row gap-3 flex-1 min-h-0">
+          {/* Área Principal: Barra Operacional Minimalista (4 Zonas) + Matriz Anual 12 Meses */}
+          <div className="flex-1 flex flex-col gap-2.5 min-w-0 min-h-0">
+            <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+              {/* Zona 1: Destino dos Dados */}
+              <div
+                onClick={() => assistenteAberto && setPassoAssistente(1)}
+                className={`flex items-center space-x-2 px-2.5 py-1.5 rounded border text-xs font-mono transition ${
+                  assistenteAberto && passoAssistente === 1
+                    ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                    : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+                }`}
+              >
+                {assistenteAberto && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
+                      passoAssistente === 1 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    ① Destino
+                  </span>
+                )}
+                <span className="text-slate-600 dark:text-slate-300 font-semibold shrink-0 hidden sm:inline">Dados:</span>
+                <span title={pastaV4 || pastaPdfs || caminhoDestinoLocal} className="text-foreground font-semibold break-all max-w-[240px]">
+                  {pastaV4 || pastaPdfs || caminhoDestinoLocal}
                 </span>
                 <button
                   type="button"
-                  onClick={() => copiarEndereco(pastaPdfs)}
-                  title="Copiar endereço da pasta de PDFs (📋)"
-                  className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#1d3148] text-slate-700 dark:text-slate-300 cursor-pointer shrink-0"
+                  onClick={e => {
+                    e.stopPropagation();
+                    copiarEndereco(pastaV4 || pastaPdfs || caminhoDestinoLocal);
+                  }}
+                  title="Copiar endereço completo (📋)"
+                  className="p-0.5 text-slate-600 dark:text-slate-300 hover:text-[#0284c7] cursor-pointer shrink-0"
                 >
-                  {copiadoCaminho === pastaPdfs ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiadoCaminho === (pastaV4 || pastaPdfs || caminhoDestinoLocal) ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-500" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
                 </button>
                 <button
                   type="button"
-                  onClick={() => abrirNoExplorador(pastaPdfs)}
-                  title="Abrir pasta de PDFs no Explorador do Windows (📂)"
-                  className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#1d3148] text-[#0284c7] dark:text-sky-400 cursor-pointer shrink-0"
+                  onClick={e => {
+                    e.stopPropagation();
+                    abrirNoExplorador(pastaV4 || pastaPdfs || caminhoDestinoLocal);
+                  }}
+                  title="Abrir pasta no Explorador do Windows (📂)"
+                  className="p-0.5 text-[#0284c7] dark:text-sky-400 hover:opacity-80 cursor-pointer shrink-0"
                 >
                   <FolderOpen className="w-3.5 h-3.5" />
                 </button>
-              </>
-            )}
-          </div>
+              </div>
 
-          {/* Botão Principal de Extração em Lote */}
-          {extraindoLote ? (
-            <button
-              type="button"
-              onClick={pararTodasExtracoes}
-              className="px-3 py-1.5 rounded-md bg-rose-600 hover:bg-rose-700 text-white font-mono text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-xs"
-            >
-              <Square className="w-3.5 h-3.5 fill-current" />
-              <span>Parar Extração</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={iniciarExtracaoSelecionadas}
-              disabled={selecionadas.size === 0}
-              className="px-3.5 py-1.5 rounded-md bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-50 text-white font-mono text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-xs transition"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Extrair Selecionadas ({selecionadas.size})</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* 4. Conteúdo Principal: Vista de Matriz Anual (12 Meses) OU Vista de Documentos Detalhados */}
-      {vista === 'matriz' ? (
-        <>
-          {/* Barra de Pesquisa e Filtros da Matriz */}
-          <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2 shadow-2xs flex flex-wrap items-center justify-between gap-2 shrink-0">
-            <div className="flex flex-wrap items-center gap-2 flex-1">
-              <EmpresaSelectorCombobox
-                entidades={entidadesCombobox}
-                value={nifMatrizFiltro}
-                onChange={setNifMatrizFiltro}
-                modoPrivacidade={modoPrivacidade}
-                allLabel={`Todas as Empresas (${entidadesCombobox.length})`}
-                placeholder="Pesquisar NIF, nome ou código..."
-                className="w-full sm:w-auto sm:min-w-[260px] max-w-full sm:max-w-[360px]"
-                dropdownClassName="w-80 md:w-[420px]"
-                align="left"
-                title="Pesquisar e selecionar empresa na Matriz"
-              />
-
-              <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-[#132233] p-1 rounded border border-slate-300 dark:border-[#253a52] text-[11px] font-mono">
-                {[
-                  { id: 'todas', label: `Todas (${entidades.length})` },
-                  { id: 'com_dados', label: `Com Dados (${totaisGlobaisMatriz.empresasComDados})` },
-                  { id: 'com_rv', label: 'Com Recibos Verdes' },
-                  { id: 'com_rendas', label: 'Com Rendas' },
-                ].map(tab => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setFiltroMatriz(tab.id as any)}
-                    className={`px-2 py-0.5 rounded font-semibold cursor-pointer transition ${
-                      filtroMatriz === tab.id
-                        ? 'bg-[#0284c7] text-white'
-                        : 'text-slate-700 dark:text-slate-300 hover:text-foreground'
+              {/* Zona 2: Operação (Compras/Vendas) & Filtro de Empresa */}
+              <div
+                onClick={() => assistenteAberto && setPassoAssistente(2)}
+                className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition ${
+                  assistenteAberto && passoAssistente === 2
+                    ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                    : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+                }`}
+              >
+                {assistenteAberto && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                      passoAssistente === 2 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                     }`}
                   >
-                    {tab.label}
+                    ② Empresas
+                  </span>
+                )}
+                <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] p-0.5 rounded border border-slate-200 dark:border-[#1e344f]">
+                  <button
+                    type="button"
+                    onClick={() => setTipoFluxo('compras')}
+                    className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                      tipoFluxo === 'compras'
+                        ? 'bg-[#0284c7] text-white shadow-2xs'
+                        : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#1a2c40]'
+                    }`}
+                    title="Recibos de Compras (Adquirente)"
+                  >
+                    <ShoppingCart className="w-3.5 h-3.5" />
+                    <span>Compras</span>
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    onClick={() => setTipoFluxo('vendas')}
+                    className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                      tipoFluxo === 'vendas'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#1a2c40]'
+                    }`}
+                    title="Recibos de Vendas (Prestador / Senhorio)"
+                  >
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    <span>Vendas</span>
+                  </button>
+                </div>
+
+                <EmpresaSelectorCombobox
+                  entidades={entidadesCombobox}
+                  value={nifMatrizFiltro}
+                  onChange={setNifMatrizFiltro}
+                  modoPrivacidade={modoPrivacidade}
+                  allLabel={`Todas (${entidadesCombobox.length})`}
+                  placeholder="Pesquisar NIF, nome ou código..."
+                  className="w-full sm:w-auto sm:min-w-[230px] max-w-full sm:max-w-[300px]"
+                  dropdownClassName="w-80 md:w-[420px]"
+                  align="left"
+                  title="Pesquisar e selecionar empresa na Matriz"
+                />
+
+                <span className="text-[11px] font-mono text-slate-700 dark:text-slate-200 font-semibold px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] shrink-0 tabular-nums">
+                  {selecionadas.size}/{entidadesCombobox.length}
+                </span>
+              </div>
+
+              {/* Zona 3: Período (Exercício) */}
+              <div
+                onClick={() => assistenteAberto && setPassoAssistente(3)}
+                className={`flex flex-wrap items-center gap-1.5 px-2 py-1 rounded border transition ${
+                  assistenteAberto && passoAssistente === 3
+                    ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                    : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+                }`}
+              >
+                {assistenteAberto && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                      passoAssistente === 3 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    ③ Período
+                  </span>
+                )}
+                <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#0284c7] dark:border-sky-600 rounded px-1.5 py-0.5">
+                  <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                  <button
+                    type="button"
+                    onClick={() => onAnoChange(ano - 1)}
+                    className="p-0.5 hover:bg-sky-100 dark:hover:bg-[#14304d] rounded text-foreground cursor-pointer"
+                    title="Exercício Anterior"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="font-mono font-black text-sm text-foreground dark:text-white px-0.5 min-w-[38px] text-center">
+                    {ano}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onAnoChange(ano < anoAtual ? ano + 1 : ano)}
+                    disabled={ano >= anoAtual}
+                    className={`p-0.5 rounded ${
+                      ano >= anoAtual
+                        ? 'opacity-20 cursor-not-allowed text-muted-foreground'
+                        : 'hover:bg-sky-100 dark:hover:bg-[#14304d] text-foreground cursor-pointer'
+                    }`}
+                    title="Exercício Seguinte"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Zona 4: Opções Avançadas + Extrair Selecionadas */}
+              <div
+                onClick={() => assistenteAberto && setPassoAssistente(4)}
+                className={`relative flex items-center space-x-2 px-2 py-1 rounded border transition ${
+                  assistenteAberto && passoAssistente === 4
+                    ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c1608] border-amber-500 shadow-md'
+                    : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+                }`}
+              >
+                {assistenteAberto && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                      passoAssistente === 4 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    ④ Iniciar
+                  </span>
+                )}
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation();
+                      setOpcoesPopoverAberto(v => !v);
+                    }}
+                    className="px-2 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1a2d42] border border-slate-300 dark:border-[#253a52] text-[11px] font-mono font-semibold text-foreground flex items-center space-x-1 cursor-pointer"
+                    title="Opções de extração, tipos de recibo e pastas locais"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+                    <span className="hidden sm:inline">Opções</span>
+                    <ChevronDown className={`w-3 h-3 transition-transform ${opcoesPopoverAberto ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {opcoesPopoverAberto && (
+                    <div
+                      onClick={e => e.stopPropagation()}
+                      className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-md bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] shadow-xl p-3 space-y-2.5 z-40 text-xs font-mono"
+                    >
+                      <div className="flex items-center justify-between border-b border-[#d7e0ea] dark:border-[#222f3e] pb-1.5">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-foreground">
+                          Opções de Extração (SIRE & Rendas)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setOpcoesPopoverAberto(false)}
+                          className="p-0.5 text-slate-500 hover:text-foreground cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="flex items-center space-x-2 cursor-pointer text-slate-800 dark:text-slate-200 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={incluirRv}
+                            onChange={e => setIncluirRv(e.target.checked)}
+                            className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7] cursor-pointer"
+                          />
+                          <span>Recibos Verdes (Fatura-Recibo)</span>
+                        </label>
+
+                        <label className="flex items-center space-x-2 cursor-pointer text-slate-800 dark:text-slate-200 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={incluirRendas}
+                            onChange={e => setIncluirRendas(e.target.checked)}
+                            className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7] cursor-pointer"
+                          />
+                          <span>Recibos de Renda (RECIBO-RENDA)</span>
+                        </label>
+
+                        <label className="flex items-center space-x-2 cursor-pointer px-2 py-1 rounded bg-amber-50 dark:bg-[#231a09] border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-300 font-semibold">
+                          <input
+                            type="checkbox"
+                            checked={baixarPdfs}
+                            onChange={e => setBaixarPdfs(e.target.checked)}
+                            className="rounded border-amber-500 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                          />
+                          <span>Descarregar PDFs Oficiais</span>
+                        </label>
+
+                        <label className="flex items-center space-x-2 cursor-pointer text-slate-700 dark:text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={reimportarTudo}
+                            onChange={e => setReimportarTudo(e.target.checked)}
+                            className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7] cursor-pointer"
+                          />
+                          <span>Reimportar Tudo (ignorar cache)</span>
+                        </label>
+
+                        <label
+                          className="flex items-center space-x-2 cursor-pointer px-2 py-1 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-300 font-semibold"
+                          title="Mantém os ficheiros XML BdsRV sincronizados para o evoGex Apps (Excel)"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={gerarXmlLegado}
+                            onChange={e => toggleGerarXmlLegado(e.target.checked)}
+                            className="rounded border-emerald-500 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                          />
+                          <span>Alimentar Excel Apps (XML BdsRV)</span>
+                        </label>
+                      </div>
+
+                      {/* Pasta de PDFs Oficiais */}
+                      <div className="pt-2 border-t border-[#d7e0ea] dark:border-[#222f3e] space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase text-slate-600 dark:text-slate-300 block">
+                          Pasta de PDFs Oficiais:
+                        </span>
+                        {editandoPastaPdfs ? (
+                          <div className="flex items-center space-x-1">
+                            <input
+                              type="text"
+                              value={pastaPdfsEdit}
+                              onChange={e => setPastaPdfsEdit(e.target.value)}
+                              className="text-[11px] font-mono bg-slate-100 dark:bg-[#132233] border border-[#0284c7] rounded px-1.5 py-1 text-foreground flex-1 min-w-0"
+                            />
+                            <button
+                              type="button"
+                              onClick={guardarPastaPdfs}
+                              className="p-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer shrink-0"
+                              title="Guardar caminho da pasta de PDFs"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPastaPdfsEdit(pastaPdfs);
+                                setEditandoPastaPdfs(false);
+                              }}
+                              className="p-1.5 rounded bg-slate-200 dark:bg-[#1a2c40] text-foreground cursor-pointer shrink-0"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between gap-1.5 bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1">
+                            <span
+                              onClick={() => setEditandoPastaPdfs(true)}
+                              title={`Clique para editar · Endereço completo: ${pastaPdfs}`}
+                              className="text-[11px] text-slate-800 dark:text-slate-200 break-all cursor-pointer hover:underline flex-1"
+                            >
+                              {pastaPdfs || 'Não definido'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => copiarEndereco(pastaPdfs)}
+                              title="Copiar endereço da pasta de PDFs (📋)"
+                              className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#1d3148] text-slate-700 dark:text-slate-300 cursor-pointer shrink-0"
+                            >
+                              {copiadoCaminho === pastaPdfs ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => abrirNoExplorador(pastaPdfs)}
+                              title="Abrir pasta de PDFs no Explorador do Windows (📂)"
+                              className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#1d3148] text-[#0284c7] dark:text-sky-400 cursor-pointer shrink-0"
+                            >
+                              <FolderOpen className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+
+                        {pastaBdsrv && (
+                          <div className="flex items-center justify-between gap-1.5 bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1 text-[10.5px]">
+                            <span className="font-bold text-slate-700 dark:text-slate-300 shrink-0">XML BdsRV:</span>
+                            <span className="break-all text-slate-700 dark:text-slate-200 flex-1" title={pastaBdsrv}>{pastaBdsrv}</span>
+                            <button
+                              type="button"
+                              onClick={() => copiarEndereco(pastaBdsrv)}
+                              title="Copiar endereço BdsRV (📋)"
+                              className="p-0.5 hover:text-[#0284c7] cursor-pointer shrink-0"
+                            >
+                              {copiadoCaminho === pastaBdsrv ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => abrirNoExplorador(pastaBdsrv)}
+                              title="Abrir pasta BdsRV no Explorador do Windows (📂)"
+                              className="p-0.5 text-[#0284c7] dark:text-sky-400 cursor-pointer shrink-0"
+                            >
+                              <FolderOpen className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {extraindoLote ? (
+                  <button
+                    type="button"
+                    onClick={pararTodasExtracoes}
+                    className="px-3 py-1.5 rounded-md bg-rose-600 hover:bg-rose-700 text-white font-mono text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    <span>Parar Extração</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={iniciarExtracaoSelecionadas}
+                    disabled={selecionadas.size === 0}
+                    className="px-3.5 py-1.5 rounded-md bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-50 text-white font-mono text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-xs transition"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Extrair Selecionadas ({selecionadas.size})</span>
+                  </button>
+                )}
               </div>
             </div>
-
-            {/* Pastas SQLite (BdsefaturaV4) e XML Legado (BdsRV) */}
-            <div className="flex flex-wrap items-center gap-2">
-              {pastaV4 && (
-                <div className="flex items-center space-x-1.5 text-[11px] font-mono text-slate-800 dark:text-slate-200 bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800 rounded px-2 py-1">
-                  <span className="font-bold text-[#0284c7] dark:text-sky-400">SQLite V4:</span>
-                  <span className="break-all" title={pastaV4}>{pastaV4}</span>
-                  <button
-                    type="button"
-                    onClick={() => copiarEndereco(pastaV4)}
-                    title="Copiar endereço SQLite BdsefaturaV4 (📋)"
-                    className="p-0.5 hover:text-[#0284c7] cursor-pointer"
-                  >
-                    {copiadoCaminho === pastaV4 ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => abrirNoExplorador(pastaV4)}
-                    title="Abrir pasta BdsefaturaV4 no Explorador do Windows (📂)"
-                    className="p-0.5 text-[#0284c7] dark:text-sky-400 cursor-pointer"
-                  >
-                    <FolderOpen className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
-
-              {pastaBdsrv && (
-                <div className="flex items-center space-x-1.5 text-[11px] font-mono text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-2 py-1">
-                  <span className="font-bold">XML BdsRV:</span>
-                  <span className="break-all" title={pastaBdsrv}>{pastaBdsrv}</span>
-                  <button
-                    type="button"
-                    onClick={() => copiarEndereco(pastaBdsrv)}
-                    title="Copiar endereço BdsRV (📋)"
-                    className="p-0.5 hover:text-[#0284c7] cursor-pointer"
-                  >
-                    {copiadoCaminho === pastaBdsrv ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => abrirNoExplorador(pastaBdsrv)}
-                    title="Abrir pasta BdsRV no Explorador do Windows (📂)"
-                    className="p-0.5 text-[#0284c7] dark:text-sky-400 cursor-pointer"
-                  >
-                    <FolderOpen className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
 
           {/* Grelha Matriz 12 Meses */}
           <div className="flex-1 min-h-[380px] md:min-h-0 bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] shadow-2xs overflow-hidden flex flex-col">
@@ -1534,7 +1733,94 @@ export function RecibosVerdesView({
               </table>
             </div>
           </div>
-        </>
+          </div>
+
+          {/* Assistente Passo a Passo Lateral Sincronizado */}
+          <AssistenteImportacaoPanel
+            aberto={assistenteAberto}
+            onClose={fecharAssistente}
+            moduloTitulo="Recibos Verdes e Rendas"
+            apiOnline={apiOnlineLocal}
+            caminhoDados={pastaV4 || pastaPdfs || caminhoDestinoLocal}
+            onCaminhoDadosChange={novo => {
+              setCaminhoDestinoLocal(novo);
+              setPastaV4(novo);
+            }}
+            tipoOperacao={tipoFluxo}
+            onTipoOperacaoChange={op => {
+              if (op === 'compras' || op === 'vendas') setTipoFluxo(op);
+            }}
+            empresas={entidadesCombobox.map(e => ({
+              id: e.nif,
+              cod: e.cod,
+              nif: e.nif,
+              nome: e.nomecli,
+            }))}
+            selecionadasIds={selecionadas}
+            onToggleEmpresa={toggleSelecionarNif}
+            onSelecionarTodasEmpresas={() => setSelecionadas(new Set(entidadesCombobox.map(e => e.nif)))}
+            onLimparEmpresas={() => setSelecionadas(new Set())}
+            modoPrivacidade={modoPrivacidade}
+            ano={ano}
+            anoAtual={anoAtual}
+            onAnoChange={onAnoChange}
+            apenasAnoCompleto
+            opcoesExtras={(
+              <div className="space-y-1.5 text-[11px] font-mono">
+                <label className="flex items-center space-x-2 cursor-pointer text-slate-800 dark:text-slate-200 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={incluirRv}
+                    onChange={e => setIncluirRv(e.target.checked)}
+                    className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7] cursor-pointer"
+                  />
+                  <span>Recibos Verdes (Fatura-Recibo)</span>
+                </label>
+                <label className="flex items-center space-x-2 cursor-pointer text-slate-800 dark:text-slate-200 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={incluirRendas}
+                    onChange={e => setIncluirRendas(e.target.checked)}
+                    className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7] cursor-pointer"
+                  />
+                  <span>Recibos de Renda (RECIBO-RENDA)</span>
+                </label>
+                <label className="flex items-center space-x-2 cursor-pointer px-2 py-1 rounded bg-amber-50 dark:bg-[#231a09] border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-300 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={baixarPdfs}
+                    onChange={e => setBaixarPdfs(e.target.checked)}
+                    className="rounded border-amber-500 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                  />
+                  <span>Descarregar PDFs Oficiais</span>
+                </label>
+                <label className="flex items-center space-x-2 cursor-pointer text-slate-700 dark:text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={reimportarTudo}
+                    onChange={e => setReimportarTudo(e.target.checked)}
+                    className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7] cursor-pointer"
+                  />
+                  <span>Reimportar Tudo (ignorar cache)</span>
+                </label>
+                <label className="flex items-center space-x-2 cursor-pointer px-2 py-1 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-300 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={gerarXmlLegado}
+                    onChange={e => toggleGerarXmlLegado(e.target.checked)}
+                    className="rounded border-emerald-500 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <span>Alimentar Excel Apps (XML BdsRV)</span>
+                </label>
+              </div>
+            )}
+            isSyncing={extraindoLote}
+            labelBotaoIniciar="Iniciar Extração de Recibos"
+            onIniciarImportacao={iniciarExtracaoSelecionadas}
+            passoAtivo={passoAssistente}
+            onPassoAtivoChange={setPassoAssistente}
+          />
+        </div>
       ) : (
         /* VISTA DE CONSULTA DETALHADA DE DOCUMENTOS (RECIBOS VERDES & RENDAS) */
         <>

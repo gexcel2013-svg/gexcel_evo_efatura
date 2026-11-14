@@ -9,9 +9,6 @@ import {
   Play,
   CheckCircle2,
   AlertTriangle,
-  Database,
-  FileX2,
-  Layers,
   Calendar,
   ChevronLeft,
   ChevronRight,
@@ -19,9 +16,15 @@ import {
   TrendingUp,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Sparkles,
+  Copy,
+  Check,
+  FolderOpen
 } from 'lucide-react';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
+import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
+import { obterLocalFsCentroConfig, abrirPastaNoExploradorNativo } from '../lib/localFsBridge';
 
 interface Entidade {
   id: string;
@@ -53,8 +56,6 @@ interface AnuladaRow {
   data_deteccao: string;
 }
 
-const MESES_NOMES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-
 interface InconformidadesViewProps {
   ano?: number;
   onAnoChange?: (ano: number) => void;
@@ -70,7 +71,6 @@ export function InconformidadesView({
 }: InconformidadesViewProps) {
   const hoje = new Date();
   const anoAtual = hoje.getFullYear();
-  const mesAtual = hoje.getMonth() + 1;
   const [anoLocal, setAnoLocal] = useState<number>(anoProp ?? anoAtual);
   const anoAtivo = anoProp ?? anoLocal;
 
@@ -88,25 +88,85 @@ export function InconformidadesView({
   const [totalGlobal, setTotalGlobal] = useState<number>(0);
   const [totalInconfs, setTotalInconfs] = useState<number>(0);
   const [totalOrigem, setTotalOrigem] = useState<number>(0);
-  const [somaLiquido, setSomaLiquido] = useState<number>(0);
-  const [somaIva, setSomaIva] = useState<number>(0);
   const [somaTotal, setSomaTotal] = useState<number>(0);
   const [totalLedger, setTotalLedger] = useState<number>(0);
 
   const [carregando, setCarregando] = useState<boolean>(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [apiOnlineLocal, setApiOnlineLocal] = useState<boolean | null>(null);
+
+  // Assistente Passo a Passo & Destino Local
+  const [assistenteAberto, setAssistenteAberto] = useState<boolean>(
+    () => localStorage.getItem('gexcel_anul_assistente_fechado') !== 'true'
+  );
+  const [passoAssistente, setPassoAssistente] = useState<1 | 2 | 3 | 4>(1);
+  const [caminhoDestinoLocal, setCaminhoDestinoLocal] = useState<string>(
+    () => obterLocalFsCentroConfig()?.pasta_v4_display || 'C:\\Dados_evoGex\\BdsefaturaV4'
+  );
+  const [copiadoPasta, setCopiadoPasta] = useState<boolean>(false);
+  const [selecionadasAssistente, setSelecionadasAssistente] = useState<Set<string>>(new Set());
+
+  const abrirAssistente = () => {
+    setAssistenteAberto(true);
+    localStorage.setItem('gexcel_anul_assistente_fechado', 'false');
+  };
+
+  const fecharAssistente = () => {
+    setAssistenteAberto(false);
+    localStorage.setItem('gexcel_anul_assistente_fechado', 'true');
+  };
+
+  useEffect(() => {
+    const onFsUpdated = () => {
+      const cfg = obterLocalFsCentroConfig();
+      if (cfg?.pasta_v4_display) setCaminhoDestinoLocal(cfg.pasta_v4_display);
+    };
+    window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
+    return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
+  }, []);
+
+  useEffect(() => {
+    fetch('http://127.0.0.1:8015/api/recibos-verdes/config')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (d?.pasta_v4 && !obterLocalFsCentroConfig()?.pasta_v4_display) {
+          setCaminhoDestinoLocal(d.pasta_v4);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const copiarCaminhoDados = async () => {
+    try {
+      await navigator.clipboard.writeText(caminhoDestinoLocal);
+      setCopiadoPasta(true);
+      setTimeout(() => setCopiadoPasta(false), 1800);
+    } catch {}
+  };
+
+  const abrirPastaDadosWindows = async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:8015/api/sistema/abrir-explorador', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caminho: caminhoDestinoLocal }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.status === 'ok' && d.origem !== 'cloud') return;
+      }
+    } catch {}
+    await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
+  };
 
   // Filtros
   const [entidades, setEntidades] = useState<Entidade[]>([]);
   const [nifFiltro, setNifFiltro] = useState<string>('');
   const [moduloFiltro, setModuloFiltro] = useState<'todos' | 'compras' | 'vendas'>('todos');
   const [origemFiltro, setOrigemFiltro] = useState<'todos' | 'inconformidades' | 'origem'>('todos');
-  const [filtroTemporal, setFiltroTemporal] = useState<'todas' | 'ano_todo' | 'mes' | 'trimestre' | 'manual'>('todas');
-  const [mesAtivo, setMesAtivo] = useState<number>(0);
-  const [trimestreAtivo, setTrimestreAtivo] = useState<number | null>(null);
-  const [dataInicio, setDataInicio] = useState<string>('');
-  const [dataFim, setDataFim] = useState<string>('');
   const [pesquisa, setPesquisa] = useState<string>('');
+  const dataInicio = `${anoAtivo}-01-01`;
+  const dataFim = `${anoAtivo}-12-31`;
 
   // Ordenação Universal da Tabela
   const [sortCol, setSortCol] = useState<string>('data_emissao');
@@ -128,26 +188,6 @@ export function InconformidadesView({
       setAnoLocal(anoProp);
     }
   }, [anoProp]);
-
-  useEffect(() => {
-    if (filtroTemporal === 'todas') {
-      setDataInicio('');
-      setDataFim('');
-    } else if (filtroTemporal === 'ano_todo') {
-      setDataInicio(`${anoAtivo}-01-01`);
-      setDataFim(`${anoAtivo}-12-31`);
-    } else if (filtroTemporal === 'mes' && mesAtivo > 0) {
-      const ultimoDia = new Date(anoAtivo, mesAtivo, 0).getDate();
-      setDataInicio(`${anoAtivo}-${String(mesAtivo).padStart(2, '0')}-01`);
-      setDataFim(`${anoAtivo}-${String(mesAtivo).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`);
-    } else if (filtroTemporal === 'trimestre' && trimestreAtivo) {
-      const mIni = (trimestreAtivo - 1) * 3 + 1;
-      const mFim = trimestreAtivo * 3;
-      const ultimoDia = new Date(anoAtivo, mFim, 0).getDate();
-      setDataInicio(`${anoAtivo}-${String(mIni).padStart(2, '0')}-01`);
-      setDataFim(`${anoAtivo}-${String(mFim).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`);
-    }
-  }, [anoAtivo, filtroTemporal, mesAtivo, trimestreAtivo]);
 
   const mapaEntidades = useMemo(() => {
     const map = new Map<string, string>();
@@ -184,35 +224,21 @@ export function InconformidadesView({
     [entidades]
   );
 
-  const selecionarTodasDatas = () => {
-    setFiltroTemporal('todas');
-    setMesAtivo(0);
-    setTrimestreAtivo(null);
+  const toggleEmpresaAssistente = (nif: string) => {
+    setSelecionadasAssistente(prev => {
+      const next = new Set(prev);
+      if (next.has(nif)) next.delete(nif);
+      else next.add(nif);
+      return next;
+    });
   };
 
-  const selecionarAnoTodo = () => {
-    setFiltroTemporal('ano_todo');
-    setMesAtivo(0);
-    setTrimestreAtivo(null);
+  const selecionarTodasAssistente = () => {
+    setSelecionadasAssistente(new Set(entidadesCombobox.map(e => e.nif).filter(Boolean)));
   };
 
-  const selecionarMesAtual = () => {
-    if (anoAtivo !== anoAtual) atualizarAno(anoAtual);
-    setFiltroTemporal('mes');
-    setMesAtivo(mesAtual);
-    setTrimestreAtivo(null);
-  };
-
-  const selecionarMes = (m: number) => {
-    setFiltroTemporal('mes');
-    setMesAtivo(m);
-    setTrimestreAtivo(null);
-  };
-
-  const selecionarTrimestre = (t: number) => {
-    setFiltroTemporal('trimestre');
-    setTrimestreAtivo(t);
-    setMesAtivo(0);
+  const limparSelecionadasAssistente = () => {
+    setSelecionadasAssistente(new Set());
   };
 
   // Monitorização do Worker de Segundo Plano (scrape_anuladas em pipeline_worker)
@@ -250,6 +276,10 @@ export function InconformidadesView({
             if (data.entidades.length > 0 && !scrapeNif) {
               setScrapeNif((data.entidades[0].nif || data.entidades[0].nif_cc || '').trim());
             }
+            const todosNifs = (data.entidades as Entidade[])
+              .map(e => (e.nif || e.nif_cc || '').trim())
+              .filter(Boolean);
+            setSelecionadasAssistente(prev => (prev.size === 0 ? new Set(todosNifs) : prev));
           }
         }
       } catch {}
@@ -293,9 +323,8 @@ export function InconformidadesView({
         setTotalGlobal(data.total_anuladas_global || 0);
         setTotalInconfs(data.total_inconformidades || 0);
         setTotalOrigem(data.total_anuladas_origem || 0);
-        setSomaLiquido(data.soma_liquido || 0);
-        setSomaIva(data.soma_iva || 0);
         setSomaTotal(data.soma_total || 0);
+        setApiOnlineLocal(true);
         onApiStatusChange?.(true);
       } else {
         const errJson = await resAnul.json();
@@ -303,6 +332,7 @@ export function InconformidadesView({
       }
     } catch (err: any) {
       setErro(err.message || 'Sem ligação ao motor local (:8015)');
+      setApiOnlineLocal(false);
       onApiStatusChange?.(false);
     } finally {
       setCarregando(false);
@@ -415,6 +445,39 @@ export function InconformidadesView({
     }
   };
 
+  const iniciarSincronizacaoAssistenteOuDireta = async () => {
+    setScrapeExecutando(true);
+    setScrapeErro(null);
+    setScrapeResultado(null);
+    try {
+      const nifsSelecionados = Array.from(selecionadasAssistente);
+      const enviarTodos = nifsSelecionados.length === 0 || nifsSelecionados.length >= entidadesCombobox.length;
+      const res = await fetch('http://127.0.0.1:8015/api/anuladas/sincronizar-lote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nifs: enviarTodos ? ['TODOS'] : nifsSelecionados,
+          ano: anoAtivo,
+          mes: null,
+          modulo: moduloFiltro === 'todos' ? 'ambos' : moduloFiltro,
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json().catch(() => ({}));
+        setScrapeResultado(json);
+        fecharAssistente();
+        carregarAnuladas();
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        setScrapeErro(errJson.detail || 'Erro ao agendar sincronização em lote.');
+      }
+    } catch (e: any) {
+      setScrapeErro(e?.message || 'Falha na comunicação com o motor.');
+    } finally {
+      setScrapeExecutando(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col space-y-3 min-h-0 select-none overflow-y-auto md:overflow-hidden">
       {/* 1. Cabeçalho Executivo evoGex.com */}
@@ -431,49 +494,25 @@ export function InconformidadesView({
             <span>Documentos Anulados e Inconformidades</span>
             <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-mono font-bold bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border border-[#0284c7] dark:border-sky-700 shadow-2xs">
               <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
-              {filtroTemporal === 'todas' ? 'Todos os Exercícios' : `Exercício ${anoAtivo}`}
+              Exercício {anoAtivo}
             </span>
           </h1>
         </div>
 
         {/* Ações do Topo */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Seletor de Exercício (< Ano >) */}
-          <div className="flex items-center space-x-1 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-500 rounded-md px-2 py-1 shadow-2xs">
-            <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
-            <button
-              type="button"
-              onClick={() => atualizarAno(anoAtivo - 1)}
-              className="p-0.5 hover:bg-sky-200 dark:hover:bg-[#14304d] rounded text-foreground transition-colors cursor-pointer"
-              title="Exercício Anterior"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <span className="font-mono font-bold text-xs text-foreground dark:text-white px-1 min-w-[38px] text-center">
-              {anoAtivo}
-            </span>
-            <button
-              type="button"
-              onClick={() => atualizarAno(anoAtivo < anoAtual ? anoAtivo + 1 : anoAtivo)}
-              disabled={anoAtivo >= anoAtual}
-              className={`p-0.5 rounded transition-colors ${
-                anoAtivo >= anoAtual
-                  ? 'opacity-25 cursor-not-allowed text-slate-400'
-                  : 'hover:bg-sky-200 dark:hover:bg-[#14304d] text-foreground cursor-pointer'
-              }`}
-              title="Exercício Seguinte"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
           <button
             type="button"
-            onClick={() => setModalScrapeAberto(true)}
-            className="px-3 py-1.5 rounded-md bg-[#0284c7] hover:bg-[#0369a1] text-white font-mono text-xs font-semibold shadow-xs flex items-center space-x-1.5 cursor-pointer transition"
+            onClick={() => (assistenteAberto ? fecharAssistente() : abrirAssistente())}
+            className={`px-3 py-1.5 rounded-md border font-mono text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer shadow-xs ${
+              assistenteAberto
+                ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] text-[#0284c7] dark:text-sky-300'
+                : 'bg-[#0284c7] hover:bg-[#0369a1] border-[#0284c7] text-white'
+            }`}
+            title="Abrir ou ocultar o Assistente Passo a Passo sincronizado com a interface"
           >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            <span>Sincronizar Anulados na AT</span>
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+            <span>{assistenteAberto ? 'Assistente Aberto' : 'Assistente Passo a Passo'}</span>
           </button>
 
           <button
@@ -487,94 +526,6 @@ export function InconformidadesView({
           </button>
         </div>
       </header>
-
-      {/* 2. Cartões KPI 100% Opacos Sólidos (gexcel-evo-design) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 shrink-0">
-        {/* Card 1: Total de Documentos Anulados */}
-        <div
-          onClick={() => setOrigemFiltro('todos')}
-          className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between cursor-pointer hover:border-[#0284c7] transition before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-rose-500 before:z-20"
-        >
-          <div className="min-w-0">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
-              Total Documentos Anulados
-            </span>
-            <div className="flex items-baseline space-x-1.5 mt-0.5">
-              <span className="text-lg font-mono font-bold text-rose-700 dark:text-rose-400 tabular-nums">
-                {totalGlobal.toLocaleString('pt-PT')}
-              </span>
-              <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">faturas</span>
-            </div>
-          </div>
-          <div className="w-9 h-9 rounded-lg bg-rose-50 dark:bg-[#240e14] border border-rose-200 dark:border-rose-800 flex items-center justify-center text-rose-700 dark:text-rose-400 shrink-0">
-            <FileX2 className="w-4 h-4" />
-          </div>
-        </div>
-
-        {/* Card 2: Inconformidades Forenses (N -> A) */}
-        <div
-          onClick={() => setOrigemFiltro('inconformidades')}
-          className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between cursor-pointer hover:border-[#0284c7] transition before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-amber-500 before:z-20"
-        >
-          <div className="min-w-0">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
-              Anulações Tardias (N → A)
-            </span>
-            <div className="flex items-baseline space-x-1.5 mt-0.5">
-              <span className="text-lg font-mono font-bold text-amber-700 dark:text-amber-400 tabular-nums">
-                {totalInconfs.toLocaleString('pt-PT')}
-              </span>
-              <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">detetadas</span>
-            </div>
-          </div>
-          <div className="w-9 h-9 rounded-lg bg-amber-50 dark:bg-[#231a09] border border-amber-200 dark:border-amber-800 flex items-center justify-center text-amber-700 dark:text-amber-400 shrink-0">
-            <AlertTriangle className="w-4 h-4" />
-          </div>
-        </div>
-
-        {/* Card 3: Anulados na Origem (A) */}
-        <div
-          onClick={() => setOrigemFiltro('origem')}
-          className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between cursor-pointer hover:border-[#0284c7] transition before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] before:z-20"
-        >
-          <div className="min-w-0">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
-              Anulados na Origem (AT)
-            </span>
-            <div className="flex items-baseline space-x-1.5 mt-0.5">
-              <span className="text-lg font-mono font-bold text-[#0284c7] dark:text-sky-400 tabular-nums">
-                {totalOrigem.toLocaleString('pt-PT')}
-              </span>
-              <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">
-                Ledger: {totalLedger.toLocaleString('pt-PT')}
-              </span>
-            </div>
-          </div>
-          <div className="w-9 h-9 rounded-lg bg-sky-50 dark:bg-[#0a1929] border border-sky-200 dark:border-sky-800 flex items-center justify-center text-[#0284c7] dark:text-sky-400 shrink-0">
-            <Database className="w-4 h-4" />
-          </div>
-        </div>
-
-        {/* Card 4: Impacto Financeiro Total */}
-        <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-3 shadow-2xs flex items-center justify-between before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-emerald-500 before:z-20">
-          <div className="min-w-0">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-slate-600 dark:text-slate-300 block">
-              Montante Total Anulado
-            </span>
-            <div className="flex items-baseline space-x-2 mt-0.5">
-              <span className="text-lg font-mono font-bold text-foreground tabular-nums">
-                {formatarMoeda(somaTotal)} €
-              </span>
-              <span className="text-[10px] font-mono text-slate-600 dark:text-slate-300" title={`Base s/ IVA: ${formatarMoeda(somaLiquido)} €`}>
-                IVA: {formatarMoeda(somaIva)} €
-              </span>
-            </div>
-          </div>
-          <div className="w-9 h-9 rounded-lg bg-emerald-50 dark:bg-[#091e1a] border border-emerald-200 dark:border-emerald-800 flex items-center justify-center text-emerald-700 dark:text-emerald-400 shrink-0">
-            <Layers className="w-4 h-4" />
-          </div>
-        </div>
-      </div>
 
       {/* Banner Opaco de Execução em Segundo Plano do Worker */}
       {tarefaWorkerAnuladas && (
@@ -591,255 +542,282 @@ export function InconformidadesView({
         </div>
       )}
 
-      {/* 3. Barra de Filtros e Pesquisa */}
-      <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 shadow-2xs flex flex-wrap items-center justify-between gap-2 shrink-0">
-        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-          {/* Filtro de Origem */}
-          <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-[#132233] p-1 rounded border border-slate-300 dark:border-[#253a52] text-xs font-mono">
-            <button
-              type="button"
-              onClick={() => setOrigemFiltro('todos')}
-              className={`px-2 py-0.5 rounded font-semibold cursor-pointer ${
-                origemFiltro === 'todos' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
+      {/* Área Principal + Assistente Passo a Passo Lateral */}
+      <div className="flex flex-col lg:flex-row gap-3 flex-1 min-h-0">
+        <div className="flex-1 flex flex-col gap-2.5 min-w-0 min-h-0">
+          {/* Barra Operacional Minimalista Sincronizada (4 Zonas) */}
+          <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+            {/* Zona 1: Destino dos Dados */}
+            <div
+              onClick={() => assistenteAberto && setPassoAssistente(1)}
+              className={`flex items-center space-x-2 px-2.5 py-1.5 rounded border text-xs font-mono transition ${
+                assistenteAberto && passoAssistente === 1
+                  ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
               }`}
             >
-              Todos ({totalGlobal})
-            </button>
-            <button
-              type="button"
-              onClick={() => setOrigemFiltro('inconformidades')}
-              className={`px-2 py-0.5 rounded font-semibold cursor-pointer ${
-                origemFiltro === 'inconformidades' ? 'bg-amber-600 text-white' : 'text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              Tardias N → A ({totalInconfs})
-            </button>
-            <button
-              type="button"
-              onClick={() => setOrigemFiltro('origem')}
-              className={`px-2 py-0.5 rounded font-semibold cursor-pointer ${
-                origemFiltro === 'origem' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              Anulados Origem ({totalOrigem})
-            </button>
-          </div>
-
-          {/* Filtro Módulo (Compras / Vendas) */}
-          <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-[#132233] p-1 rounded border border-slate-300 dark:border-[#253a52] text-xs font-mono">
-            <button
-              type="button"
-              onClick={() => setModuloFiltro('todos')}
-              className={`px-2 py-0.5 rounded font-semibold cursor-pointer transition ${
-                moduloFiltro === 'todos' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              Compras & Vendas
-            </button>
-            <button
-              type="button"
-              onClick={() => setModuloFiltro('compras')}
-              className={`px-2 py-0.5 rounded font-semibold cursor-pointer flex items-center space-x-1 transition ${
-                moduloFiltro === 'compras' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              <ShoppingCart className="w-3 h-3" />
-              <span>Compras</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setModuloFiltro('vendas')}
-              className={`px-2 py-0.5 rounded font-semibold cursor-pointer flex items-center space-x-1 transition ${
-                moduloFiltro === 'vendas' ? 'bg-emerald-600 text-white' : 'text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              <TrendingUp className="w-3 h-3" />
-              <span>Vendas</span>
-            </button>
-          </div>
-
-          {/* Seletor de Empresa (Combobox com seleção prévia) */}
-          <EmpresaSelectorCombobox
-            entidades={entidadesCombobox}
-            value={nifFiltro}
-            onChange={setNifFiltro}
-            modoPrivacidade={modoPrivacidade}
-            allLabel={`Todas as Empresas (${entidadesCombobox.length})`}
-            placeholder="Pesquisar NIF, nome ou código..."
-            className="w-full sm:w-auto sm:min-w-[240px] max-w-full sm:max-w-[320px]"
-            dropdownClassName="w-80 md:w-[400px]"
-            align="left"
-            title="Pesquisar e selecionar empresa"
-          />
-
-          {/* Pesquisa */}
-          <div className="relative w-full sm:w-auto sm:min-w-[200px] flex-1 max-w-full sm:max-w-[280px]">
-            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
-            <input
-              type="text"
-              placeholder="Pesquisar fatura, ATCUD, NIF ou nome..."
-              value={pesquisa}
-              onChange={e => setPesquisa(e.target.value)}
-              className="w-full text-xs font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded pl-8 pr-6 py-1 text-foreground"
-            />
-            {pesquisa && (
-              <button
-                type="button"
-                onClick={() => setPesquisa('')}
-                className="absolute right-2 top-2 text-slate-500 hover:text-foreground cursor-pointer"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="text-xs font-mono text-slate-600 dark:text-slate-300 font-semibold">
-          {anuladas.length.toLocaleString('pt-PT')} de {totalFiltrado.toLocaleString('pt-PT')} registos
-        </div>
-
-        {/* Barra Temporal Padronizada */}
-        <div className="w-full flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200 dark:border-[#1e2c3d] text-[10.5px] font-mono">
-          <div className="flex items-center space-x-1 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-700 rounded px-1.5 py-0.5 mr-1">
-            <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
-            <button
-              type="button"
-              onClick={() => {
-                atualizarAno(anoAtivo - 1);
-                if (filtroTemporal === 'todas') setFiltroTemporal('ano_todo');
-              }}
-              className="p-0.5 hover:bg-sky-200 dark:hover:bg-[#14304d] rounded cursor-pointer"
-              title="Exercício Anterior"
-            >
-              <ChevronLeft className="w-3 h-3" />
-            </button>
-            <span className="font-bold text-foreground px-0.5">{anoAtivo}</span>
-            <button
-              type="button"
-              onClick={() => {
-                if (anoAtivo < anoAtual) {
-                  atualizarAno(anoAtivo + 1);
-                  if (filtroTemporal === 'todas') setFiltroTemporal('ano_todo');
-                }
-              }}
-              disabled={anoAtivo >= anoAtual}
-              className={`p-0.5 rounded ${anoAtivo >= anoAtual ? 'opacity-25 cursor-not-allowed' : 'hover:bg-sky-200 dark:hover:bg-[#14304d] cursor-pointer'}`}
-              title="Exercício Seguinte"
-            >
-              <ChevronRight className="w-3 h-3" />
-            </button>
-          </div>
-
-          <button
-            type="button"
-            onClick={selecionarTodasDatas}
-            className={`px-2 py-1 rounded border font-semibold cursor-pointer transition ${
-              filtroTemporal === 'todas'
-                ? 'bg-[#0284c7] text-white border-[#0284c7]'
-                : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
-            }`}
-          >
-            Todas as Datas
-          </button>
-
-          <button
-            type="button"
-            onClick={selecionarAnoTodo}
-            className={`px-2 py-1 rounded border font-semibold cursor-pointer transition ${
-              filtroTemporal === 'ano_todo'
-                ? 'bg-[#0284c7] text-white border-[#0284c7]'
-                : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
-            }`}
-          >
-            Ano Todo
-          </button>
-
-          {anoAtivo === anoAtual && (
-            <button
-              type="button"
-              onClick={selecionarMesAtual}
-              className={`px-2 py-1 rounded border font-semibold cursor-pointer transition ${
-                filtroTemporal === 'mes' && mesAtivo === mesAtual
-                  ? 'bg-emerald-600 text-white border-emerald-600'
-                  : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
-              }`}
-            >
-              Mês Atual
-            </button>
-          )}
-
-          <div className="flex items-center space-x-0.5 border-l border-slate-300 dark:border-[#253a52] pl-1.5">
-            {[1, 2, 3, 4].map(t => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => selecionarTrimestre(t)}
-                className={`px-1.5 py-1 rounded border font-bold cursor-pointer transition ${
-                  filtroTemporal === 'trimestre' && trimestreAtivo === t
-                    ? 'bg-[#0284c7] text-white border-[#0284c7]'
-                    : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
-                }`}
-                title={`${t}º Trimestre de ${anoAtivo}`}
-              >
-                T{t}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-0.5 border-l border-slate-300 dark:border-[#253a52] pl-1.5">
-            {MESES_NOMES.map((mNome, idx) => {
-              const mNum = idx + 1;
-              const ativo = filtroTemporal === 'mes' && mesAtivo === mNum;
-              return (
-                <button
-                  key={mNum}
-                  type="button"
-                  onClick={() => selecionarMes(mNum)}
-                  className={`px-1.5 py-1 rounded border font-semibold cursor-pointer transition ${
-                    ativo
-                      ? 'bg-[#0284c7] text-white border-[#0284c7]'
-                      : 'bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-[#253a52] hover:border-[#0284c7]'
+              {assistenteAberto && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
+                    passoAssistente === 1 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                   }`}
                 >
-                  {mNome}
+                  ① Destino
+                </span>
+              )}
+              <span className="text-slate-600 dark:text-slate-300 font-semibold shrink-0 hidden sm:inline">Dados:</span>
+              <span title={caminhoDestinoLocal} className="text-foreground font-semibold break-all max-w-[230px]">
+                {caminhoDestinoLocal}
+              </span>
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  copiarCaminhoDados();
+                }}
+                title="Copiar endereço completo (📋)"
+                className="p-0.5 text-slate-600 dark:text-slate-300 hover:text-[#0284c7] cursor-pointer shrink-0"
+              >
+                {copiadoPasta ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  abrirPastaDadosWindows();
+                }}
+                title="Abrir pasta no Explorador do Windows (📂)"
+                className="p-0.5 text-[#0284c7] dark:text-sky-400 hover:opacity-80 cursor-pointer shrink-0"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Zona 2: Módulo (Ambos / Compras / Vendas), Empresa, Pesquisa & Origem */}
+            <div
+              onClick={() => assistenteAberto && setPassoAssistente(2)}
+              className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition ${
+                assistenteAberto && passoAssistente === 2
+                  ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                    passoAssistente === 2 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  ② Empresas
+                </span>
+              )}
+
+              <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] p-0.5 rounded border border-slate-200 dark:border-[#1e344f] text-xs font-mono">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModuloFiltro('todos');
+                    setScrapeModulo('ambos');
+                  }}
+                  className={`px-2 py-1 rounded font-semibold cursor-pointer transition ${
+                    moduloFiltro === 'todos' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#1a2c40]'
+                  }`}
+                >
+                  Ambos
                 </button>
-              );
-            })}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModuloFiltro('compras');
+                    setScrapeModulo('compras');
+                  }}
+                  className={`px-2 py-1 rounded font-semibold cursor-pointer flex items-center space-x-1 transition ${
+                    moduloFiltro === 'compras' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#1a2c40]'
+                  }`}
+                >
+                  <ShoppingCart className="w-3 h-3" />
+                  <span>Compras</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModuloFiltro('vendas');
+                    setScrapeModulo('vendas');
+                  }}
+                  className={`px-2 py-1 rounded font-semibold cursor-pointer flex items-center space-x-1 transition ${
+                    moduloFiltro === 'vendas' ? 'bg-emerald-600 text-white' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#1a2c40]'
+                  }`}
+                >
+                  <TrendingUp className="w-3 h-3" />
+                  <span>Vendas</span>
+                </button>
+              </div>
+
+              <EmpresaSelectorCombobox
+                entidades={entidadesCombobox}
+                value={nifFiltro}
+                onChange={val => {
+                  setNifFiltro(val);
+                  if (val) {
+                    setScrapeNif(val);
+                    setSelecionadasAssistente(new Set([val]));
+                  } else {
+                    selecionarTodasAssistente();
+                  }
+                }}
+                modoPrivacidade={modoPrivacidade}
+                allLabel={`Todas (${entidadesCombobox.length})`}
+                placeholder="Pesquisar NIF, nome ou código..."
+                className="w-full sm:w-auto sm:min-w-[210px] max-w-full sm:max-w-[280px]"
+                dropdownClassName="w-80 md:w-[400px]"
+                align="left"
+                title="Pesquisar e selecionar empresa"
+              />
+
+              <span className="text-[11px] font-mono text-slate-700 dark:text-slate-200 font-semibold px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] shrink-0 tabular-nums">
+                {selecionadasAssistente.size}/{entidadesCombobox.length}
+              </span>
+
+              <div className="relative w-full sm:w-auto sm:min-w-[160px] max-w-full sm:max-w-[210px]">
+                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-1.5" />
+                <input
+                  type="text"
+                  placeholder="Filtrar fatura/ATCUD..."
+                  value={pesquisa}
+                  onChange={e => setPesquisa(e.target.value)}
+                  className="w-full text-xs font-mono bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#253a52] rounded pl-7 pr-6 py-1 text-foreground"
+                />
+                {pesquisa && (
+                  <button
+                    type="button"
+                    onClick={() => setPesquisa('')}
+                    className="absolute right-1.5 top-1.5 text-slate-500 hover:text-foreground cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-0.5 bg-white dark:bg-[#0c1520] p-0.5 rounded border border-slate-200 dark:border-[#1e344f] text-[10.5px] font-mono">
+                <button
+                  type="button"
+                  onClick={() => setOrigemFiltro('todos')}
+                  className={`px-1.5 py-0.5 rounded font-semibold cursor-pointer ${
+                    origemFiltro === 'todos' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  Todos ({totalGlobal})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrigemFiltro('inconformidades')}
+                  className={`px-1.5 py-0.5 rounded font-semibold cursor-pointer ${
+                    origemFiltro === 'inconformidades' ? 'bg-amber-600 text-white' : 'text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  Tardias ({totalInconfs})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrigemFiltro('origem')}
+                  className={`px-1.5 py-0.5 rounded font-semibold cursor-pointer ${
+                    origemFiltro === 'origem' ? 'bg-[#0284c7] text-white' : 'text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  Origem ({totalOrigem})
+                </button>
+              </div>
+            </div>
+
+            {/* Zona 3: Período (Exercício) */}
+            <div
+              onClick={() => assistenteAberto && setPassoAssistente(3)}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded border transition ${
+                assistenteAberto && passoAssistente === 3
+                  ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                    passoAssistente === 3 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  ③ Período
+                </span>
+              )}
+              <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#0284c7] dark:border-sky-600 rounded px-1.5 py-0.5">
+                <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => atualizarAno(anoAtivo - 1)}
+                  className="p-0.5 hover:bg-sky-100 dark:hover:bg-[#14304d] rounded text-foreground cursor-pointer"
+                  title="Exercício Anterior"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span className="font-mono font-black text-sm text-foreground dark:text-white px-0.5 min-w-[38px] text-center">
+                  {anoAtivo}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => atualizarAno(anoAtivo < anoAtual ? anoAtivo + 1 : anoAtivo)}
+                  disabled={anoAtivo >= anoAtual}
+                  className={`p-0.5 rounded ${
+                    anoAtivo >= anoAtual
+                      ? 'opacity-20 cursor-not-allowed text-muted-foreground'
+                      : 'hover:bg-sky-100 dark:hover:bg-[#14304d] text-foreground cursor-pointer'
+                  }`}
+                  title="Exercício Seguinte"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Zona 4: Sincronizar Anulados na AT */}
+            <div
+              onClick={() => assistenteAberto && setPassoAssistente(4)}
+              className={`flex items-center space-x-2 px-2 py-1 rounded border transition ${
+                assistenteAberto && passoAssistente === 4
+                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c1608] border-amber-500 shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                    passoAssistente === 4 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  ④ Iniciar
+                </span>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setModalScrapeAberto(true)}
+                className="px-2 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1a2d42] border border-slate-300 dark:border-[#253a52] text-[11px] font-mono font-semibold text-foreground cursor-pointer"
+                title="Abrir opções avançadas de sincronização por empresa ou mês"
+              >
+                Opções
+              </button>
+
+              <button
+                type="button"
+                onClick={iniciarSincronizacaoAssistenteOuDireta}
+                disabled={scrapeExecutando}
+                className="px-3.5 py-1.5 rounded-md bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-50 text-white font-mono text-xs font-bold shadow-xs flex items-center space-x-1.5 cursor-pointer transition"
+              >
+                {scrapeExecutando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                <span>Sincronizar Anulados na AT</span>
+              </button>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1 sm:ml-auto sm:border-l border-slate-300 dark:border-[#253a52] sm:pl-2">
-            <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-            <input
-              type="date"
-              value={dataInicio}
-              onChange={e => {
-                setDataInicio(e.target.value);
-                setFiltroTemporal('manual');
-                setMesAtivo(0);
-                setTrimestreAtivo(null);
-              }}
-              className="text-[11px] font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-1.5 py-0.5 text-foreground cursor-pointer"
-              title="Data de Emissão Inicial"
-            />
-            <span className="text-slate-400">—</span>
-            <input
-              type="date"
-              value={dataFim}
-              onChange={e => {
-                setDataFim(e.target.value);
-                setFiltroTemporal('manual');
-                setMesAtivo(0);
-                setTrimestreAtivo(null);
-              }}
-              className="text-[11px] font-mono bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] rounded px-1.5 py-0.5 text-foreground cursor-pointer"
-              title="Data de Emissão Final"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* 4. Tabela de Documentos Anulados e Inconformidades */}
-      <div className="flex-1 min-h-[380px] md:min-h-0 bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] shadow-2xs overflow-hidden flex flex-col relative">
+          {/* 4. Tabela de Documentos Anulados e Inconformidades */}
+          <div className="flex-1 min-h-[380px] md:min-h-0 bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] shadow-2xs overflow-hidden flex flex-col relative">
         <div className="relative evo-card-signature flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 border-b border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] shrink-0 before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
           <div className="flex items-center flex-wrap gap-2">
             <span className="text-xs font-mono font-bold uppercase tracking-wider text-foreground">
@@ -1026,6 +1004,47 @@ export function InconformidadesView({
             </table>
           </div>
         )}
+          </div>
+        </div>
+
+        {/* Assistente Passo a Passo Lateral Sincronizado */}
+        <AssistenteImportacaoPanel
+          aberto={assistenteAberto}
+          onClose={fecharAssistente}
+          moduloTitulo="Documentos Anulados"
+          apiOnline={apiOnlineLocal}
+          caminhoDados={caminhoDestinoLocal}
+          onCaminhoDadosChange={setCaminhoDestinoLocal}
+          tipoOperacao={moduloFiltro === 'todos' ? 'ambos' : moduloFiltro}
+          permitirAmbos
+          onTipoOperacaoChange={op => {
+            setModuloFiltro(op === 'ambos' ? 'todos' : op);
+            setScrapeModulo(op);
+          }}
+          empresas={entidadesCombobox.map(e => ({
+            id: e.nif,
+            cod: e.cod,
+            nif: e.nif,
+            nome: e.nomecli,
+          }))}
+          selecionadasIds={selecionadasAssistente}
+          onToggleEmpresa={toggleEmpresaAssistente}
+          onSelecionarTodasEmpresas={() => {
+            setNifFiltro('');
+            selecionarTodasAssistente();
+          }}
+          onLimparEmpresas={limparSelecionadasAssistente}
+          modoPrivacidade={modoPrivacidade}
+          ano={anoAtivo}
+          anoAtual={anoAtual}
+          onAnoChange={atualizarAno}
+          apenasAnoCompleto
+          isSyncing={scrapeExecutando || Boolean(tarefaWorkerAnuladas)}
+          labelBotaoIniciar="Sincronizar Anulados na AT"
+          onIniciarImportacao={iniciarSincronizacaoAssistenteOuDireta}
+          passoAtivo={passoAssistente}
+          onPassoAtivoChange={setPassoAssistente}
+        />
       </div>
 
       {/* 5. Modal Executivo de Sincronização de Anulados na AT */}

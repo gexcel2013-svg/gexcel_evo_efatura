@@ -28,10 +28,15 @@ import {
   Globe,
   Key,
   Trash2,
-  X
+  X,
+  Sparkles,
+  Copy,
+  FolderOpen
 } from 'lucide-react';
 import { getMotorSource, type MotorSourceType } from '../lib/apiBridge';
+import { obterLocalFsCentroConfig, abrirPastaNoExploradorNativo } from '../lib/localFsBridge';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
+import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
 
 interface Entidade {
   id: string;
@@ -246,6 +251,9 @@ export default function CommandCenter({
           setGerarXmlLegado(d.alimentar_xml_legado);
           localStorage.setItem('gexcel_alimentar_xml_legado', String(d.alimentar_xml_legado));
         }
+        if (d?.pasta_v4 && !obterLocalFsCentroConfig()?.pasta_v4_display) {
+          setCaminhoDadosLocal(d.pasta_v4);
+        }
       })
       .catch(() => {});
   }, []);
@@ -284,8 +292,56 @@ export default function CommandCenter({
 
   // Tipo de Operação Fiscal: Compras (BdsefaturaV4/{NIF}/compras_{NIF}.db) vs Vendas (BdsefaturaV4/{NIF}/vendas_{NIF}.db)
   const [tipoOperacao, setTipoOperacao] = useState<'compras' | 'vendas'>('compras');
-  const [opcoesMobileAbertas, setOpcoesMobileAbertas] = useState<boolean>(false);
+  const [assistenteAberto, setAssistenteAberto] = useState<boolean>(() => localStorage.getItem('gexcel_efatura_assistente_fechado') !== 'true');
+  const [passoAssistente, setPassoAssistente] = useState<1 | 2 | 3 | 4>(1);
+  const [opcoesAvancadasAbertas, setOpcoesAvancadasAbertas] = useState<boolean>(false);
+  const [copiadoPasta, setCopiadoPasta] = useState<boolean>(false);
+  const [caminhoDadosLocal, setCaminhoDadosLocal] = useState<string>(
+    () => obterLocalFsCentroConfig()?.pasta_v4_display || 'C:\\Dados_evoGex\\BdsefaturaV4'
+  );
   const [motorSource, setMotorSource] = useState<MotorSourceType>(() => getMotorSource());
+
+  const abrirAssistente = () => {
+    setAssistenteAberto(true);
+    localStorage.setItem('gexcel_efatura_assistente_fechado', 'false');
+  };
+
+  const fecharAssistente = () => {
+    setAssistenteAberto(false);
+    localStorage.setItem('gexcel_efatura_assistente_fechado', 'true');
+  };
+
+  useEffect(() => {
+    const onFsUpdated = () => {
+      const cfg = obterLocalFsCentroConfig();
+      if (cfg?.pasta_v4_display) setCaminhoDadosLocal(cfg.pasta_v4_display);
+    };
+    window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
+    return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
+  }, []);
+
+  const copiarCaminhoDados = async () => {
+    try {
+      await navigator.clipboard.writeText(caminhoDadosLocal);
+      setCopiadoPasta(true);
+      setTimeout(() => setCopiadoPasta(false), 1800);
+    } catch {}
+  };
+
+  const abrirPastaDadosWindows = async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:8015/api/sistema/abrir-explorador', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caminho: caminhoDadosLocal }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.status === 'ok' && d.origem !== 'cloud') return;
+      }
+    } catch {}
+    await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
+  };
   const [modoPortalWebForcado, setModoPortalWebForcado] = useState<boolean>(false);
 
   useEffect(() => {
@@ -1642,6 +1698,21 @@ export default function CommandCenter({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {/* Botão Destacado do Assistente Guiado Passo a Passo */}
+          <button
+            type="button"
+            onClick={() => (assistenteAberto ? fecharAssistente() : abrirAssistente())}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-bold transition shadow-xs cursor-pointer ${
+              assistenteAberto
+                ? 'bg-sky-50 dark:bg-[#0a1929] text-[#0284c7] dark:text-sky-300 border border-[#0284c7] dark:border-sky-500'
+                : 'bg-[#0284c7] hover:bg-[#0369a1] text-white border border-[#0284c7]'
+            }`}
+            title="Abrir ou fechar o Assistente Guiado Passo a Passo"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{assistenteAberto ? 'Ocultar Assistente' : 'Assistente Passo a Passo'}</span>
+          </button>
+
           {/* Indicador Automático de Processamento Paralelo (100% Autónomo na Cloud) */}
           {apiOnline && (perfConfig.active_workers > 0 || (perfConfig.queue_waiting || 0) > 0) && (
             <div className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs select-none">
@@ -1660,8 +1731,8 @@ export default function CommandCenter({
             </div>
           )}
 
-          {/* Badge & Painel do Worker de 2.º Plano (--worker) */}
-          {apiOnline && pipelineStatus && (
+          {/* Badge & Painel do Worker de 2.º Plano (visível apenas quando existem tarefas ativas/pendentes) */}
+          {apiOnline && pipelineStatus && (pipelineStatus.tarefa_atual || (pipelineStatus.contagens?.pendentes || 0) > 0) && (
             <div className="relative" onClick={e => e.stopPropagation()}>
               <button
                 type="button"
@@ -1978,242 +2049,161 @@ export default function CommandCenter({
         </div>
       )}
 
-      {/* Grid Principal: Painel Esquerdo (3 col) + Matriz Direita (9 col) */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 flex-1 min-h-0">
-        
-        {/* Lado Esquerdo: Painel de Controlo Operacional e Período */}
-        <div className="xl:col-span-3 space-y-3 flex flex-col min-h-0">
-          
-          {/* Card 1: Seletor Operacional Canónico (Compras vs Vendas) */}
-          <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2 space-y-2 shadow-2xs text-foreground flex flex-col shrink-0 overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-            <div className="px-1 pt-0.5 pb-1.5 flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] text-[10px] font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 select-none">
-              <div className="flex items-center space-x-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#0284c7] dark:bg-sky-400" />
-                <span className="text-foreground dark:text-slate-200 font-semibold">Operação Fiscal</span>
-              </div>
-              <span className="text-[9px] font-mono text-slate-700 dark:text-slate-200 font-bold bg-slate-100 dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
-                {tipoOperacao === 'compras' ? 'Recebidas' : 'Emitidas'}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 dark:bg-[#132233] border border-slate-200 dark:border-[#1c2e42] rounded">
-              <button
-                type="button"
-                onClick={() => setTipoOperacao('compras')}
-                className={`py-2 px-3 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center justify-center space-x-2 ${
-                  tipoOperacao === 'compras'
-                    ? 'bg-[#0284c7] text-white shadow-2xs border border-[#0284c7]'
-                    : 'bg-white hover:bg-slate-100 dark:bg-[#1c2e40] dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563]'
-                }`}
-                title="Faturas de Fornecedores / Compras (Guardadas na base particionada BdsefaturaV4/{NIF}/compras_{NIF}.db e XMLs em BdsefaturaV3)"
-              >
-                <ShoppingCart className="w-3.5 h-3.5" />
-                <span>Compras</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setTipoOperacao('vendas')}
-                className={`py-2 px-3 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center justify-center space-x-2 ${
-                  tipoOperacao === 'vendas'
-                    ? 'bg-emerald-600 text-white shadow-2xs border border-emerald-600'
-                    : 'bg-white hover:bg-slate-100 dark:bg-[#1c2e40] dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563]'
-                }`}
-                title="Faturas Emitidas / Vendas a Clientes (Guardadas na base particionada BdsefaturaV4/{NIF}/vendas_{NIF}.db e XMLs em BdsefaturaV3)"
-              >
-                <TrendingUp className="w-3.5 h-3.5" />
-                <span>Vendas</span>
-              </button>
-            </div>
-          </div>
+      {/* Área Principal + Assistente Encaixado à Direita */}
+      <div className="flex flex-col lg:flex-row gap-3 flex-1 min-h-0">
 
-          {/* Card 2: Ações de Sincronização & Execução */}
-          <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 space-y-2.5 shadow-2xs text-foreground flex flex-col shrink-0 overflow-hidden before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-            <div className="px-1 pt-0.5 pb-1.5 flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] text-[10px] font-mono font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 select-none">
-              <div className="flex items-center space-x-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#0284c7] dark:bg-sky-400" />
-                <span className="text-foreground dark:text-slate-200 font-semibold">Extração & Execução</span>
-              </div>
-              <div className="flex items-center space-x-1.5">
-                <span className="text-[9px] font-mono text-slate-700 dark:text-slate-300 font-bold bg-slate-100 dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
-                  {meses.size} {meses.size === 1 ? 'Mês' : 'Meses'}
+        {/* Lado Esquerdo: Barra Operacional Minimalista (4 Zonas Sincronizadas) + Matriz Anual */}
+        <div className="flex-1 flex flex-col gap-2.5 min-w-0 min-h-0">
+
+          {/* Barra Operacional Minimalista com Destaque Sincronizado */}
+          <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 shadow-2xs shrink-0 flex flex-wrap items-center justify-between gap-2 overflow-visible before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+
+            {/* Zona 1: Pasta de Destino dos Dados */}
+            <div
+              onClick={() => assistenteAberto && setPassoAssistente(1)}
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded border text-[11px] font-mono transition ${
+                assistenteAberto && passoAssistente === 1
+                  ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
+                  passoAssistente === 1 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                }`}>
+                  ① Destino
                 </span>
+              )}
+              <span className="text-slate-600 dark:text-slate-300 font-semibold shrink-0 hidden sm:inline">Dados:</span>
+              <span title={caminhoDadosLocal} className="text-foreground font-semibold break-all max-w-[240px]">
+                {caminhoDadosLocal}
+              </span>
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); copiarCaminhoDados(); }}
+                title="Copiar endereço completo (📋)"
+                className="p-0.5 text-slate-600 dark:text-slate-300 hover:text-[#0284c7] cursor-pointer shrink-0"
+              >
+                {copiadoPasta ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); abrirPastaDadosWindows(); }}
+                title="Abrir pasta no Explorador do Windows (📂)"
+                className="p-0.5 text-[#0284c7] dark:text-sky-400 hover:opacity-80 cursor-pointer shrink-0"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Zona 2: Operação (Compras/Vendas) & Filtro de Empresa */}
+            <div
+              onClick={() => assistenteAberto && setPassoAssistente(2)}
+              className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition ${
+                assistenteAberto && passoAssistente === 2
+                  ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                  passoAssistente === 2 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                }`}>
+                  ② Empresas
+                </span>
+              )}
+              <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] p-0.5 rounded border border-slate-200 dark:border-[#1e344f]">
                 <button
                   type="button"
-                  onClick={() => setOpcoesMobileAbertas(prev => !prev)}
-                  className="xl:hidden inline-flex items-center space-x-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#253a52] text-[9px] font-mono font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+                  onClick={() => setTipoOperacao('compras')}
+                  className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    tipoOperacao === 'compras'
+                      ? 'bg-[#0284c7] text-white shadow-2xs'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#1a2c40]'
+                  }`}
+                  title="Faturas de Fornecedores / Compras"
                 >
-                  <SlidersHorizontal className="w-2.5 h-2.5" />
-                  <span>Opções</span>
-                  <ChevronDown className={`w-3 h-3 transition-transform ${opcoesMobileAbertas ? 'rotate-180' : ''}`} />
+                  <ShoppingCart className="w-3.5 h-3.5" />
+                  <span>Compras</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTipoOperacao('vendas')}
+                  className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    tipoOperacao === 'vendas'
+                      ? 'bg-emerald-600 text-white shadow-2xs'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#1a2c40]'
+                  }`}
+                  title="Faturas Emitidas / Vendas a Clientes"
+                >
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span>Vendas</span>
                 </button>
               </div>
+
+              <EmpresaSelectorCombobox
+                entidades={entidades}
+                value={nifFiltroEmpresa}
+                onChange={setNifFiltroEmpresa}
+                modoPrivacidade={modoPrivacidade}
+                allLabel={`Todas (${entidades.length})`}
+                placeholder="Pesquisar NIF, nome ou código..."
+                className="w-full sm:w-auto sm:min-w-[240px] max-w-full sm:max-w-[320px]"
+                dropdownClassName="w-80 md:w-[420px]"
+                align="left"
+                title="Pesquisar e selecionar empresa na Matriz"
+              />
+
+              <span className="text-[11px] font-mono text-slate-700 dark:text-slate-200 font-semibold px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] shrink-0 tabular-nums">
+                {selectedIds.size}/{entidades.length}
+              </span>
             </div>
 
-            <div className={opcoesMobileAbertas ? 'space-y-2.5' : 'hidden xl:block space-y-2.5'}>
-            {/* Opção Reimportação Forçada (Wipe) */}
-            <div className="p-2 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42]">
-              <label className="flex items-start space-x-2.5 cursor-pointer group">
-                <div className="relative flex items-center justify-center mt-0.5">
-                  <input 
-                    type="checkbox" 
-                    checked={reimportarTudo}
-                    onChange={e => setReimportarTudo(e.target.checked)}
-                    className="sr-only" 
-                  />
-                  <div className={`w-3.5 h-3.5 rounded-[4px] border ${
-                    reimportarTudo ? 'bg-rose-600 border-rose-600 text-white' : 'bg-white dark:bg-[#182838] border-slate-300 dark:border-[#2b415a]'
-                  } flex items-center justify-center transition-colors`}>
-                    {reimportarTudo && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                  </div>
-                </div>
-                <div>
-                  <span className="block text-xs font-medium text-foreground dark:text-slate-200 group-hover:text-primary transition-colors">
-                    Reimportação Forçada (Wipe)
-                  </span>
-                  <span className="block text-[9.5px] text-muted-foreground dark:text-slate-400 mt-0.5 leading-tight">
-                    Substitui registos do período na base central.
-                  </span>
-                </div>
-              </label>
-            </div>
-
-            {/* Opção Alimentar Dados Atuais do Excel Apps (XML Legado BdsefaturaV3) */}
-            <div className="p-2 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42]">
-              <label className="flex items-start space-x-2.5 cursor-pointer group">
-                <div className="relative flex items-center justify-center mt-0.5">
-                  <input 
-                    type="checkbox" 
-                    checked={gerarXmlLegado}
-                    onChange={e => toggleGerarXmlLegado(e.target.checked)}
-                    className="sr-only" 
-                  />
-                  <div className={`w-3.5 h-3.5 rounded-[4px] border ${
-                    gerarXmlLegado ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white dark:bg-[#182838] border-slate-300 dark:border-[#2b415a]'
-                  } flex items-center justify-center transition-colors`}>
-                    {gerarXmlLegado && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                  </div>
-                </div>
-                <div>
-                  <span className="block text-xs font-medium text-foreground dark:text-slate-200 group-hover:text-primary transition-colors">
-                    Alimentar Excel Apps (XML BdsefaturaV3)
-                  </span>
-                  <span className="block text-[9.5px] text-muted-foreground dark:text-slate-400 mt-0.5 leading-tight">
-                    Grava sempre em SQLite (BdsefaturaV4) e gera em paralelo os XML para o Excel.
-                  </span>
-                </div>
-              </label>
-            </div>
-            </div>
-
-            {/* Botão de Disparo Principal */}
-            {isSyncing ? (
-              <button 
-                type="button"
-                onClick={handleStopAll}
-                className="w-full flex items-center justify-center space-x-2 py-2.5 rounded font-mono text-xs font-bold uppercase tracking-wider transition-all duration-200 cursor-pointer shadow-sm bg-rose-600 hover:bg-rose-700 text-white border border-rose-500 animate-pulse"
-                title="Atenção: 'Parar' cancela a recolha da AT. Se pretender que a sincronização continue em segundo plano para todas as empresas, basta fechar a aplicação sem clicar em Parar."
-              >
-                <Square className="w-4 h-4 fill-current" />
-                <span>Parar Sincronização</span>
-              </button>
-            ) : (
-              <button 
-                onClick={handleSync}
-                disabled={selectedIds.size === 0 || meses.size === 0}
-                className={`w-full flex items-center justify-center space-x-2 py-2.5 rounded font-mono text-xs font-bold uppercase tracking-wider transition-all duration-200 cursor-pointer shadow-sm ${
-                  selectedIds.size === 0 || meses.size === 0
-                    ? 'bg-slate-200 dark:bg-[#182838] text-muted-foreground dark:text-slate-500 cursor-not-allowed border border-slate-300/50 dark:border-[#22364c]' 
-                    : reimportarTudo 
-                      ? 'bg-destructive text-white hover:bg-destructive/90 border border-destructive'
-                      : tipoOperacao === 'vendas'
-                        ? 'bg-emerald-600 text-white hover:bg-emerald-700 border border-emerald-600 shadow-emerald-950/20'
-                        : 'bg-[#0284c7] text-white hover:bg-[#0275b0] border border-[#0284c7]'
-                }`}
-                title="Inicia a sincronização das empresas selecionadas. Após iniciar, pode fechar a janela: o motor continuará a processar todas as empresas em segundo plano."
-              >
-                {reimportarTudo ? (
-                  <><RotateCcw className="w-4 h-4" /><span>Reimportar {tipoOperacao === 'compras' ? 'Compras' : 'Vendas'} ({selectedIds.size})</span></>
-                ) : (
-                  <><Play className="w-4 h-4 fill-current" /><span>Sincronizar {tipoOperacao === 'compras' ? 'Compras' : 'Vendas'} ({selectedIds.size})</span></>
-                )}
-              </button>
-            )}
-
-            {/* Aviso Informativo de Segundo Plano (Background Autónomo) */}
-            <div className={opcoesMobileAbertas ? 'space-y-2.5' : 'hidden xl:block space-y-2.5'}>
-            {isSyncing ? (
-              <div className="flex items-start space-x-2 p-2 rounded bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800 text-sky-800 dark:text-sky-300 text-[10px] font-mono leading-relaxed">
-                <Zap className="w-3.5 h-3.5 text-sky-500 shrink-0 mt-0.5" />
-                <span>
-                  <strong className="font-semibold">Segundo Plano Ativo:</strong> Pode fechar esta aplicação a qualquer momento. O motor continuará a descarregar até ao fim. Use <em>"Parar"</em> apenas se quiser cancelar a fila.
+            {/* Zona 3: Período (Exercício + Atalhos + Atualizar) */}
+            <div
+              onClick={() => assistenteAberto && setPassoAssistente(3)}
+              className={`flex flex-wrap items-center gap-1.5 px-2 py-1 rounded border transition ${
+                assistenteAberto && passoAssistente === 3
+                  ? 'ring-2 ring-[#0284c7] dark:ring-sky-400 bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                  passoAssistente === 3 ? 'bg-[#0284c7] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                }`}>
+                  ③ Período
                 </span>
-              </div>
-            ) : (
-              <div className="flex items-start space-x-2 p-2 rounded bg-slate-100 dark:bg-[#132232] border border-slate-200 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 text-[10px] font-mono leading-relaxed">
-                <Info className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
-                <span>
-                  <strong className="font-semibold text-foreground">Dica:</strong> Após iniciar a sincronização, pode fechar a janela livremente. O motor em background processa todas as empresas selecionadas até ao fim.
-                </span>
-              </div>
-            )}
-
-            {Object.keys(syncStatus).length > 0 && (
-              <button
-                onClick={limparHistoricoEstados}
-                className="w-full py-1.5 px-3 rounded bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-muted-foreground hover:text-foreground dark:text-slate-300 border border-slate-200 dark:border-[#2c4563] text-[10.5px] font-mono transition-colors cursor-pointer text-center shadow-2xs font-medium"
-              >
-                Limpar Histórico de Estados
-              </button>
-            )}
-            </div>
-          </div>
-        </div>
-
-        {/* Lado Direito: A Grande Matriz Anual */}
-        <div className="xl:col-span-9 overflow-hidden rounded-md border border-border shadow-xs flex flex-col min-h-[420px] xl:min-h-0 bg-card text-card-foreground">
-          
-          {/* Nova Barra Superior da Matriz: Controlos Temporais e Pesquisa */}
-          <div className="relative evo-card-signature flex flex-wrap justify-between items-center border-b border-border/80 px-3.5 py-2 bg-card text-card-foreground gap-2 shrink-0 select-none before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-            {/* Lado Esquerdo: Seletor de Exercício + Atalhos Rápidos + Recarregar */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              {/* Seletor Executivo de Exercício Fiscal evoGex.com */}
-              <div className="flex items-center space-x-1.5 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-500 rounded-lg px-2 py-1 shadow-2xs">
-                <div className="flex items-center space-x-1 text-sky-700 dark:text-sky-300 mr-0.5">
-                  <Calendar className="w-4 h-4 shrink-0 text-[#0284c7] dark:text-sky-400" />
-                  <span className="text-[10px] font-mono uppercase tracking-wider font-bold hidden sm:inline">Ano</span>
-                </div>
+              )}
+              <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#0284c7] dark:border-sky-600 rounded px-1.5 py-0.5">
+                <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
                 <button
                   type="button"
                   onClick={() => setAno(a => a - 1)}
-                  className="p-1 hover:bg-sky-200 dark:hover:bg-[#14304d] rounded text-foreground transition-colors cursor-pointer"
+                  className="p-0.5 hover:bg-sky-100 dark:hover:bg-[#14304d] rounded text-foreground cursor-pointer"
                   title="Exercício Anterior"
                 >
-                  <ChevronLeft className="w-4 h-4" />
+                  <ChevronLeft className="w-3.5 h-3.5" />
                 </button>
-                <span className="font-mono font-black text-base text-foreground dark:text-white px-1 tracking-wider select-text min-w-[46px] text-center">
+                <span className="font-mono font-black text-sm text-foreground dark:text-white px-0.5 min-w-[38px] text-center">
                   {ano}
                 </span>
                 <button
                   type="button"
                   onClick={() => setAno(a => (a < anoAtual ? a + 1 : a))}
                   disabled={ano >= anoAtual}
-                  className={`p-1 rounded transition-colors ${
-                    ano >= anoAtual 
-                      ? "opacity-20 cursor-not-allowed text-muted-foreground" 
-                      : "hover:bg-sky-200 dark:hover:bg-[#14304d] text-foreground cursor-pointer"
-                  }`}
+                  className={`p-0.5 rounded ${ano >= anoAtual ? 'opacity-20 cursor-not-allowed text-muted-foreground' : 'hover:bg-sky-100 dark:hover:bg-[#14304d] text-foreground cursor-pointer'}`}
                   title="Exercício Seguinte"
                 >
-                  <ChevronRight className="w-4 h-4" />
+                  <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              {/* Botões de Atalho Rápidos */}
-              <div className="flex items-center space-x-1 font-mono text-[10px]">
+              <div className="flex flex-wrap items-center gap-1 font-mono text-[10px]">
                 <button
                   type="button"
                   onClick={selecionarAnoCompleto}
-                  className="px-2 py-1 rounded bg-white dark:bg-[#101c2b] hover:bg-slate-100 dark:hover:bg-[#1a2d42] text-foreground border border-slate-200 dark:border-[#1e344f] transition-colors cursor-pointer shadow-2xs font-semibold"
-                  title="Selecionar todos os meses até ao presente"
+                  className="px-2 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1a2d42] text-foreground border border-slate-300 dark:border-[#253a52] cursor-pointer font-semibold"
                 >
                   Ano Todo
                 </button>
@@ -2221,8 +2211,7 @@ export default function CommandCenter({
                   <button
                     type="button"
                     onClick={selecionarMesAtual}
-                    className="px-2 py-1 rounded bg-white dark:bg-[#101c2b] hover:bg-slate-100 dark:hover:bg-[#1a2d42] text-foreground border border-slate-200 dark:border-[#1e344f] transition-colors cursor-pointer shadow-2xs font-semibold"
-                    title="Selecionar apenas o mês corrente"
+                    className="px-2 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1a2d42] text-foreground border border-slate-300 dark:border-[#253a52] cursor-pointer font-semibold"
                   >
                     Mês Atual
                   </button>
@@ -2230,61 +2219,147 @@ export default function CommandCenter({
                 <button
                   type="button"
                   onClick={desmarcarTodosMeses}
-                  className="px-2 py-1 rounded bg-white dark:bg-[#101c2b] hover:bg-slate-100 dark:hover:bg-[#1a2d42] text-muted-foreground hover:text-foreground border border-slate-200 dark:border-[#1e344f] transition-colors cursor-pointer shadow-2xs"
-                  title="Desmarcar todos os meses"
+                  className="px-2 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1a2d42] text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-[#253a52] cursor-pointer"
                 >
-                  Desmarcar
+                  Limpar Meses
                 </button>
-                <div className="flex items-center space-x-0.5 ml-1 border-l border-slate-300 dark:border-[#22364c] pl-1.5">
-                  {[1, 2, 3, 4].map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => selecionarTrimestre(t)}
-                      className="px-1.5 py-1 rounded bg-white dark:bg-[#101c2b] hover:bg-slate-100 dark:hover:bg-[#1a2d42] text-foreground border border-slate-200 dark:border-[#1e344f] transition-colors cursor-pointer shadow-2xs font-bold"
-                      title={`Selecionar ${t}º Trimestre (T${t})`}
-                    >
-                      T{t}
-                    </button>
-                  ))}
-                </div>
               </div>
 
-              {/* Botão Atualizar Matriz */}
               <button
                 type="button"
                 onClick={() => carregarMatriz(ano, tipoOperacao)}
                 disabled={carregandoMatriz}
-                className="p-1.5 text-muted-foreground hover:text-foreground rounded bg-white dark:bg-[#101c2b] hover:bg-slate-100 dark:hover:bg-[#1a2d42] border border-slate-200 dark:border-[#1e344f] transition cursor-pointer shadow-2xs ml-1"
+                className="p-1.5 text-slate-700 dark:text-slate-200 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1a2d42] border border-slate-300 dark:border-[#253a52] transition cursor-pointer"
                 title={`Atualizar matriz de ${tipoOperacao}`}
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${carregandoMatriz ? 'animate-spin text-[#0284c7] dark:text-sky-400' : ''}`} />
               </button>
             </div>
 
-            {/* Lado Direito: Seletor de Empresa (pesquisa interna + filtro após seleção) e Contador */}
-            <div className="flex items-center justify-between sm:justify-end gap-2.5 w-full sm:w-auto sm:ml-auto">
-              <EmpresaSelectorCombobox
-                entidades={entidades}
-                value={nifFiltroEmpresa}
-                onChange={setNifFiltroEmpresa}
-                modoPrivacidade={modoPrivacidade}
-                allLabel="Todas as Empresas"
-                placeholder="Pesquisar NIF, nome ou código..."
-                className="flex-1 sm:flex-none min-w-0 sm:min-w-[320px] max-w-full sm:max-w-[400px]"
-                dropdownClassName="w-80 md:w-[420px]"
-                align="right"
-                title="Pesquisar e selecionar empresa na Matriz"
-              />
+            {/* Zona 4: Opções Discretas + Botão Iniciar Importação */}
+            <div
+              onClick={() => assistenteAberto && setPassoAssistente(4)}
+              className={`relative flex items-center space-x-2 px-2 py-1 rounded border transition ${
+                assistenteAberto && passoAssistente === 4
+                  ? 'ring-2 ring-amber-500 bg-amber-50 dark:bg-[#1c1608] border-amber-500 shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                  passoAssistente === 4 ? 'bg-amber-600 text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                }`}>
+                  ④ Iniciar
+                </span>
+              )}
 
-              <span className="text-xs font-mono text-slate-600 dark:text-slate-300 shrink-0 select-none">
-                <strong className="text-foreground">{entidadesFiltradasEOrdenadas.length}</strong> de {entidades.length}
-              </span>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); setOpcoesAvancadasAbertas(v => !v); }}
+                  className="px-2 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1a2d42] border border-slate-300 dark:border-[#253a52] text-[11px] font-mono font-semibold text-foreground flex items-center space-x-1 cursor-pointer"
+                  title="Opções avançadas de extração"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+                  <span className="hidden sm:inline">Opções</span>
+                  <ChevronDown className={`w-3 h-3 transition-transform ${opcoesAvancadasAbertas ? 'rotate-180' : ''}`} />
+                </button>
+
+                {opcoesAvancadasAbertas && (
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    className="absolute right-0 mt-1.5 w-72 max-w-[calc(100vw-2rem)] bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded-md shadow-2xl p-3 z-50 space-y-2.5 text-xs font-mono"
+                  >
+                    <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#222f3e] pb-1.5">
+                      <span className="font-bold text-foreground uppercase text-[10px] tracking-wider">Opções Avançadas</span>
+                      <button type="button" onClick={() => setOpcoesAvancadasAbertas(false)} className="text-slate-500 hover:text-foreground cursor-pointer">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <label className="flex items-start space-x-2 cursor-pointer p-1.5 rounded bg-slate-50 dark:bg-[#101c2b] border border-slate-200 dark:border-[#1e344f]">
+                      <input
+                        type="checkbox"
+                        checked={reimportarTudo}
+                        onChange={e => setReimportarTudo(e.target.checked)}
+                        className="mt-0.5 rounded accent-rose-600 cursor-pointer"
+                      />
+                      <div>
+                        <span className="block font-sans font-semibold text-foreground text-xs">Reimportação Forçada (Wipe)</span>
+                        <span className="block text-[9.5px] text-slate-600 dark:text-slate-400">Substitui registos do período na base central.</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start space-x-2 cursor-pointer p-1.5 rounded bg-slate-50 dark:bg-[#101c2b] border border-slate-200 dark:border-[#1e344f]">
+                      <input
+                        type="checkbox"
+                        checked={gerarXmlLegado}
+                        onChange={e => toggleGerarXmlLegado(e.target.checked)}
+                        className="mt-0.5 rounded accent-emerald-600 cursor-pointer"
+                      />
+                      <div>
+                        <span className="block font-sans font-semibold text-foreground text-xs">Alimentar Excel Apps (XML V3)</span>
+                        <span className="block text-[9.5px] text-slate-600 dark:text-slate-400">Gera XMLs em paralelo para compatibilidade Excel.</span>
+                      </div>
+                    </label>
+
+                    <div className="flex items-start space-x-1.5 p-2 rounded bg-slate-100 dark:bg-[#132233] text-[10px] text-slate-700 dark:text-slate-300 leading-snug">
+                      <Info className="w-3.5 h-3.5 text-[#0284c7] shrink-0 mt-0.5" />
+                      <span>Após iniciar, a extração continua em segundo plano mesmo se fechar o browser.</span>
+                    </div>
+
+                    {Object.keys(syncStatus).length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          limparHistoricoEstados();
+                          setOpcoesAvancadasAbertas(false);
+                        }}
+                        className="w-full py-1.5 px-2 rounded bg-slate-100 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1c2e40] border border-slate-300 dark:border-[#253a52] text-[10.5px] font-semibold text-foreground cursor-pointer"
+                      >
+                        Limpar Histórico de Estados
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {isSyncing ? (
+                <button
+                  type="button"
+                  onClick={handleStopAll}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded font-mono text-xs font-bold uppercase tracking-wider cursor-pointer shadow-xs bg-rose-600 hover:bg-rose-700 text-white animate-pulse"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                  <span>Parar</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSync}
+                  disabled={selectedIds.size === 0 || meses.size === 0}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded font-mono text-xs font-bold uppercase tracking-wider cursor-pointer shadow-xs transition ${
+                    selectedIds.size === 0 || meses.size === 0
+                      ? 'bg-slate-200 dark:bg-[#182838] text-slate-500 cursor-not-allowed'
+                      : reimportarTudo
+                        ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                        : tipoOperacao === 'vendas'
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          : 'bg-[#0284c7] hover:bg-[#0369a1] text-white'
+                  }`}
+                >
+                  {reimportarTudo ? <RotateCcw className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                  <span>{reimportarTudo ? 'Reimportar' : 'Sincronizar'} ({selectedIds.size})</span>
+                </button>
+              )}
             </div>
           </div>
-          
-          {/* Tabela de Matriz com Rolagem Interna Segura e Fundo Sólido */}
-          <div className="flex-1 overflow-x-auto overflow-y-auto bg-card">
+
+          {/* A Grande Matriz Anual (100% da largura) */}
+          <div className="flex-1 overflow-hidden rounded-md border border-border shadow-xs flex flex-col min-h-[380px] lg:min-h-0 bg-card text-card-foreground">
+            
+            {/* Tabela de Matriz com Rolagem Interna Segura e Fundo Sólido */}
+            <div className="flex-1 overflow-x-auto overflow-y-auto bg-card">
             <table className="w-full text-xs text-left whitespace-nowrap bg-card border-collapse">
               <thead className="bg-slate-200/90 dark:bg-[#0c1724] text-slate-800 dark:text-slate-100 font-semibold sticky top-0 z-20 shadow-xs border-b border-slate-300 dark:border-[#1e2f42] select-none">
                 <tr>
@@ -2918,6 +2993,71 @@ export default function CommandCenter({
             </div>
           </div>
         </div>
+        </div>
+
+        {/* Painel Direito Encaixado: Assistente Guiado Passo a Passo */}
+        <AssistenteImportacaoPanel
+          aberto={assistenteAberto}
+          onClose={fecharAssistente}
+          moduloTitulo="e-Fatura"
+          apiOnline={apiOnline}
+          caminhoDados={caminhoDadosLocal}
+          onCaminhoDadosChange={setCaminhoDadosLocal}
+          tipoOperacao={tipoOperacao}
+          onTipoOperacaoChange={op => setTipoOperacao(op === 'vendas' ? 'vendas' : 'compras')}
+          empresas={entidades.map(e => ({
+            id: e.id,
+            cod: e.cod,
+            nif: e.nif || e.nif_cc || '',
+            nome: e.nomecli || e.nif || '',
+          }))}
+          selecionadasIds={selectedIds}
+          onToggleEmpresa={toggleEntity}
+          onSelecionarTodasEmpresas={() => setSelectedIds(new Set(entidades.map(e => e.id)))}
+          onLimparEmpresas={() => setSelectedIds(new Set())}
+          modoPrivacidade={modoPrivacidade}
+          ano={ano}
+          anoAtual={anoAtual}
+          onAnoChange={novoAno => setAno(novoAno)}
+          mesesSelecionados={meses}
+          onToggleMes={toggleMes}
+          onSelecionarAnoTodo={selecionarAnoCompleto}
+          onSelecionarMesAtual={selecionarMesAtual}
+          onSelecionarTrimestre={selecionarTrimestre}
+          isSyncing={isSyncing}
+          labelBotaoIniciar={reimportarTudo ? `Reimportar ${tipoOperacao === 'compras' ? 'Compras' : 'Vendas'} (${selectedIds.size})` : `Iniciar Importação (${selectedIds.size})`}
+          onIniciarImportacao={handleSync}
+          passoAtivo={passoAssistente}
+          onPassoAtivoChange={setPassoAssistente}
+          opcoesExtras={
+            <div className="space-y-2 text-xs font-mono">
+              <label className="flex items-start space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={reimportarTudo}
+                  onChange={e => setReimportarTudo(e.target.checked)}
+                  className="mt-0.5 rounded accent-rose-600 cursor-pointer"
+                />
+                <span>
+                  <strong className="block font-sans text-foreground">Reimportação Forçada (Wipe)</strong>
+                  <span className="text-[10px] text-slate-600 dark:text-slate-400">Substitui registos do período na base central.</span>
+                </span>
+              </label>
+              <label className="flex items-start space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={gerarXmlLegado}
+                  onChange={e => toggleGerarXmlLegado(e.target.checked)}
+                  className="mt-0.5 rounded accent-emerald-600 cursor-pointer"
+                />
+                <span>
+                  <strong className="block font-sans text-foreground">Alimentar Excel Apps (XML V3)</strong>
+                  <span className="text-[10px] text-slate-600 dark:text-slate-400">Mantém os XML legados sincronizados para Excel.</span>
+                </span>
+              </label>
+            </div>
+          }
+        />
 
       </div>
 
