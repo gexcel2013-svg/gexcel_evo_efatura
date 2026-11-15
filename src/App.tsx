@@ -4,6 +4,7 @@ import CommandCenter from './components/CommandCenter';
 import { RecibosVerdesView } from './components/RecibosVerdesView';
 import { InconformidadesView } from './components/InconformidadesView';
 import { FaturasView, type FiltroInicialDados } from './components/FaturasView';
+import { MapasResumoView } from './components/MapasResumoView';
 import { DevView } from './components/DevView';
 import { AgendadorView } from './components/AgendadorView';
 import { ConfigView } from './components/ConfigView';
@@ -289,6 +290,13 @@ function AppContent() {
               onApiStatusChange={setApiOnline} 
               modoPrivacidade={modoPrivacidade}
               filtroInicial={faturasFiltroInicial}
+            />
+          ) : activeTab === 'mapas_resumo' ? (
+            <MapasResumoView
+              ano={anoGlobal}
+              onAnoChange={setAnoGlobal}
+              onApiStatusChange={setApiOnline}
+              modoPrivacidade={modoPrivacidade}
             />
           ) : activeTab === 'agendador' ? (
             <AgendadorView 

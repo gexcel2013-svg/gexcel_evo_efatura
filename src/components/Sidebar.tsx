@@ -3,6 +3,7 @@ import {
   Table2, 
   FileSpreadsheet, 
   FileText,
+  BarChart3,
   ShieldAlert,
   ChevronLeft, 
   ChevronRight, 
@@ -128,6 +129,12 @@ export function Sidebar({
       id: 'faturas',
       label: 'Dados',
       icon: <FileSpreadsheet className="w-4 h-4 shrink-0" />,
+      badge: undefined,
+    },
+    {
+      id: 'mapas_resumo',
+      label: 'Mapas Resumo',
+      icon: <BarChart3 className="w-4 h-4 shrink-0" />,
       badge: undefined,
     },
     {
@@ -708,13 +715,14 @@ export function MobileBottomNav({ activeTab, onSelectTab, totalCount }: MobileBo
     { id: 'recibos', label: 'Recibos', icon: FileText },
     { id: 'anulados', label: 'Anulados', icon: ShieldAlert },
     { id: 'faturas', label: 'Dados', icon: FileSpreadsheet },
+    { id: 'mapas_resumo', label: 'Mapas', icon: BarChart3 },
     { id: 'agendador', label: 'Agenda', icon: Calendar },
   ];
 
   return (
     <nav
       aria-label="Navegação Mobile"
-      className="md:hidden w-full bg-white dark:bg-[#0c1520] border-t border-border shrink-0 z-30 grid grid-cols-5 h-14 select-none"
+      className="md:hidden w-full bg-white dark:bg-[#0c1520] border-t border-border shrink-0 z-30 grid grid-cols-6 h-14 select-none"
     >
       {mobileTabs.map(tab => {
         const Icon = tab.icon;
