@@ -214,7 +214,7 @@ export function sincronizarLocalFsComAppConfig(appConfig: any): LocalFsCentroCon
     pasta_pdfs_display: pastaPdfsFinal,
     pasta_gexcel_antiga_display: pastaAntigaFinal,
     ligado: true,
-    evogex_confirmado: Boolean(atual?.evogex_confirmado || candidatoEvo),
+    evogex_confirmado: Boolean(atual?.evogex_confirmado),
     antiga_confirmada: Boolean(atual?.antiga_confirmada || pastaAntigaFinal),
     total_entidades_carregadas: atual?.total_entidades_carregadas,
     total_sqlites_gravados: atual?.total_sqlites_gravados,
@@ -351,46 +351,265 @@ async function escreverFicheiroNoHandle(rootHandle: any, subParts: string[], fil
   await writable.close();
 }
 
+export interface EstadoPastaLocalV4 {
+  autoritativo: boolean;
+  comprasNifs: Set<string>;
+  vendasNifs: Set<string>;
+  todosNifs: Set<string>;
+}
+
+let sqliteSyncQueue: Promise<unknown> = Promise.resolve();
+
+function obterTokenSessaoLimpeza(): string {
+  try {
+    const rawEvo =
+      sessionStorage.getItem('gexcel_evo06_auth_session') ||
+      localStorage.getItem('gexcel_evo06_auth_session');
+    if (rawEvo) {
+      const parsed = JSON.parse(rawEvo);
+      if (parsed?.token && typeof parsed.token === 'string') {
+        return parsed.token.trim();
+      }
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const legacyTok = localStorage.getItem('gexcel_app_auth_token');
+    if (legacyTok) return legacyTok.trim();
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
+async function chamarLimparBaseServidor(queryString: string): Promise<void> {
+  const url = `http://127.0.0.1:8015/api/base-dados/limpar?${queryString}`;
+  const tok = obterTokenSessaoLimpeza();
+  const headers: Record<string, string> = {};
+  if (tok) {
+    headers['X-Auth-Token'] = tok;
+    headers['Authorization'] = `Bearer ${tok}`;
+  }
+  try {
+    const res = await fetch(url, { method: 'POST', headers });
+    if (res.status === 401 && tok) {
+      await fetch(url, { method: 'POST' });
+    }
+  } catch (err) {
+    console.warn('[LOCAL FS] Aviso ao limpar cache no servidor:', err);
+  }
+}
+
+async function temFicheiroDbValido(dirHandle: any, fileName: string): Promise<boolean> {
+  try {
+    const fh = await dirHandle.getFileHandle(fileName, { create: false });
+    const file = await fh.getFile();
+    return file.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function lerEstadoRealPastaLocalV4DeHandle(rootHandle: any): Promise<EstadoPastaLocalV4> {
+  const vazio: EstadoPastaLocalV4 = {
+    autoritativo: false,
+    comprasNifs: new Set<string>(),
+    vendasNifs: new Set<string>(),
+    todosNifs: new Set<string>(),
+  };
+  if (!rootHandle) return vazio;
+
+  try {
+    if (typeof rootHandle.queryPermission === 'function') {
+      const perm = await rootHandle.queryPermission({ mode: 'read' });
+      if (perm !== 'granted') return vazio;
+    }
+  } catch {
+    return vazio;
+  }
+
+  const comprasNifs = new Set<string>();
+  const vendasNifs = new Set<string>();
+  const todosNifs = new Set<string>();
+
+  try {
+    let v4Handle: any = null;
+    try {
+      v4Handle = await rootHandle.getDirectoryHandle('BdsefaturaV4', { create: false });
+    } catch (err: any) {
+      if (err?.name === 'NotFoundError') {
+        return { autoritativo: true, comprasNifs, vendasNifs, todosNifs };
+      }
+      return vazio;
+    }
+
+    if (!v4Handle || typeof v4Handle.entries !== 'function') {
+      return vazio;
+    }
+
+    for await (const [name, entry] of v4Handle.entries()) {
+      if (entry?.kind === 'directory' && /^\d{9}$/.test(name)) {
+        const [temCompras, temVendas] = await Promise.all([
+          temFicheiroDbValido(entry, `compras_${name}.db`),
+          temFicheiroDbValido(entry, `vendas_${name}.db`),
+        ]);
+        if (temCompras) {
+          comprasNifs.add(name);
+          todosNifs.add(name);
+        }
+        if (temVendas) {
+          vendasNifs.add(name);
+          todosNifs.add(name);
+        }
+      }
+    }
+
+    return {
+      autoritativo: true,
+      comprasNifs,
+      vendasNifs,
+      todosNifs,
+    };
+  } catch (err) {
+    console.warn('[LOCAL FS] Aviso ao ler BdsefaturaV4 local:', err);
+    return vazio;
+  }
+}
+
+export async function lerEstadoRealPastaLocalV4(): Promise<EstadoPastaLocalV4> {
+  const rootHandle = await obterHandleEvogexAtivo(false);
+  return lerEstadoRealPastaLocalV4DeHandle(rootHandle);
+}
+
+export async function purgarNifsAusentesNoServidor(
+  nifsServidor: string[],
+  nifsLocaisPresentes: Set<string>,
+  tipo: 'compras' | 'vendas' | 'tudo'
+): Promise<void> {
+  const ausentes = nifsServidor.filter(n => n && !nifsLocaisPresentes.has(n));
+  if (ausentes.length === 0) return;
+
+  if (nifsLocaisPresentes.size === 0 && nifsServidor.length > 0) {
+    await chamarLimparBaseServidor(`tipo=${encodeURIComponent(tipo)}`);
+    return;
+  }
+
+  for (const nif of ausentes) {
+    await chamarLimparBaseServidor(`tipo=${encodeURIComponent(tipo)}&nif=${encodeURIComponent(nif)}`);
+  }
+}
+
+export async function tentarRestaurarPermissaoSilenciosaNoClique(): Promise<boolean> {
+  const rootHandle = await obterHandleEvogexAtivo(false);
+  if (!rootHandle) return false;
+  try {
+    if (typeof rootHandle.queryPermission === 'function') {
+      const current = await rootHandle.queryPermission({ mode: 'readwrite' });
+      if (current === 'granted') return true;
+      if (typeof rootHandle.requestPermission === 'function') {
+        const req = await rootHandle.requestPermission({ mode: 'readwrite' });
+        return req === 'granted';
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function garantirAcessoPastaLocalNoClique(): Promise<boolean> {
+  const win = window as any;
+  const rootHandle = await obterHandleEvogexAtivo(false);
+  if (rootHandle) {
+    let estavaGranted = false;
+    try {
+      if (typeof rootHandle.queryPermission === 'function') {
+        estavaGranted = (await rootHandle.queryPermission({ mode: 'readwrite' })) === 'granted';
+      }
+    } catch {
+      estavaGranted = false;
+    }
+
+    const ok = estavaGranted || (await garantirPermissaoHandle(rootHandle, 'readwrite'));
+    if (ok) {
+      if (!estavaGranted) {
+        const estadoLocal = await lerEstadoRealPastaLocalV4DeHandle(rootHandle);
+        if (estadoLocal.autoritativo && estadoLocal.todosNifs.size === 0) {
+          await chamarLimparBaseServidor('tipo=tudo');
+        }
+      }
+      return true;
+    }
+  }
+
+  if (typeof win.showDirectoryPicker !== 'function') {
+    return false;
+  }
+
+  const cfgAtual = obterLocalFsCentroConfig();
+  const res = await escolherEInstalarPastaDadosEvogex({
+    nomeCentro: cfgAtual?.nome || 'Escritório Principal',
+    hostname: cfgAtual?.hostname || 'COMPUTADOR-LOCAL',
+    caminhoProposto: cfgAtual?.pasta_evogex_display || 'C:\\Dados_evoGex',
+    naoDescarregarDoServidorSeVazio: true,
+    limparServidorSePastaVazia: true,
+  });
+  return res.ok;
+}
+
 /**
  * Descarrega os ficheiros SQLite (.db) da empresa (ou todos) e grava-os fisicamente
  * na pasta Dados_evoGex\BdsefaturaV4 escolhida pelo utilizador no computador/servidor.
  */
-export async function sincronizarSqlitesParaPastaLocal(nif?: string, pedirPermissao = false): Promise<number> {
-  try {
-    const rootHandle = await obterHandleEvogexAtivo(pedirPermissao);
-    if (!rootHandle) return 0;
+export function sincronizarSqlitesParaPastaLocal(nif?: string, pedirPermissao = false): Promise<number> {
+  const exec = async (): Promise<number> => {
+    try {
+      const rootHandle = await obterHandleEvogexAtivo(pedirPermissao);
+      if (!rootHandle) return 0;
 
-    const url = nif
-      ? `/api/efatura/exportar-sqlite/${encodeURIComponent(nif)}`
-      : '/api/efatura/exportar-todos-sqlites';
-    const res = await fetch(url);
-    if (!res.ok) return 0;
-    const data = await res.json();
-    const ficheiros: Array<{ rel_path: string; base64: string }> = data.ficheiros || [];
-    if (ficheiros.length === 0) return 0;
+      if (!pedirPermissao && typeof rootHandle.queryPermission === 'function') {
+        const perm = await rootHandle.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') return 0;
+      }
 
-    const v4Handle = await rootHandle.getDirectoryHandle('BdsefaturaV4', { create: true });
-    let gravados = 0;
-    for (const f of ficheiros) {
-      const parts = f.rel_path.split('/').filter(Boolean);
-      const fname = parts.pop();
-      if (!fname) continue;
-      const bytes = base64ToUint8Array(f.base64);
-      await escreverFicheiroNoHandle(v4Handle, parts, fname, bytes);
-      gravados++;
+      const url = nif
+        ? `/api/efatura/exportar-sqlite/${encodeURIComponent(nif)}`
+        : '/api/efatura/exportar-todos-sqlites';
+      const res = await fetch(url);
+      if (!res.ok) return 0;
+      const data = await res.json();
+      const ficheiros: Array<{ rel_path: string; base64: string }> = data.ficheiros || [];
+      if (ficheiros.length === 0) return 0;
+
+      const v4Handle = await rootHandle.getDirectoryHandle('BdsefaturaV4', { create: true });
+      let gravados = 0;
+      for (const f of ficheiros) {
+        const parts = f.rel_path.split('/').filter(Boolean);
+        const fname = parts.pop();
+        if (!fname) continue;
+        const bytes = base64ToUint8Array(f.base64);
+        await escreverFicheiroNoHandle(v4Handle, parts, fname, bytes);
+        gravados++;
+      }
+
+      const cfg = obterLocalFsCentroConfig();
+      if (cfg) {
+        cfg.evogex_confirmado = true;
+        cfg.total_sqlites_gravados = gravados;
+        cfg.updated_at = new Date().toISOString();
+        guardarLocalFsCentroConfig(cfg);
+      }
+      return gravados;
+    } catch (err) {
+      console.warn('[LOCAL FS] Aviso ao gravar SQLite na pasta local:', err);
+      return 0;
     }
+  };
 
-    const cfg = obterLocalFsCentroConfig();
-    if (cfg) {
-      cfg.total_sqlites_gravados = gravados;
-      cfg.updated_at = new Date().toISOString();
-      guardarLocalFsCentroConfig(cfg);
-    }
-    return gravados;
-  } catch (err) {
-    console.warn('[LOCAL FS] Aviso ao gravar SQLite na pasta local:', err);
-    return 0;
-  }
+  const run = sqliteSyncQueue.then(exec, exec);
+  sqliteSyncQueue = run;
+  return run;
 }
 
 export async function abrirPastaNoExploradorNativo(
@@ -503,6 +722,9 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
   nomeCentro?: string;
   hostname?: string;
   caminhoProposto?: string;
+  naoDescarregarDoServidorSeVazio?: boolean;
+  limparServidorSePastaVazia?: boolean;
+  sincronizarDoServidor?: boolean;
 }): Promise<{ ok: boolean; config?: LocalFsCentroConfig; erro?: string }> {
   const win = window as any;
   if (typeof win.showDirectoryPicker !== 'function') {
@@ -582,8 +804,17 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
     await saveHandleIdb('evogex_root', evogexHandle);
     guardarLocalFsCentroConfig(novoCfg);
 
-    // Sincronizar imediatamente todos os SQLites já importados (ex: 503570770) para dentro de BdsefaturaV4!
-    await sincronizarSqlitesParaPastaLocal();
+    const estadoV4Local = await lerEstadoRealPastaLocalV4DeHandle(evogexHandle);
+    if (opcoes?.sincronizarDoServidor) {
+      await sincronizarSqlitesParaPastaLocal();
+    } else if (estadoV4Local.todosNifs.size === 0) {
+      // Pasta BdsefaturaV4 local vazia: nunca despejar dados antigos do servidor para a pasta vazia.
+      if (opcoes?.limparServidorSePastaVazia || opcoes?.naoDescarregarDoServidorSeVazio !== false) {
+        await chamarLimparBaseServidor('tipo=tudo');
+      }
+    } else if (opcoes?.naoDescarregarDoServidorSeVazio === false) {
+      await sincronizarSqlitesParaPastaLocal();
+    }
 
     return { ok: true, config: novoCfg };
   } catch (err: any) {
@@ -656,7 +887,10 @@ export async function escolherPastaDadosGexcelAntigos(
     };
 
     guardarLocalFsCentroConfig(cfgAtual);
-    await sincronizarSqlitesParaPastaLocal();
+    const estLocal = await lerEstadoRealPastaLocalV4();
+    if (!estLocal.autoritativo || estLocal.todosNifs.size > 0) {
+      await sincronizarSqlitesParaPastaLocal();
+    }
 
     if (!xmlContent) {
       return {

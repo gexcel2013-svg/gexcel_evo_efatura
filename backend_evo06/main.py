@@ -4452,6 +4452,7 @@ def iniciar_extracao_async(req: ExtracaoRequest, lic = Depends(verificar_licenca
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {
         "status": "em_progresso",
+        "nif": req.nif,
         "nome_empresa": req.nome_entidade or "",
         "mensagem": "A iniciar processamento...",
         "volume_estimado": vol_est,
@@ -4554,6 +4555,7 @@ async def obter_status_job(job_id: str):
 
     resp = {
         "status": job["status"],
+        "nif": job.get("nif", ""),
         "mensagem": msg_formatada,
         "versao": API_VERSION,
         "tag_build": tag_build,
@@ -6422,6 +6424,7 @@ def api_iniciar_extracao_rv(req: RecibosVerdesExtracaoRequest, lic = Depends(ver
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {
         "status": "em_progresso",
+        "nif": req.nif,
         "nome_empresa": req.nome_entidade or "",
         "mensagem": "Na fila de espera para Recibos Verdes e Rendas...",
         "volume_estimado": 15,

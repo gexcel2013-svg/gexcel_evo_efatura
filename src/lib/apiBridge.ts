@@ -93,13 +93,17 @@ if (typeof window !== 'undefined') {
 
 function inspecionarRespostaESincronizarSqlite(pathPart: string, res: Response) {
   if (!res.ok) return;
-  if (pathPart.startsWith('/api/jobs/') || pathPart.startsWith('/api/sincronizar')) {
+  if (
+    pathPart.startsWith('/api/extracao/status/') ||
+    pathPart.startsWith('/api/jobs/') ||
+    pathPart.startsWith('/api/sincronizar')
+  ) {
     res
       .clone()
       .json()
       .then((data) => {
-        if (pathPart.startsWith('/api/jobs/')) {
-          if (data && data.status === 'concluido') {
+        if (pathPart.startsWith('/api/extracao/status/') || pathPart.startsWith('/api/jobs/')) {
+          if (data && (data.status === 'concluido' || data.status === 'interrompido')) {
             const jobId = data.job_id || pathPart;
             if (lastSyncedJobId !== jobId) {
               lastSyncedJobId = jobId;

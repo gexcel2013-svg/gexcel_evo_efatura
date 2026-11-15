@@ -38,6 +38,11 @@ import {
   isWindowsPath,
   obterResumoDestinosConfigurados,
   abrirPastaNoExploradorNativo,
+  garantirAcessoPastaLocalNoClique,
+  lerEstadoRealPastaLocalV4,
+  purgarNifsAusentesNoServidor,
+  sincronizarSqlitesParaPastaLocal,
+  tentarRestaurarPermissaoSilenciosaNoClique,
 } from '../lib/localFsBridge';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
 import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
@@ -573,9 +578,22 @@ export default function CommandCenter({
   // Refs para polling e interrupção imediata
   const activeJobsRef = useRef(activeJobs);
   const abortSyncRef = useRef(false);
+  const startingNifsRef = useRef<Set<string>>(new Set());
+  const entidadesRef = useRef(entidades);
+  const anoRef = useRef(ano);
+  const tipoOperacaoRef = useRef(tipoOperacao);
   useEffect(() => {
     activeJobsRef.current = activeJobs;
   }, [activeJobs]);
+  useEffect(() => {
+    entidadesRef.current = entidades;
+  }, [entidades]);
+  useEffect(() => {
+    anoRef.current = ano;
+  }, [ano]);
+  useEffect(() => {
+    tipoOperacaoRef.current = tipoOperacao;
+  }, [tipoOperacao]);
 
   // Notificar pai sobre seleção
   useEffect(() => {
@@ -596,7 +614,38 @@ export default function CommandCenter({
       const res = await fetch(`http://127.0.0.1:8015/api/estatisticas/matriz-anual/${anoAlvo}?tipo=${tipoAlvo}`);
       if (res.ok) {
         const data = await res.json();
-        setMatriz(normalizarMatrizEmpresas(data.empresas || {}));
+        const empresasRaw: Record<string, DadosEmpresaMatriz> = { ...(data.empresas || {}) };
+
+        const estadoLocal = await lerEstadoRealPastaLocalV4();
+        if (estadoLocal.autoritativo) {
+          const nifsValidos = new Set<string>(
+            tipoAlvo === 'vendas' ? estadoLocal.vendasNifs : estadoLocal.comprasNifs
+          );
+          for (const entId of Object.keys(activeJobsRef.current)) {
+            const entAtiva = entidadesRef.current.find(e => e.id === entId);
+            const nifAtivo = (entAtiva?.nif || entAtiva?.nif_cc || '').trim();
+            if (nifAtivo) nifsValidos.add(nifAtivo);
+          }
+          for (const nifIni of startingNifsRef.current) {
+            if (nifIni) nifsValidos.add(nifIni);
+          }
+
+          const nifsParaPurgar: string[] = [];
+          for (const [nifKey, empVal] of Object.entries(empresasRaw)) {
+            if (!nifsValidos.has(nifKey)) {
+              if ((empVal?.total_docs_ano || 0) > 0) {
+                nifsParaPurgar.push(nifKey);
+              }
+              delete empresasRaw[nifKey];
+            }
+          }
+
+          if (nifsParaPurgar.length > 0) {
+            void purgarNifsAusentesNoServidor(nifsParaPurgar, nifsValidos, tipoAlvo);
+          }
+        }
+
+        setMatriz(normalizarMatrizEmpresas(empresasRaw));
         setSenhasInvalidas(data.senhas_invalidas || {});
       }
 
@@ -729,6 +778,29 @@ export default function CommandCenter({
   useEffect(() => {
     carregarMatriz(ano, tipoOperacao);
   }, [ano, tipoOperacao]);
+
+  // Reconciliar com a pasta física BdsefaturaV4 ao voltar do Explorador do Windows ou após F5
+  useEffect(() => {
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === 'hidden') return;
+      void carregarMatriz(anoRef.current, tipoOperacaoRef.current);
+    };
+    const onFirstPointerDown = () => {
+      void tentarRestaurarPermissaoSilenciosaNoClique().then((restaurado) => {
+        if (restaurado) {
+          void carregarMatriz(anoRef.current, tipoOperacaoRef.current);
+        }
+      });
+    };
+    window.addEventListener('focus', onFocusOrVisible);
+    document.addEventListener('visibilitychange', onFocusOrVisible);
+    window.addEventListener('pointerdown', onFirstPointerDown, { once: true });
+    return () => {
+      window.removeEventListener('focus', onFocusOrVisible);
+      document.removeEventListener('visibilitychange', onFocusOrVisible);
+      window.removeEventListener('pointerdown', onFirstPointerDown);
+    };
+  }, []);
 
   // Healthcheck contínuo da API com validação de assinatura oficial e captura de versão
   useEffect(() => {
@@ -1056,6 +1128,10 @@ export default function CommandCenter({
                     }
                   }));
                 }
+                if (nifReal && (data.status === 'interrompido' || data.parcial)) {
+                  await sincronizarSqlitesParaPastaLocal(nifReal, false);
+                }
+                delete activeJobsRef.current[entId];
                 setActiveJobs(prev => {
                   const next = { ...prev };
                   delete next[entId];
@@ -1064,14 +1140,16 @@ export default function CommandCenter({
                 shouldRefreshMatrix = true;
               } else if (data.status === 'concluido') {
                 if (nifReal) {
-                  // Sincronização 100% terminada: limpa flag parcial deste NIF
+                  // Sincronização 100% terminada: limpa flag parcial deste NIF e grava SQLite local antes de atualizar matriz
                   const pKey = `${nifReal}_${ano}_${tipoOperacao}`;
                   setPartialStatus(prev => {
                     const next = { ...prev };
                     delete next[pKey];
                     return next;
                   });
+                  await sincronizarSqlitesParaPastaLocal(nifReal, false);
                 }
+                delete activeJobsRef.current[entId];
                 setActiveJobs(prev => {
                   const next = { ...prev };
                   delete next[entId];
@@ -1477,30 +1555,40 @@ export default function CommandCenter({
     const dIniEnvio = opcoes?.dataIni || dataInicio;
     const dFimEnvio = opcoes?.dataFim || dataFim;
 
-    // Deteção prévia de senha inválida: ignora sem chamar a AT
-    if (senhasInvalidas[nifParaEnviar]) {
-      const mot = senhasInvalidas[nifParaEnviar];
-      setSyncStatus(prev => ({ 
-        ...prev, 
-        [ent.id]: `Bloqueado: Senha Inválida (${mot})` 
-      }));
-      return;
-    }
-
-    // Limpar erros anteriores desta entidade ao reiniciar
-    setEntidadeErros(prev => {
-      const next = { ...prev };
-      delete next[ent.id];
-      return next;
-    });
-
-    const volEst = estimativasVolume[nifParaEnviar]?.volume_estimado ?? (matriz[nifParaEnviar]?.total_docs_ano ?? 0);
-    setSyncStatus(prev => ({
-      ...prev,
-      [ent.id]: usarScraperDireto || modoPortalWebForcado ? `[Portal Web] Na fila (~${volEst} docs)...` : `Fila SJF (~${volEst} docs)...`
-    }));
-    
+    startingNifsRef.current.add(nifParaEnviar);
     try {
+      const acessoLocalOk = await garantirAcessoPastaLocalNoClique();
+      if (!acessoLocalOk && typeof (window as any).showDirectoryPicker === 'function' && getMotorSource() !== 'local') {
+        setSyncStatus(prev => ({
+          ...prev,
+          [ent.id]: 'Cancelado: selecione a pasta Dados_evoGex local para gravar os ficheiros.'
+        }));
+        return;
+      }
+
+      // Deteção prévia de senha inválida: ignora sem chamar a AT
+      if (senhasInvalidas[nifParaEnviar]) {
+        const mot = senhasInvalidas[nifParaEnviar];
+        setSyncStatus(prev => ({ 
+          ...prev, 
+          [ent.id]: `Bloqueado: Senha Inválida (${mot})` 
+        }));
+        return;
+      }
+
+      // Limpar erros anteriores desta entidade ao reiniciar
+      setEntidadeErros(prev => {
+        const next = { ...prev };
+        delete next[ent.id];
+        return next;
+      });
+
+      const volEst = estimativasVolume[nifParaEnviar]?.volume_estimado ?? (matriz[nifParaEnviar]?.total_docs_ano ?? 0);
+      setSyncStatus(prev => ({
+        ...prev,
+        [ent.id]: usarScraperDireto || modoPortalWebForcado ? `[Portal Web] Na fila (~${volEst} docs)...` : `Fila SJF (~${volEst} docs)...`
+      }));
+      
       const payload = {
         nif: nifParaEnviar,
         nome_entidade: ent.nomecli || '',
@@ -1522,6 +1610,7 @@ export default function CommandCenter({
 
       if (res.ok) {
         const data = await res.json();
+        activeJobsRef.current = { ...activeJobsRef.current, [ent.id]: data.job_id };
         setActiveJobs(prev => ({ ...prev, [ent.id]: data.job_id }));
       } else {
         const err = await res.json();
@@ -1545,6 +1634,8 @@ export default function CommandCenter({
     } catch (err: any) {
       const netMsg = err.message || 'Sem Ligação à API (Porta 8015)';
       setSyncStatus(prev => ({ ...prev, [ent.id]: `Erro: ${netMsg}` }));
+    } finally {
+      startingNifsRef.current.delete(nifParaEnviar);
     }
   };
 
@@ -1575,7 +1666,24 @@ export default function CommandCenter({
       return;
     }
 
-    // Validação de disponibilidade com arranque automático se o motor estiver offline
+    const nifsLote = new Set<string>();
+    for (const sid of selectedIds) {
+      const entSel = entidades.find(e => e.id === sid);
+      const nifSel = (entSel?.nif || entSel?.nif_cc || '').trim();
+      if (nifSel) {
+        nifsLote.add(nifSel);
+        startingNifsRef.current.add(nifSel);
+      }
+    }
+
+    try {
+      const acessoLocalOk = await garantirAcessoPastaLocalNoClique();
+      if (!acessoLocalOk && typeof (window as any).showDirectoryPicker === 'function' && getMotorSource() !== 'local') {
+        alert("Selecione a pasta local Dados_evoGex para garantir que os ficheiros ficam gravados no seu computador.");
+        return;
+      }
+
+      // Validação de disponibilidade com arranque automático se o motor estiver offline
     let apiPronta = false;
     try {
       const checkRes = await fetch("http://127.0.0.1:8015/", { signal: AbortSignal.timeout(2000) });
@@ -1659,9 +1767,14 @@ export default function CommandCenter({
       await iniciarExtracaoParaEntidade(ent);
     }
 
-    if (Object.keys(activeJobsRef.current).length === 0) {
-      setBatchSyncIds(new Set());
-      setIsSyncing(false);
+      if (Object.keys(activeJobsRef.current).length === 0) {
+        setBatchSyncIds(new Set());
+        setIsSyncing(false);
+      }
+    } finally {
+      for (const n of nifsLote) {
+        startingNifsRef.current.delete(n);
+      }
     }
   };
 
