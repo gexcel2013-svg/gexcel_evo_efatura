@@ -71,6 +71,7 @@ export interface AssistenteImportacaoPanelProps {
   onSelecionarMesAtual?: () => void;
   onSelecionarTrimestre?: (t: number) => void;
   apenasAnoCompleto?: boolean;
+  modoConsulta?: boolean;
   // Passo 4: Opções extras & Disparo
   opcoesExtras?: ReactNode;
   isSyncing: boolean;
@@ -148,6 +149,7 @@ export function AssistenteImportacaoPanel({
   onSelecionarMesAtual,
   onSelecionarTrimestre,
   apenasAnoCompleto = false,
+  modoConsulta = false,
   opcoesExtras,
   isSyncing,
   labelBotaoIniciar,
@@ -594,7 +596,7 @@ export function AssistenteImportacaoPanel({
   const podeIniciar =
     !isSyncing &&
     !iniciandoAnimado &&
-    selecionadasIds.size > 0 &&
+    (modoConsulta || selecionadasIds.size > 0) &&
     (!mesesSelecionados || mesesSelecionados.size > 0);
 
   const labelOperacao =
@@ -945,7 +947,7 @@ export function AssistenteImportacaoPanel({
                     {passosConfirmados.has(2) ? <Check className="w-3.5 h-3.5" /> : '2'}
                   </span>
                   <span className="text-xs font-mono font-bold text-slate-900 dark:text-slate-50 truncate">
-                    Quem Importar (Operação & Empresas)
+                    {modoConsulta ? 'Quem Consultar (Operação & Empresas)' : 'Quem Importar (Operação & Empresas)'}
                   </span>
                 </div>
                 <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#eef2ff] dark:bg-[#0d1422] border border-[#c7d2fe] dark:border-[#3730a3] text-[#3730a3] dark:text-[#a5b4fc] shrink-0 tabular-nums">
@@ -1250,7 +1252,7 @@ export function AssistenteImportacaoPanel({
                     {passosConfirmados.has(3) ? <Check className="w-3.5 h-3.5" /> : '3'}
                   </span>
                   <span className="text-xs font-mono font-bold text-slate-900 dark:text-slate-50 truncate">
-                    Que Período Importar
+                    {modoConsulta ? 'Que Período Consultar' : 'Que Período Importar'}
                   </span>
                 </div>
                 <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#eef2ff] dark:bg-[#0d1422] border border-[#c7d2fe] dark:border-[#3730a3] text-[#3730a3] dark:text-[#a5b4fc] shrink-0">
@@ -1426,7 +1428,7 @@ export function AssistenteImportacaoPanel({
                     4
                   </span>
                   <span className="text-xs font-mono font-bold text-slate-900 dark:text-slate-50 truncate">
-                    Confirmar e Iniciar Importação
+                    {modoConsulta ? 'Confirmar e Consultar Dados' : 'Confirmar e Iniciar Importação'}
                   </span>
                 </div>
                 <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#4f46e5] dark:bg-[#6366f1] text-white shrink-0">
@@ -1508,7 +1510,7 @@ export function AssistenteImportacaoPanel({
                   4
                 </span>
                 <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-slate-100 truncate">
-                  Iniciar · {selecionadasIds.size} selecionada(s) · {ano}
+                  {modoConsulta ? 'Consultar' : 'Iniciar'} · {selecionadasIds.size} selecionada(s) · {ano}
                 </span>
               </div>
               <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#0d1422] border border-[#94a3b8] dark:border-[#334155] text-[9.5px] font-mono font-bold text-[#4338ca] dark:text-[#a5b4fc] shrink-0">

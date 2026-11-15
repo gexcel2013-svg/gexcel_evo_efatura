@@ -22,9 +22,17 @@ import {
   ArrowDown,
   ArrowUpDown,
   Filter,
-  FilterX
+  FilterX,
+  Sparkles,
+  FolderOpen
 } from 'lucide-react';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
+import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
+import {
+  isWindowsPath,
+  obterResumoDestinosConfigurados,
+  abrirPastaNoExploradorNativo,
+} from '../lib/localFsBridge';
 
 function testarFiltroNumerico(valor: number, filtroStr: string): boolean {
   const f = filtroStr.trim().replace(',', '.');
@@ -60,6 +68,7 @@ function testarFiltroNumerico(valor: number, filtroStr: string): boolean {
 
 interface Entidade {
   id: string;
+  cod?: string;
   nif: string;
   nif_cc?: string;
   nomecli: string;
@@ -214,11 +223,88 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
   const [mesAtivo, setMesAtivo] = useState<number | null>(() => filtroInicial?.mes ?? null);
 
   const ultimoReqIdRef = useRef<number>(0);
+  const inicializouAssistenteRef = useRef<boolean>(false);
+  const assistenteAlterouSelecaoRef = useRef<boolean>(false);
+
+  // Assistente Passo a Passo & Destino Local
+  const [assistenteAberto, setAssistenteAberto] = useState<boolean>(
+    () => localStorage.getItem('gexcel_dados_assistente_fechado') !== 'true'
+  );
+  const [passoAssistente, setPassoAssistente] = useState<1 | 2 | 3 | 4>(1);
+  const [caminhoDestinoLocal, setCaminhoDestinoLocal] = useState<string>(
+    () => obterResumoDestinosConfigurados().pastaV4
+  );
+  const [copiadoPasta, setCopiadoPasta] = useState<boolean>(false);
+  const [apiOnlineLocal, setApiOnlineLocal] = useState<boolean | null>(true);
+  const [selecionadasAssistente, setSelecionadasAssistente] = useState<Set<string>>(() =>
+    filtroInicial?.nif ? new Set([filtroInicial.nif]) : new Set()
+  );
+
+  const abrirAssistente = () => {
+    setAssistenteAberto(true);
+    localStorage.setItem('gexcel_dados_assistente_fechado', 'false');
+  };
+
+  const fecharAssistente = () => {
+    setAssistenteAberto(false);
+    localStorage.setItem('gexcel_dados_assistente_fechado', 'true');
+  };
+
+  useEffect(() => {
+    const onFsUpdated = () => {
+      setCaminhoDestinoLocal(obterResumoDestinosConfigurados().pastaV4);
+    };
+    window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
+    return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
+  }, []);
+
+  useEffect(() => {
+    fetch('http://127.0.0.1:8015/api/recibos-verdes/config')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (isWindowsPath(d?.pasta_v4) && !obterResumoDestinosConfigurados().evogexConfirmado) {
+          setCaminhoDestinoLocal(d.pasta_v4);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const copiarCaminhoDados = async () => {
+    try {
+      await navigator.clipboard.writeText(caminhoDestinoLocal);
+      setCopiadoPasta(true);
+      setTimeout(() => setCopiadoPasta(false), 1800);
+    } catch {}
+  };
+
+  const abrirPastaDadosWindows = async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:8015/api/sistema/abrir-explorador', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caminho: caminhoDestinoLocal }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.status === 'ok' && d.origem !== 'cloud') return;
+      }
+    } catch {}
+    await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
+  };
 
   // Efeito de navegação contextual recebida da Matriz/Importador
   useEffect(() => {
     if (filtroInicial) {
-      if (filtroInicial.nif !== undefined) setNifSelecionado(filtroInicial.nif);
+      if (filtroInicial.nif !== undefined) {
+        setNifSelecionado(filtroInicial.nif);
+        if (filtroInicial.nif) {
+          setSelecionadasAssistente(new Set([filtroInicial.nif]));
+        } else {
+          setSelecionadasAssistente(
+            new Set(entidades.map(e => (e.nif || e.nif_cc || '').trim()).filter(Boolean))
+          );
+        }
+      }
       if (filtroInicial.tipo !== undefined) setTipoOperacao(filtroInicial.tipo);
       
       const anoAlvo = filtroInicial.ano || anoAtual;
@@ -394,6 +480,52 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
     return () => { cancel = true; };
   }, []);
 
+  // 1.5 Sincronização inicial e helpers de seleção de empresas no Assistente
+  useEffect(() => {
+    if (entidades.length === 0 || inicializouAssistenteRef.current) return;
+    inicializouAssistenteRef.current = true;
+    if (nifSelecionado) {
+      setSelecionadasAssistente(new Set([nifSelecionado]));
+    } else {
+      setSelecionadasAssistente(
+        new Set(entidades.map(e => (e.nif || e.nif_cc || '').trim()).filter(Boolean))
+      );
+    }
+  }, [entidades, nifSelecionado]);
+
+  const toggleEmpresaAssistente = useCallback((nif: string) => {
+    assistenteAlterouSelecaoRef.current = true;
+    setSelecionadasAssistente(prev => {
+      const next = new Set(prev);
+      if (next.has(nif)) next.delete(nif);
+      else next.add(nif);
+      return next;
+    });
+  }, []);
+
+  const selecionarTodasAssistente = useCallback(() => {
+    assistenteAlterouSelecaoRef.current = true;
+    setSelecionadasAssistente(
+      new Set(entidades.map(e => (e.nif || e.nif_cc || '').trim()).filter(Boolean))
+    );
+  }, [entidades]);
+
+  const limparSelecionadasAssistente = useCallback(() => {
+    assistenteAlterouSelecaoRef.current = true;
+    setSelecionadasAssistente(new Set());
+  }, []);
+
+  useEffect(() => {
+    if (!assistenteAlterouSelecaoRef.current) return;
+    assistenteAlterouSelecaoRef.current = false;
+    if (selecionadasAssistente.size === 1) {
+      setNifSelecionado(Array.from(selecionadasAssistente)[0]);
+    } else {
+      setNifSelecionado('');
+    }
+    setPagina(1);
+  }, [selecionadasAssistente]);
+
   // 2. Mapeamento de NIF para Nome da Empresa (para lookup rápido)
   const mapaEntidades = useMemo(() => {
     const map = new Map<string, string>();
@@ -407,6 +539,15 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
   // Processamento granular (filtros por coluna e ordenação em memória das linhas)
   const linhasProcessadas = useMemo(() => {
     let lista = [...dados.linhas];
+
+    // 0. Filtro multi-empresa quando várias empresas estão marcadas no Assistente
+    if (
+      nifSelecionado === '' &&
+      selecionadasAssistente.size > 0 &&
+      selecionadasAssistente.size < entidades.length
+    ) {
+      lista = lista.filter(linha => selecionadasAssistente.has((linha.nif_cliente || '').trim()));
+    }
 
     // 1. Filtros por coluna
     const filtrosEntries = Object.entries(filtrosColunas).filter(([_, val]) => val && val.trim() !== '');
@@ -535,6 +676,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
       const res = await fetch(`http://127.0.0.1:8015/api/faturas/consultar?${params.toString()}`);
       if (reqId !== ultimoReqIdRef.current) return;
       if (res.ok) {
+        setApiOnlineLocal(true);
         onApiStatusChange?.(true);
         const json = await res.json();
         setDados({
@@ -546,11 +688,13 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
           linhas: json.linhas || [],
         });
       } else {
+        setApiOnlineLocal(false);
         onApiStatusChange?.(false);
         console.error("Erro HTTP ao consultar faturas:", res.statusText);
       }
     } catch (e) {
       if (reqId !== ultimoReqIdRef.current) return;
+      setApiOnlineLocal(false);
       onApiStatusChange?.(false);
       console.error("Falha ao contactar API e-fatura:", e);
     } finally {
@@ -629,6 +773,44 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
     setDataInicio(`${ano}-${String(mesIni).padStart(2, '0')}-01`);
     setDataFim(`${ano}-${String(mesFim).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`);
     setPagina(1);
+  };
+
+  const alterarAno = (novoAno: number) => {
+    const anoLimitado = Math.min(anoAtual, novoAno);
+    setAno(anoLimitado);
+    setMesAtivo(null);
+    setDataInicio(`${anoLimitado}-01-01`);
+    setDataFim(`${anoLimitado}-12-31`);
+    setPagina(1);
+  };
+
+  const mesesAtivosAssistente = useMemo<Set<number>>(() => {
+    if (mesAtivo !== null) return new Set([mesAtivo]);
+    const s = new Set<number>();
+    try {
+      if (dataInicio && dataFim) {
+        const d1 = new Date(`${dataInicio}T00:00:00`);
+        const d2 = new Date(`${dataFim}T00:00:00`);
+        if (!isNaN(d1.getTime()) && !isNaN(d2.getTime())) {
+          for (let m = 1; m <= 12; m++) {
+            const inicioMes = new Date(ano, m - 1, 1);
+            const fimMes = new Date(ano, m, 0);
+            if (fimMes >= d1 && inicioMes <= d2) {
+              s.add(m);
+            }
+          }
+        }
+      }
+    } catch {}
+    return s.size > 0 ? s : new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  }, [mesAtivo, dataInicio, dataFim, ano]);
+
+  const toggleMesAssistente = (m: number) => {
+    if (mesAtivo === m) {
+      aplicarAnoTodo();
+    } else {
+      aplicarMesEspecifico(m);
+    }
   };
 
   // Copiar grelha para formato compatível com Excel (TSV) respeitando as colunas visíveis
@@ -964,7 +1146,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
   const totalPaginas = Math.max(1, Math.ceil(dados.total_linhas / limite));
 
   return (
-    <div className="h-full flex flex-col space-y-3 min-h-0 select-none overflow-y-auto md:overflow-hidden">
+    <div className="h-full flex flex-col space-y-3 min-h-0 select-none overflow-y-auto lg:overflow-hidden">
       
       {/* 1. Cabeçalho Oficial evoGex.com */}
       <header className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2 shrink-0">
@@ -981,6 +1163,20 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => (assistenteAberto ? fecharAssistente() : abrirAssistente())}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-bold transition shadow-xs cursor-pointer ${
+              assistenteAberto
+                ? 'bg-[#eef2ff] dark:bg-[#162032] text-[#4338ca] dark:text-[#a5b4fc] border border-[#4f46e5] dark:border-[#6366f1]'
+                : 'bg-[#4f46e5] hover:bg-[#4338ca] text-white border border-[#4f46e5]'
+            }`}
+            title="Abrir ou fechar o Assistente Guiado Passo a Passo"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{assistenteAberto ? 'Ocultar Assistente' : 'Assistente Passo a Passo'}</span>
+          </button>
+
           <div className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="text-muted-foreground">Base Sincronizada</span>
@@ -1012,219 +1208,385 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
         </div>
       )}
 
-      {/* 2. Card de Controlos e Filtros (Padrão Canónico evoGex.com com assinatura lateral) */}
-      <div className="relative evo-card-signature bg-slate-100 dark:bg-[#122436] rounded-md border border-slate-300 dark:border-[#1e344f] p-2.5 space-y-2.5 shadow-2xs text-foreground flex flex-col shrink-0 overflow-visible before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
-        
-        {/* Cabeçalho do Card de Filtros */}
-        <div className="px-1 pt-0.5 pb-1.5 flex items-center justify-between border-b border-slate-300 dark:border-[#283e58] text-[10px] font-mono font-bold uppercase tracking-wider text-muted-foreground dark:text-slate-300 select-none">
-          <div className="flex items-center space-x-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#0284c7] dark:bg-sky-400" />
-            <span className="text-foreground dark:text-slate-200 font-semibold">Parâmetros de Pesquisa & Filtros</span>
-          </div>
-          <span className="text-[9px] font-mono text-slate-700 dark:text-slate-200 font-bold bg-white dark:bg-[#101b28] px-1.5 py-0.2 rounded border border-slate-200 dark:border-[#2a405c]">
-            {tipoOperacao === 'compras' ? 'Compras / Fornecedores' : 'Vendas / Clientes'}
-          </span>
-        </div>
+      {/* Área Principal + Assistente Encaixado à Direita */}
+      <div className="flex flex-col lg:flex-row gap-3 flex-1 min-h-0">
 
-        {/* Linha 1: Operação Fiscal + Seletor de Empresa (Combobox) + Pesquisa Textual + Filtro de Taxa */}
-        <div className="flex flex-wrap items-center gap-2">
-          
-          {/* Alternador Compras vs Vendas */}
-          <div className="grid grid-cols-2 gap-1 p-1 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] rounded shrink-0">
-            <button
-              type="button"
-              onClick={() => { setTipoOperacao('compras'); setPagina(1); }}
-              className={`py-1 px-3 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                tipoOperacao === 'compras'
-                  ? 'bg-[#0284c7] text-white shadow-2xs border border-[#0284c7]'
-                  : 'bg-white hover:bg-slate-100 dark:bg-[#1c2e40] dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563]'
-              }`}
-              title="Faturas de Fornecedores / Compras"
-            >
-              <ShoppingCart className="w-3.5 h-3.5" />
-              <span>Compras</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => { setTipoOperacao('vendas'); setPagina(1); }}
-              className={`py-1 px-3 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                tipoOperacao === 'vendas'
-                  ? 'bg-emerald-600 text-white shadow-2xs border border-emerald-600'
-                  : 'bg-white hover:bg-slate-100 dark:bg-[#1c2e40] dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563]'
-              }`}
-              title="Faturas Emitidas / Vendas"
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>Vendas</span>
-            </button>
-          </div>
+        {/* Lado Esquerdo: Controlos (4 Zonas Sincronizadas) + KPIs + Tabela */}
+        <div className="flex-1 flex flex-col gap-2.5 min-w-0 min-h-0">
 
-          {/* Seletor Padronizado de Empresa (Combobox com Seleção Prévia) */}
-          <EmpresaSelectorCombobox
-            entidades={entidades}
-            value={nifSelecionado}
-            onChange={(nif) => {
-              setNifSelecionado(nif);
-              setPagina(1);
-            }}
-            modoPrivacidade={modoPrivacidade}
-            allLabel={`Todas as Empresas (${entidades.length})`}
-            placeholder="Pesquisar NIF, nome ou código..."
-            className="w-full sm:w-auto sm:min-w-[280px] md:min-w-[380px] max-w-full sm:max-w-[520px]"
-            dropdownClassName="w-96 md:w-[460px]"
-            align="left"
-            title="Pesquisar e selecionar empresa para filtrar faturas"
-          />
+          {/* 2. Card de Controlos e Filtros (4 Zonas Sincronizadas no Padrão Canónico evoGex.com) */}
+          <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 space-y-2 shadow-2xs text-foreground flex flex-col shrink-0 overflow-visible before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
 
-          {/* Campo de Pesquisa de Faturas / Contraparte */}
-          <div className="relative w-full sm:w-64 md:w-80 shrink-0">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground dark:text-slate-400" />
-            <input
-              type="text"
-              value={pesquisa}
-              onChange={e => { setPesquisa(e.target.value); setPagina(1); }}
-              placeholder="Pesquisar Fatura, NIF, Nome..."
-              className="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] rounded text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary shadow-2xs"
-            />
-          </div>
+            {/* Linha 1: Zona 1 (Destino) + Zona 2 (Empresas & Filtros) + Zona 4 (Consultar) */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
 
-          {/* Seletor de Taxa de IVA */}
-          <div className="flex flex-wrap items-center gap-1 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] p-1 rounded w-full sm:w-auto shrink-0">
-            <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 px-1 font-semibold">IVA:</span>
-            {[
-              { val: "", label: "Todas" },
-              { val: "23", label: "23%" },
-              { val: "13", label: "13%" },
-              { val: "6", label: "6%" },
-              { val: "0", label: "Isento" }
-            ].map(t => (
-              <button
-                key={t.val}
-                type="button"
-                onClick={() => { setTaxaFiltro(t.val); setPagina(1); }}
-                className={`px-2 py-0.5 rounded text-[10px] font-mono transition cursor-pointer font-medium ${
-                  taxaFiltro === t.val
-                    ? 'bg-[#0284c7] text-white font-bold shadow-2xs'
-                    : 'bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563]'
+              {/* Zona 1: Pasta de Destino dos Dados */}
+              <div
+                data-evo-guide-target="zona-1"
+                onClick={() => assistenteAberto && setPassoAssistente(1)}
+                className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded border text-[11px] font-mono transition ${
+                  assistenteAberto && passoAssistente === 1
+                    ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                    : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
                 }`}
               >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Linha 2: Seletor de Exercício + Atalhos Temporais + 12 Meses + Datas Manuais */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-300 dark:border-[#22364c] text-xs">
-          
-          {/* Seletor de Ano com Chevrons */}
-          <div className="flex items-center space-x-1.5 shrink-0 bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#1c2e42]">
-            <span className="font-mono text-[10px] text-muted-foreground dark:text-slate-400 uppercase tracking-wider font-semibold">
-              Ano:
-            </span>
-            <button
-              onClick={() => { setAno(a => a - 1); setMesAtivo(null); setPagina(1); }}
-              className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-[#1e344f] text-muted-foreground dark:text-slate-300 transition cursor-pointer"
-              title="Ano Anterior"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <span className="font-mono font-bold text-xs text-[#0284c7] dark:text-sky-400 px-1">
-              {ano}
-            </span>
-            <button
-              onClick={() => { setAno(a => Math.min(anoAtual, a + 1)); setMesAtivo(null); setPagina(1); }}
-              disabled={ano >= anoAtual}
-              className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-[#1e344f] text-muted-foreground dark:text-slate-300 transition cursor-pointer disabled:opacity-20"
-              title="Ano Seguinte"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {/* Atalhos Rápidos */}
-          <div className="flex flex-wrap items-center gap-1">
-            <button
-              onClick={aplicarAnoTodo}
-              className={`px-2 py-1 text-[10px] font-mono rounded transition cursor-pointer font-medium ${
-                mesAtivo === null && dataInicio === `${ano}-01-01` && dataFim === `${ano}-12-31`
-                  ? 'bg-[#0284c7] text-white font-bold border border-[#0284c7] shadow-2xs'
-                  : 'bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563]'
-              }`}
-            >
-              Ano Todo
-            </button>
-
-            {ano === anoAtual && (
-              <button
-                onClick={aplicarMesAtual}
-                className={`px-2 py-1 text-[10px] font-mono rounded transition cursor-pointer font-medium ${
-                  mesAtivo === mesAtual
-                    ? 'bg-[#0284c7] text-white font-bold border border-[#0284c7] shadow-2xs'
-                    : 'bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563]'
-                }`}
-              >
-                Mês Atual
-              </button>
-            )}
-
-            <div className="h-4 w-px bg-slate-300/80 dark:bg-[#253a52] mx-0.5" />
-
-            {/* Trimestres */}
-            {[1, 2, 3, 4].map(t => (
-              <button
-                key={t}
-                onClick={() => aplicarTrimestre(t)}
-                className="px-1.5 py-1 text-[10px] font-mono rounded bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563] transition cursor-pointer font-medium"
-              >
-                T{t}
-              </button>
-            ))}
-
-            <div className="h-4 w-px bg-slate-300/80 dark:bg-[#253a52] mx-0.5" />
-
-            {/* 12 Meses */}
-            {MESES.map(m => {
-              const isFuturo = ano === anoAtual && m.num > mesAtual;
-              const isSelected = mesAtivo === m.num;
-              return (
+                {assistenteAberto && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
+                      passoAssistente === 1 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    ① Destino
+                  </span>
+                )}
+                <span className="text-slate-600 dark:text-slate-300 font-semibold shrink-0 hidden sm:inline">Dados:</span>
+                <span title={caminhoDestinoLocal} className="text-foreground font-semibold break-all max-w-[230px]">
+                  {caminhoDestinoLocal}
+                </span>
                 <button
-                  key={m.num}
-                  disabled={isFuturo}
-                  onClick={() => aplicarMesEspecifico(m.num)}
-                  className={`px-1.5 py-1 text-[10px] font-mono rounded transition cursor-pointer ${
-                    isFuturo
-                      ? 'opacity-20 cursor-not-allowed text-muted-foreground border border-dashed border-slate-300 dark:border-[#22364c]'
-                      : isSelected
-                        ? 'bg-[#0284c7] text-white font-bold border border-[#0284c7] shadow-2xs'
-                        : 'bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563] font-medium'
-                  }`}
+                  type="button"
+                  onClick={e => { e.stopPropagation(); copiarCaminhoDados(); }}
+                  title="Copiar endereço completo (📋)"
+                  className="p-0.5 text-slate-600 dark:text-slate-300 hover:text-[#0284c7] cursor-pointer shrink-0"
                 >
-                  {m.nome}
+                  {copiadoPasta ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
-              );
-            })}
-          </div>
+                <button
+                  type="button"
+                  data-evo-guide-target="btn-abrir-pasta"
+                  onClick={e => { e.stopPropagation(); abrirPastaDadosWindows(); }}
+                  title="Abrir pasta no Explorador do Windows (📂)"
+                  className="p-0.5 text-[#0284c7] dark:text-sky-400 hover:opacity-80 cursor-pointer shrink-0"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                </button>
+              </div>
 
-          {/* Intervalo Manual de Datas */}
-          <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#1c2e42] w-full sm:w-auto shrink-0">
-            <Calendar className="w-3.5 h-3.5 text-muted-foreground dark:text-slate-400 shrink-0" />
-            <input
-              type="date"
-              value={dataInicio}
-              onChange={e => { setDataInicio(e.target.value); setMesAtivo(null); setPagina(1); }}
-              className="bg-transparent text-foreground focus:outline-hidden text-xs cursor-pointer"
-            />
-            <span className="text-muted-foreground dark:text-slate-500 font-semibold">a</span>
-            <input
-              type="date"
-              value={dataFim}
-              onChange={e => { setDataFim(e.target.value); setMesAtivo(null); setPagina(1); }}
-              className="bg-transparent text-foreground focus:outline-hidden text-xs cursor-pointer"
-            />
+              {/* Zona 2: Operação (Compras/Vendas) + Empresa + Pesquisa + Taxa IVA */}
+              <div
+                data-evo-guide-target="zona-2"
+                onClick={() => assistenteAberto && setPassoAssistente(2)}
+                className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition ${
+                  assistenteAberto && passoAssistente === 2
+                    ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                    : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+                }`}
+              >
+                {assistenteAberto && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                      passoAssistente === 2 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    ② Empresas
+                  </span>
+                )}
+
+                {/* Alternador Compras vs Vendas */}
+                <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] p-0.5 rounded border border-slate-200 dark:border-[#1e344f] shrink-0">
+                  <button
+                    type="button"
+                    data-evo-guide-target="op-compras"
+                    onClick={() => { setTipoOperacao('compras'); setPagina(1); }}
+                    className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                      tipoOperacao === 'compras'
+                        ? 'bg-[#0284c7] text-white shadow-2xs'
+                        : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#1a2c40]'
+                    }`}
+                    title="Faturas de Fornecedores / Compras"
+                  >
+                    <ShoppingCart className="w-3.5 h-3.5" />
+                    <span>Compras</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-evo-guide-target="op-vendas"
+                    onClick={() => { setTipoOperacao('vendas'); setPagina(1); }}
+                    className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                      tipoOperacao === 'vendas'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#1a2c40]'
+                    }`}
+                    title="Faturas Emitidas / Vendas"
+                  >
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    <span>Vendas</span>
+                  </button>
+                </div>
+
+                {/* Seletor Padronizado de Empresa + Contador */}
+                <div data-evo-guide-target="empresa-selector" className="flex items-center gap-2 w-full sm:w-auto">
+                  <EmpresaSelectorCombobox
+                    entidades={entidades}
+                    value={nifSelecionado}
+                    onChange={(nif) => {
+                      setNifSelecionado(nif);
+                      if (nif) {
+                        setSelecionadasAssistente(new Set([nif]));
+                      } else {
+                        setSelecionadasAssistente(
+                          new Set(entidades.map(e => (e.nif || e.nif_cc || '').trim()).filter(Boolean))
+                        );
+                      }
+                      setPagina(1);
+                    }}
+                    modoPrivacidade={modoPrivacidade}
+                    allLabel={`Todas (${entidades.length})`}
+                    placeholder="Pesquisar NIF, nome ou código..."
+                    className="w-full sm:w-auto sm:min-w-[230px] max-w-full sm:max-w-[320px]"
+                    dropdownClassName="w-96 md:w-[460px]"
+                    align="left"
+                    title="Pesquisar e selecionar empresa para filtrar faturas"
+                  />
+                  <span className="text-[11px] font-mono text-slate-700 dark:text-slate-200 font-semibold px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] shrink-0 tabular-nums">
+                    {selecionadasAssistente.size}/{entidades.length}
+                  </span>
+                </div>
+
+                {/* Campo de Pesquisa de Faturas / Contraparte */}
+                <div className="relative w-full sm:w-52 md:w-64 shrink-0">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-muted-foreground dark:text-slate-400" />
+                  <input
+                    type="text"
+                    value={pesquisa}
+                    onChange={e => { setPesquisa(e.target.value); setPagina(1); }}
+                    placeholder="Pesquisar Fatura, NIF, Nome..."
+                    className="w-full pl-8 pr-6 py-1 bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] rounded text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary shadow-2xs"
+                  />
+                  {pesquisa && (
+                    <button
+                      type="button"
+                      onClick={() => { setPesquisa(''); setPagina(1); }}
+                      className="absolute right-2 top-2 text-slate-500 hover:text-foreground cursor-pointer"
+                      title="Limpar pesquisa"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Seletor de Taxa de IVA */}
+                <div className="flex flex-wrap items-center gap-1 bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1c2e42] p-0.5 rounded w-full sm:w-auto shrink-0">
+                  <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 px-1 font-semibold">IVA:</span>
+                  {[
+                    { val: "", label: "Todas" },
+                    { val: "23", label: "23%" },
+                    { val: "13", label: "13%" },
+                    { val: "6", label: "6%" },
+                    { val: "0", label: "Isento" }
+                  ].map(t => (
+                    <button
+                      key={t.val}
+                      type="button"
+                      onClick={() => { setTaxaFiltro(t.val); setPagina(1); }}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono transition cursor-pointer font-medium ${
+                        taxaFiltro === t.val
+                          ? 'bg-[#0284c7] text-white font-bold shadow-2xs'
+                          : 'bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563]'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Zona 4: Opções (Filtros) & Consultar / Atualizar */}
+              <div
+                data-evo-guide-target="zona-4"
+                onClick={() => assistenteAberto && setPassoAssistente(4)}
+                className={`flex items-center space-x-2 px-2 py-1 rounded border transition ${
+                  assistenteAberto && passoAssistente === 4
+                    ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                    : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+                }`}
+              >
+                {assistenteAberto && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                      passoAssistente === 4 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    ④ Consultar
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  data-evo-guide-target="btn-opcoes"
+                  onClick={e => {
+                    e.stopPropagation();
+                    setMostrarFiltrosColunas(prev => !prev);
+                  }}
+                  className={`px-2 py-1.5 rounded border text-[11px] font-mono font-semibold flex items-center space-x-1 cursor-pointer transition ${
+                    mostrarFiltrosColunas || totalFiltrosAtivos > 0
+                      ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                      : 'bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1a2d42] border-slate-300 dark:border-[#253a52] text-foreground'
+                  }`}
+                  title="Mostrar ou ocultar linha de filtros por coluna na tabela"
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  <span>Filtros</span>
+                  {totalFiltrosAtivos > 0 && (
+                    <span className="bg-white/25 text-white text-[9.5px] px-1 rounded-full font-bold">
+                      {totalFiltrosAtivos}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  data-evo-guide-target="btn-iniciar"
+                  onClick={executarConsulta}
+                  disabled={carregando}
+                  className="px-3 py-1.5 rounded bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-60 text-white font-mono text-xs font-bold uppercase tracking-wider flex items-center space-x-1.5 cursor-pointer shadow-xs transition"
+                  title="Consultar e atualizar registos da tabela"
+                >
+                  {carregando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                  <span>Consultar</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Linha 2: Zona 3 (Período: Exercício + Atalhos + 12 Meses + Datas Manuais) */}
+            <div
+              data-evo-guide-target="zona-3"
+              onClick={() => assistenteAberto && setPassoAssistente(3)}
+              className={`flex flex-wrap items-center justify-between gap-2 px-2 py-1.5 rounded border text-xs transition ${
+                assistenteAberto && passoAssistente === 3
+                  ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              <div className="flex flex-wrap items-center gap-1.5">
+                {assistenteAberto && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                      passoAssistente === 3 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    ③ Período
+                  </span>
+                )}
+
+                {/* Seletor de Ano com Chevrons */}
+                <div
+                  data-evo-guide-target="ano-selector"
+                  className="flex items-center space-x-1 shrink-0 bg-white dark:bg-[#0c1520] px-2 py-0.5 rounded border border-[#0284c7] dark:border-sky-600"
+                >
+                  <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                  <button
+                    type="button"
+                    onClick={() => alterarAno(ano - 1)}
+                    className="p-0.5 rounded hover:bg-sky-100 dark:hover:bg-[#14304d] text-foreground transition cursor-pointer"
+                    title="Ano Anterior"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="font-mono font-black text-xs text-foreground dark:text-white px-1 min-w-[36px] text-center">
+                    {ano}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => alterarAno(ano + 1)}
+                    disabled={ano >= anoAtual}
+                    className="p-0.5 rounded hover:bg-sky-100 dark:hover:bg-[#14304d] text-foreground transition cursor-pointer disabled:opacity-20"
+                    title="Ano Seguinte"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Atalhos Rápidos */}
+                <div className="flex flex-wrap items-center gap-1">
+                  <button
+                    type="button"
+                    data-evo-guide-target="periodo-ano-todo"
+                    onClick={aplicarAnoTodo}
+                    className={`px-2 py-1 text-[10px] font-mono rounded transition cursor-pointer font-medium ${
+                      mesAtivo === null && dataInicio === `${ano}-01-01` && dataFim === `${ano}-12-31`
+                        ? 'bg-[#0284c7] text-white font-bold border border-[#0284c7] shadow-2xs'
+                        : 'bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563]'
+                    }`}
+                  >
+                    Ano Todo
+                  </button>
+
+                  {ano === anoAtual && (
+                    <button
+                      type="button"
+                      data-evo-guide-target="periodo-mes-atual"
+                      onClick={aplicarMesAtual}
+                      className={`px-2 py-1 text-[10px] font-mono rounded transition cursor-pointer font-medium ${
+                        mesAtivo === mesAtual
+                          ? 'bg-[#0284c7] text-white font-bold border border-[#0284c7] shadow-2xs'
+                          : 'bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563]'
+                      }`}
+                    >
+                      Mês Atual
+                    </button>
+                  )}
+
+                  <div className="h-4 w-px bg-slate-300/80 dark:bg-[#253a52] mx-0.5" />
+
+                  {/* Trimestres */}
+                  {[1, 2, 3, 4].map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => aplicarTrimestre(t)}
+                      className="px-1.5 py-1 text-[10px] font-mono rounded bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563] transition cursor-pointer font-medium"
+                    >
+                      T{t}
+                    </button>
+                  ))}
+
+                  <div className="h-4 w-px bg-slate-300/80 dark:bg-[#253a52] mx-0.5" />
+
+                  {/* 12 Meses */}
+                  {MESES.map(m => {
+                    const isFuturo = ano === anoAtual && m.num > mesAtual;
+                    const isSelected = mesAtivo === m.num;
+                    return (
+                      <button
+                        key={m.num}
+                        type="button"
+                        disabled={isFuturo}
+                        onClick={() => aplicarMesEspecifico(m.num)}
+                        className={`px-1.5 py-1 text-[10px] font-mono rounded transition cursor-pointer ${
+                          isFuturo
+                            ? 'opacity-20 cursor-not-allowed text-muted-foreground border border-dashed border-slate-300 dark:border-[#22364c]'
+                            : isSelected
+                              ? 'bg-[#0284c7] text-white font-bold border border-[#0284c7] shadow-2xs'
+                              : 'bg-white dark:bg-[#1c2e40] hover:bg-slate-100 dark:hover:bg-[#233a52] text-foreground dark:text-slate-200 border border-slate-200 dark:border-[#2c4563] font-medium'
+                        }`}
+                      >
+                        {m.nome}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Intervalo Manual de Datas */}
+              <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs bg-white dark:bg-[#0c1520] px-2 py-1 rounded border border-slate-200 dark:border-[#1c2e42] w-full sm:w-auto shrink-0">
+                <Calendar className="w-3.5 h-3.5 text-muted-foreground dark:text-slate-400 shrink-0" />
+                <input
+                  type="date"
+                  value={dataInicio}
+                  onChange={e => { setDataInicio(e.target.value); setMesAtivo(null); setPagina(1); }}
+                  className="bg-transparent text-foreground focus:outline-hidden text-xs cursor-pointer"
+                />
+                <span className="text-muted-foreground dark:text-slate-500 font-semibold">a</span>
+                <input
+                  type="date"
+                  value={dataFim}
+                  onChange={e => { setDataFim(e.target.value); setMesAtivo(null); setPagina(1); }}
+                  className="bg-transparent text-foreground focus:outline-hidden text-xs cursor-pointer"
+                />
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
       {/* 3. Ribbon de Cards KPIs Estruturados no Padrão Oficial EVO (100% Opacos) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 shrink-0">
@@ -1687,6 +2049,102 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
             </button>
           </div>
         </div>
+      </div>
+        </div>
+
+        {/* Painel Direito Encaixado: Assistente Passo a Passo */}
+        <AssistenteImportacaoPanel
+          aberto={assistenteAberto}
+          onClose={fecharAssistente}
+          modoConsulta={true}
+          moduloTitulo="Dados e-Fatura"
+          apiOnline={apiOnlineLocal}
+          caminhoDados={caminhoDestinoLocal}
+          onCaminhoDadosChange={setCaminhoDestinoLocal}
+          tipoOperacao={tipoOperacao}
+          onTipoOperacaoChange={op => {
+            setTipoOperacao(op === 'vendas' ? 'vendas' : 'compras');
+            setPagina(1);
+          }}
+          empresas={entidades
+            .map(e => {
+              const nif = (e.nif || e.nif_cc || '').trim();
+              return {
+                id: nif,
+                cod: e.cod,
+                nif,
+                nome: e.nomecli || nif,
+              };
+            })
+            .filter(e => Boolean(e.id))}
+          selecionadasIds={selecionadasAssistente}
+          onToggleEmpresa={toggleEmpresaAssistente}
+          onSelecionarTodasEmpresas={selecionarTodasAssistente}
+          onLimparEmpresas={limparSelecionadasAssistente}
+          modoPrivacidade={modoPrivacidade}
+          ano={ano}
+          anoAtual={anoAtual}
+          onAnoChange={alterarAno}
+          mesesSelecionados={mesesAtivosAssistente}
+          onToggleMes={toggleMesAssistente}
+          onSelecionarAnoTodo={aplicarAnoTodo}
+          onSelecionarMesAtual={aplicarMesAtual}
+          onSelecionarTrimestre={aplicarTrimestre}
+          isSyncing={carregando}
+          labelBotaoIniciar="Consultar Registos na Tabela"
+          onIniciarImportacao={executarConsulta}
+          passoAtivo={passoAssistente}
+          onPassoAtivoChange={setPassoAssistente}
+          opcoesExtras={
+            <div className="space-y-2.5 text-xs font-mono">
+              <div>
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">
+                  Filtrar por Taxa de IVA
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {[
+                    { val: '', label: 'Todas' },
+                    { val: '23', label: '23%' },
+                    { val: '13', label: '13%' },
+                    { val: '6', label: '6%' },
+                    { val: '0', label: 'Isento' },
+                  ].map(t => (
+                    <button
+                      key={t.val}
+                      type="button"
+                      onClick={() => {
+                        setTaxaFiltro(t.val);
+                        setPagina(1);
+                      }}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold border transition cursor-pointer ${
+                        taxaFiltro === t.val
+                          ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                          : 'bg-white dark:bg-[#111827] text-slate-800 dark:text-slate-200 border-[#cbd5e1] dark:border-[#334155]'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="flex items-start space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={mostrarFiltrosColunas}
+                  onChange={e => setMostrarFiltrosColunas(e.target.checked)}
+                  className="mt-0.5 rounded accent-[#0284c7] cursor-pointer"
+                />
+                <span>
+                  <strong className="block font-sans text-foreground">Filtros Granulares por Coluna</strong>
+                  <span className="text-[10px] text-slate-600 dark:text-slate-400">
+                    Exibe caixas de filtro individuais no topo de cada coluna da tabela.
+                  </span>
+                </span>
+              </label>
+            </div>
+          }
+        />
+
       </div>
     </div>
   );
