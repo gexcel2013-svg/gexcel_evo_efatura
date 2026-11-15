@@ -36,10 +36,59 @@ interface StoredEvoSession {
   token: string;
 }
 
+function decodeGxtkSsoToken(rawToken: string): StoredEvoSession | null {
+  try {
+    const clean = (rawToken || '').trim();
+    if (!clean.startsWith('gxtk.')) return null;
+    const parts = clean.split('.');
+    if (parts.length !== 3 || !parts[1]) return null;
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const binStr = atob(padded);
+    const bytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) {
+      bytes[i] = binStr.charCodeAt(i);
+    }
+    const jsonText = new TextDecoder().decode(bytes);
+    const payload = JSON.parse(jsonText) as Record<string, unknown>;
+    const exp = Number(payload.exp || 0);
+    if (!exp || exp <= Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+    const username = String(payload.username || '').trim();
+    if (!username) return null;
+    return {
+      id: (payload.id as string | number) ?? 1,
+      username,
+      nome: String(payload.nome || username).trim(),
+      role: String(payload.role || 'OPERADOR'),
+      email: String(payload.email || ''),
+      token: clean,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function readStoredEvoSession(): StoredEvoSession | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = sessionStorage.getItem(EVO_SESSION_KEY);
+    const url = new URL(window.location.href);
+    const ssoTok = (url.searchParams.get('sso') || '').trim();
+    if (ssoTok) {
+      const decoded = decodeGxtkSsoToken(ssoTok);
+      url.searchParams.delete('sso');
+      const cleanUrl = `${url.pathname}${url.search ? url.search : ''}${url.hash || ''}`;
+      window.history.replaceState({}, document.title, cleanUrl || '/');
+      if (decoded) {
+        const serialized = JSON.stringify(decoded);
+        sessionStorage.setItem(EVO_SESSION_KEY, serialized);
+        localStorage.setItem(EVO_SESSION_KEY, serialized);
+        return decoded;
+      }
+    }
+
+    const raw = sessionStorage.getItem(EVO_SESSION_KEY) || localStorage.getItem(EVO_SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredEvoSession>;
     if (
@@ -51,7 +100,12 @@ function readStoredEvoSession(): StoredEvoSession | null {
     ) {
       return null;
     }
-    return {
+    if (parsed.token.startsWith('gxtk.') && !decodeGxtkSsoToken(parsed.token)) {
+      sessionStorage.removeItem(EVO_SESSION_KEY);
+      localStorage.removeItem(EVO_SESSION_KEY);
+      return null;
+    }
+    const sessionObj: StoredEvoSession = {
       id: parsed.id ?? 1,
       username: parsed.username.trim(),
       nome: (parsed.nome || parsed.username).trim(),
@@ -59,6 +113,8 @@ function readStoredEvoSession(): StoredEvoSession | null {
       email: parsed.email || '',
       token: parsed.token.trim(),
     };
+    sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(sessionObj));
+    return sessionObj;
   } catch {
     return null;
   }
@@ -107,6 +163,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setCurrentUser(null);
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(EVO_SESSION_KEY);
+      localStorage.removeItem(EVO_SESSION_KEY);
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(USER_KEY);
     }
@@ -183,7 +240,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               token: savedEvo.token,
             };
             const mapped = mapEvoSessionToAppUser(refreshedSession);
-            sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(refreshedSession));
+            const serialized = JSON.stringify(refreshedSession);
+            sessionStorage.setItem(EVO_SESSION_KEY, serialized);
+            localStorage.setItem(EVO_SESSION_KEY, serialized);
             localStorage.setItem(TOKEN_KEY, refreshedSession.token);
             localStorage.setItem(USER_KEY, JSON.stringify(mapped));
             setToken(refreshedSession.token);
@@ -225,7 +284,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           token: String(data.token).trim(),
         };
         const usr = mapEvoSessionToAppUser(evoSess);
-        sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(evoSess));
+        const serialized = JSON.stringify(evoSess);
+        sessionStorage.setItem(EVO_SESSION_KEY, serialized);
+        localStorage.setItem(EVO_SESSION_KEY, serialized);
         localStorage.setItem(TOKEN_KEY, evoSess.token);
         localStorage.setItem(USER_KEY, JSON.stringify(usr));
         setToken(evoSess.token);
@@ -255,7 +316,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: usr.email || '',
       token: cleanTok,
     };
-    sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(evoSess));
+    const serialized = JSON.stringify(evoSess);
+    sessionStorage.setItem(EVO_SESSION_KEY, serialized);
+    localStorage.setItem(EVO_SESSION_KEY, serialized);
     localStorage.setItem(USER_KEY, JSON.stringify(usr));
     localStorage.setItem(TOKEN_KEY, cleanTok);
     setCurrentUser(usr);

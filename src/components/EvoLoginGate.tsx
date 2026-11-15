@@ -153,6 +153,7 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
           username: u,
           password: p,
           appCodigo,
+          isDevChannel,
         }),
       });
       const data = await resp.json().catch(() => null);

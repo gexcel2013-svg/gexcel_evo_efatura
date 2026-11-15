@@ -92,13 +92,18 @@ export function Sidebar({
     return () => window.removeEventListener('gexcel-motor-source', onSourceChange);
   }, []);
 
-  const { currentUser, logout } = useAuth();
+  const { currentUser, token, logout } = useAuth();
   const toggleCollapsed = () => setCollapsed(prev => !prev);
 
-  const painelUrl =
+  const basePainelUrl =
     typeof window !== 'undefined' && window.location.hostname.startsWith('dev.')
       ? 'https://dev.painel.evogex.com'
-      : 'https://painel.evogex.com';
+      : typeof window !== 'undefined' && window.location.hostname.startsWith('beta.')
+        ? 'https://beta.painel.evogex.com'
+        : 'https://painel.evogex.com';
+  const painelUrl = token
+    ? `${basePainelUrl}/?sso=${encodeURIComponent(token)}`
+    : basePainelUrl;
 
   const navItems = [
     {
