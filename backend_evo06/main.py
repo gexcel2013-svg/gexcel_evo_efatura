@@ -41,6 +41,7 @@ import cofre_ledger
 import auth_manager
 import start_hub_evo06
 import pipeline_worker
+import pendentes_service
 
 # -------------------------------------------------------------------------
 # INTEGRAÇÃO COM A BIBLIOTECA DE WEB SCRAPING E COFRE DE ESTADOS
@@ -6773,6 +6774,382 @@ def api_limpar_dados_rv(req: RecibosVerdesLimparRequest):
         "ficheiros_apagados": apagados,
         "mensagem": f"{apagados} ficheiro(s) XML eliminado(s) com sucesso."
     }
+
+
+# =============================================================================
+# ENDPOINTS DE PENDENTES E-FATURA (CLASSIFICAÇÃO DE SETORES E ÂMBITO)
+# =============================================================================
+
+class PendentesModoTudoForaRequest(BaseModel):
+    nifs: List[str]
+    ativo: bool
+    ano: int = Field(default_factory=lambda: date.today().year)
+    aplicar_existentes: bool = True
+
+class PendentesRecolherLoteRequest(BaseModel):
+    nifs: List[str] = Field(default_factory=list)
+    ano: int = Field(default_factory=lambda: date.today().year)
+    forcar_historico_anterior: bool = False
+
+class PendentesClassificarRequest(BaseModel):
+    escopo: str = Field(default="documento", description="'documento', 'selecionados', 'fornecedor_cliente', 'tudo_fora_cliente'")
+    ano: int = Field(default_factory=lambda: date.today().year)
+    nif_cliente: str = ""
+    id_documento: str = ""
+    chaves_selecionadas: List[str] = Field(default_factory=list)
+    nif_emitente: str = ""
+    setor_codigo: Optional[str] = None
+    ambito_codigo: Optional[str] = None
+
+class PendentesValidarRequest(BaseModel):
+    escopo: str = Field(default="documento", description="'documento', 'selecionados', 'fornecedor_cliente', 'cliente_preenchidos'")
+    acao: str = Field(default="validar", description="'validar' ou 'desvalidar'")
+    ano: int = Field(default_factory=lambda: date.today().year)
+    nif_cliente: str = ""
+    id_documento: str = ""
+    chaves_selecionadas: List[str] = Field(default_factory=list)
+    nif_emitente: str = ""
+    utilizador: str = ""
+
+class PendentesSubmeterRequest(BaseModel):
+    ano: int = Field(default_factory=lambda: date.today().year)
+    nifs: Optional[List[str]] = None
+    termo_aceite: bool = False
+    texto_termo: str = ""
+    utilizador: str = ""
+    email_utilizador: str = ""
+    modo_simulacao: bool = False
+
+class PendentesPalavraChaveRequest(BaseModel):
+    palavra: str
+    setor_codigo: str
+    ambito_codigo: str = ""
+
+
+@app.get("/api/pendentes/catalogo")
+def api_pendentes_catalogo():
+    """Retorna os 16 setores da AT, os 3 âmbitos e as palavras-chave configuradas."""
+    try:
+        cat = pendentes_service.obter_catalogo()
+        return {
+            "status": "ok",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            **cat,
+        }
+    except Exception as e:
+        LOGGER.error(f"Erro em /api/pendentes/catalogo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/pendentes/entidades")
+def api_pendentes_entidades(ano: int = Query(default_factory=lambda: date.today().year)):
+    """Lista entidades singulares elegíveis para classificação de pendentes no exercício."""
+    try:
+        entidades = pendentes_service.listar_entidades_pendentes(ano=ano)
+        return {
+            "status": "ok",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "ano": int(ano),
+            "entidades": entidades,
+        }
+    except Exception as e:
+        LOGGER.error(f"Erro em /api/pendentes/entidades: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pendentes/entidades/modo-tudo-fora")
+def api_pendentes_modo_tudo_fora(req: PendentesModoTudoForaRequest):
+    """Ativa/desativa o modo Tudo Fora para entidades sem movimento ou tudo pessoal."""
+    try:
+        res = pendentes_service.definir_modo_tudo_fora(
+            nifs=req.nifs,
+            ativo=bool(req.ativo),
+            ano=int(req.ano),
+            aplicar_existentes=bool(req.aplicar_existentes),
+        )
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            **res,
+        }
+    except Exception as e:
+        LOGGER.error(f"Erro em /api/pendentes/entidades/modo-tudo-fora: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pendentes/recolher-lote")
+def api_pendentes_recolher_lote(req: PendentesRecolherLoteRequest, lic = Depends(verificar_licenca_ativa)):
+    """Inicia em segundo plano a recolha de pendentes e histórico para os clientes singulares selecionados."""
+    _limpar_jobs_antigos()
+    if iniciar_sessao_efatura is None or EFaturaCompras is None:
+        _tentar_importar_scraper()
+
+    nifs_alvo = [pendentes_service.limpar_nif(n) for n in (req.nifs or []) if pendentes_service.is_nif_singular(n)]
+    if not nifs_alvo:
+        ents = pendentes_service.listar_entidades_pendentes(ano=req.ano)
+        nifs_alvo = [e["nif"] for e in ents if e.get("tem_credenciais_at")]
+
+    if not nifs_alvo:
+        raise HTTPException(status_code=400, detail="Nenhum contribuinte singular com credenciais AT disponíveis.")
+
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = {
+        "status": "em_progresso",
+        "nif": nifs_alvo[0],
+        "nome_empresa": f"{len(nifs_alvo)} contribuinte(s)",
+        "mensagem": f"A iniciar recolha de pendentes ({len(nifs_alvo)} cliente(s))...",
+        "volume_estimado": len(nifs_alvo) * 30,
+        "docs_atuais": 0,
+        "total_esperado": len(nifs_alvo),
+        "percentagem": 2,
+        "fase": "pendentes_recolha",
+        "parcial": False,
+        "cancelar": False,
+        "total_documentos": 0,
+        "dados_legacy_horizontal": None,
+        "dados_novos_vertical": None,
+        "erro": None,
+        "tipo_erro": None,
+        "badge_label": None,
+        "criado_em": time.time(),
+    }
+
+    t = threading.Thread(
+        target=pendentes_service.executar_job_recolha_pendentes,
+        kwargs={
+            "job_id": job_id,
+            "jobs_dict": JOBS,
+            "nifs": nifs_alvo,
+            "ano": int(req.ano),
+            "forcar_historico_anterior": bool(req.forcar_historico_anterior),
+            "iniciar_sessao_fn": iniciar_sessao_efatura,
+            "efatura_compras_cls": EFaturaCompras,
+            "browser_semaphore": _BROWSER_SESSION_SEMAPHORE,
+        },
+        daemon=True,
+    )
+    t.start()
+
+    return {
+        "status": "iniciado",
+        "assinatura": "API Importador e-Fatura Gexcel",
+        "job_id": job_id,
+        "total_clientes": len(nifs_alvo),
+        "mensagem": f"Recolha e pré-classificação iniciadas para {len(nifs_alvo)} cliente(s).",
+    }
+
+
+@app.get("/api/pendentes/documentos")
+def api_pendentes_documentos(
+    ano: int = Query(default_factory=lambda: date.today().year),
+    nifs: str = "",
+    filtro_rapido: str = "todos",
+    pesquisa: str = "",
+    ordenar_por: str = "grupo_cliente_fornecedor",
+    ordem: str = "asc",
+):
+    """Consulta a tabela única corrida multi-cliente de documentos pendentes e KPIs."""
+    try:
+        lista_nifs = [x.strip() for x in (nifs or "").split(",") if x.strip()]
+        dados = pendentes_service.consultar_pendentes(
+            ano=int(ano),
+            nifs=lista_nifs or None,
+            filtro_rapido=filtro_rapido,
+            pesquisa=pesquisa,
+            ordenar_por=ordenar_por,
+            ordem=ordem,
+        )
+        return {
+            "status": "ok",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            **dados,
+        }
+    except Exception as e:
+        LOGGER.error(f"Erro em /api/pendentes/documentos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pendentes/classificar")
+def api_pendentes_classificar(req: PendentesClassificarRequest):
+    """Classifica linha, seleção ou fornecedor inteiro em bloco num cliente."""
+    try:
+        res = pendentes_service.classificar_documentos(
+            escopo=req.escopo,
+            ano=int(req.ano),
+            nif_cliente=req.nif_cliente,
+            id_documento=req.id_documento,
+            chaves_selecionadas=req.chaves_selecionadas,
+            nif_emitente=req.nif_emitente,
+            setor_codigo=req.setor_codigo,
+            ambito_codigo=req.ambito_codigo,
+        )
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            **res,
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        LOGGER.error(f"Erro em /api/pendentes/classificar: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pendentes/validar")
+def api_pendentes_validar(req: PendentesValidarRequest):
+    """Aprova ou desmarca documentos completos (individual, fornecedor ou preenchidos de um cliente)."""
+    try:
+        res = pendentes_service.validar_documentos(
+            escopo=req.escopo,
+            acao=req.acao,
+            ano=int(req.ano),
+            nif_cliente=req.nif_cliente,
+            id_documento=req.id_documento,
+            chaves_selecionadas=req.chaves_selecionadas,
+            nif_emitente=req.nif_emitente,
+            utilizador=req.utilizador,
+        )
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            **res,
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        LOGGER.error(f"Erro em /api/pendentes/validar: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pendentes/submeter")
+def api_pendentes_submeter(req: PendentesSubmeterRequest, request: Request, lic = Depends(verificar_licenca_ativa)):
+    """Regista o Termo de Responsabilidade legal e dispara a submissão dos documentos validados na AT."""
+    _limpar_jobs_antigos()
+    if iniciar_sessao_efatura is None:
+        _tentar_importar_scraper()
+
+    ip_cli = ""
+    try:
+        xff = request.headers.get("x-forwarded-for", "").strip()
+        ip_cli = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "")
+    except Exception:
+        ip_cli = ""
+
+    try:
+        reg_termo = pendentes_service.registar_termo_responsabilidade(
+            ano=int(req.ano),
+            termo_aceite=bool(req.termo_aceite),
+            texto_termo=req.texto_termo,
+            utilizador=req.utilizador,
+            email_utilizador=req.email_utilizador,
+            ip_origem=ip_cli,
+            nifs=req.nifs,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = {
+        "status": "em_progresso",
+        "nif": reg_termo["nifs"][0] if reg_termo["nifs"] else "",
+        "nome_empresa": f"{len(reg_termo['nifs'])} contribuinte(s)",
+        "mensagem": f"A submeter {reg_termo['total_documentos']} documento(s) validado(s) na AT...",
+        "volume_estimado": reg_termo["total_documentos"],
+        "docs_atuais": 0,
+        "total_esperado": reg_termo["total_documentos"],
+        "percentagem": 2,
+        "fase": "pendentes_submissao",
+        "parcial": False,
+        "cancelar": False,
+        "total_documentos": 0,
+        "dados_legacy_horizontal": None,
+        "dados_novos_vertical": None,
+        "erro": None,
+        "tipo_erro": None,
+        "badge_label": None,
+        "criado_em": time.time(),
+    }
+
+    t = threading.Thread(
+        target=pendentes_service.executar_job_submissao_pendentes,
+        kwargs={
+            "job_id": job_id,
+            "jobs_dict": JOBS,
+            "ano": int(req.ano),
+            "termo_id": reg_termo["termo_id"],
+            "nifs": req.nifs,
+            "modo_simulacao": bool(req.modo_simulacao),
+            "iniciar_sessao_fn": iniciar_sessao_efatura,
+            "browser_semaphore": _BROWSER_SESSION_SEMAPHORE,
+        },
+        daemon=True,
+    )
+    t.start()
+
+    return {
+        "status": "iniciado",
+        "assinatura": "API Importador e-Fatura Gexcel",
+        "job_id": job_id,
+        "termo_id": reg_termo["termo_id"],
+        "resumo_sha256": reg_termo["resumo_sha256"],
+        "total_documentos": reg_termo["total_documentos"],
+        "mensagem": f"Termo registado e submissão iniciada ({reg_termo['total_documentos']} documento(s)).",
+    }
+
+
+@app.get("/api/pendentes/termos-historico")
+def api_pendentes_termos_historico(limite: int = 100):
+    """Consulta o registo de auditoria de termos de responsabilidade aceites."""
+    try:
+        termos = pendentes_service.listar_termos_responsabilidade(limite=limite)
+        return {
+            "status": "ok",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "termos": termos,
+        }
+    except Exception as e:
+        LOGGER.error(f"Erro em /api/pendentes/termos-historico: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pendentes/palavras-chave")
+def api_pendentes_guardar_palavra_chave(req: PendentesPalavraChaveRequest):
+    """Adiciona ou atualiza regra de palavra-chave para pré-classificação."""
+    try:
+        item = pendentes_service.guardar_palavra_chave(
+            palavra=req.palavra,
+            setor_codigo=req.setor_codigo,
+            ambito_codigo=req.ambito_codigo,
+        )
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "item": item,
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        LOGGER.error(f"Erro em /api/pendentes/palavras-chave: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/pendentes/palavras-chave/{kw_id}")
+def api_pendentes_eliminar_palavra_chave(kw_id: int):
+    """Remove uma palavra-chave da pré-classificação."""
+    try:
+        ok = pendentes_service.eliminar_palavra_chave(kw_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Palavra-chave não encontrada.")
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "removida": True,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Erro ao eliminar palavra-chave {kw_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================

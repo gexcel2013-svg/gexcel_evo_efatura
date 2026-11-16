@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Sidebar, MobileBottomNav } from './components/Sidebar';
 import { InicioHubView } from './components/InicioHubView';
 import CommandCenter from './components/CommandCenter';
+import { PendentesView } from './components/PendentesView';
 import { RecibosVerdesView } from './components/RecibosVerdesView';
 import { InconformidadesView } from './components/InconformidadesView';
 import { FaturasView, type FiltroInicialDados } from './components/FaturasView';
@@ -375,6 +376,13 @@ function AppContent() {
               onNavigateTab={setActiveTab}
               onNavegarParaDados={handleNavegarParaDados}
               onUnreadCountChange={setStartHubUnreadCount}
+            />
+          ) : activeTab === 'pendentes' ? (
+            <PendentesView
+              ano={anoGlobal}
+              onAnoChange={setAnoGlobal}
+              onApiStatusChange={setApiOnline}
+              modoPrivacidade={modoPrivacidade}
             />
           ) : activeTab === 'recibos' ? (
             <RecibosVerdesView

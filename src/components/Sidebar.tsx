@@ -130,6 +130,12 @@ export function Sidebar({
       badge: `${totalCount}`,
     },
     {
+      id: 'pendentes',
+      label: 'Pendentes',
+      icon: <CheckSquare className="w-4 h-4 shrink-0" />,
+      badge: undefined,
+    },
+    {
       id: 'recibos',
       label: 'Recibos Verdes e Rendas',
       icon: <FileText className="w-4 h-4 shrink-0" />,
