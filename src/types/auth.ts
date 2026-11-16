@@ -1,5 +1,22 @@
 export type UserRole = 'superadmin' | 'admin' | 'subutilizador';
 
+export interface LicensedOfficeInfo {
+  officeId: string;
+  officeSeq: number;
+  officeName: string;
+  clientCode: string;
+  clientNif?: string;
+  clientName?: string;
+  token: string;
+  maxUsers: number;
+  occupiedUsers?: number;
+  pastaEvogex?: string;
+  pastaGexcelAntiga?: string;
+  active: boolean;
+  expiresAt?: string;
+  appCodigo?: string;
+}
+
 export interface CentroDadosItem {
   id: string;
   nome: string;
@@ -13,18 +30,27 @@ export interface CentroDadosItem {
   ip_local?: string;
   ativo: boolean;
   selecionado: boolean;
+  office_seq?: number;
+  client_code?: string;
+  max_users?: number;
+  occupied_users?: number;
+  evogex_confirmado?: boolean;
   created_at?: string;
   updated_at?: string;
 }
 
 export interface AppUser {
   id: number;
+  cloud_id?: string;
   username: string;
   nome: string;
   email?: string;
   role: UserRole;
   ativo: boolean;
   is_system: boolean;
+  client_code?: string;
+  office_id?: string;
+  office_ids?: string[];
   centros_permitidos?: string[];
   created_at?: string;
   ultimo_login?: string;

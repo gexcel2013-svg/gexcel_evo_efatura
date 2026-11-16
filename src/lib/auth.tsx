@@ -1,16 +1,29 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import type { AppUser, AppConfig } from '../types/auth';
-import { sincronizarLocalFsComAppConfig } from './localFsBridge';
+import type { AppUser, AppConfig, LicensedOfficeInfo } from '../types/auth';
+import {
+  sincronizarLocalFsComAppConfig,
+  sincronizarEscritoriosLocaisComLicenca,
+  selecionarLocalFsCentroAtivo,
+} from './localFsBridge';
 
 interface AuthContextType {
   currentUser: AppUser | null;
   token: string | null;
   appConfig: AppConfig | null;
+  licensedOffices: LicensedOfficeInfo[];
+  clientCode: string;
+  clientName: string;
+  clientNif: string;
   loading: boolean;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  setExternalSession: (user: AppUser, sessionToken?: string) => void;
+  setExternalSession: (
+    user: AppUser,
+    sessionToken?: string,
+    extras?: { offices?: LicensedOfficeInfo[]; clientCode?: string; preferredOfficeId?: string }
+  ) => void;
   logout: () => void;
   refreshConfig: () => Promise<void>;
+  refreshClientCloudState: () => Promise<void>;
   refreshUsers: () => Promise<AppUser[]>;
   showLoginModal: boolean;
   setShowLoginModal: (show: boolean) => void;
@@ -33,6 +46,8 @@ interface StoredEvoSession {
   nome: string;
   role: string;
   email?: string;
+  client_code?: string;
+  offices?: LicensedOfficeInfo[];
   token: string;
 }
 
@@ -63,6 +78,8 @@ function decodeGxtkSsoToken(rawToken: string): StoredEvoSession | null {
       nome: String(payload.nome || username).trim(),
       role: String(payload.role || 'OPERADOR'),
       email: String(payload.email || ''),
+      client_code: String(payload.client_code || '').trim().toUpperCase() || undefined,
+      offices: Array.isArray(payload.offices) ? (payload.offices as LicensedOfficeInfo[]) : undefined,
       token: clean,
     };
   } catch {
@@ -111,6 +128,8 @@ function readStoredEvoSession(): StoredEvoSession | null {
       nome: (parsed.nome || parsed.username).trim(),
       role: parsed.role || 'OPERADOR',
       email: parsed.email || '',
+      client_code: parsed.client_code ? String(parsed.client_code).trim().toUpperCase() : undefined,
+      offices: Array.isArray(parsed.offices) ? parsed.offices : undefined,
       token: parsed.token.trim(),
     };
     sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(sessionObj));
@@ -131,12 +150,15 @@ function mapEvoSessionToAppUser(u: StoredEvoSession): AppUser {
 
   return {
     id: Number(u.id) || 1,
+    cloud_id: u.id !== undefined ? String(u.id) : undefined,
     username: u.username,
     nome: u.nome || u.username,
     email: u.email || '',
     role: mappedRole,
     ativo: true,
     is_system: mappedRole === 'superadmin',
+    client_code: u.client_code || undefined,
+    centros_permitidos: u.offices?.length ? u.offices.map(o => o.officeId) : undefined,
     created_at: new Date().toISOString(),
   };
 }
@@ -154,13 +176,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  const [licensedOffices, setLicensedOffices] = useState<LicensedOfficeInfo[]>(() => initialSession?.offices || []);
+  const [clientCode, setClientCode] = useState<string>(() => initialSession?.client_code || '');
+  const [clientName, setClientName] = useState<string>(() => initialSession?.offices?.[0]?.clientName || '');
+  const [clientNif, setClientNif] = useState<string>(() => initialSession?.offices?.[0]?.clientNif || '');
   const [loading, setLoading] = useState<boolean>(() => Boolean(initialSession));
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [showSetupWizard, setShowSetupWizard] = useState<boolean>(false);
 
+  const applyLicensedOfficesState = useCallback(
+    (
+      officesInput?: LicensedOfficeInfo[],
+      explicitClientCode?: string,
+      explicitClientName?: string,
+      explicitClientNif?: string,
+      preferredOfficeId?: string
+    ) => {
+      const offs = Array.isArray(officesInput) ? officesInput : [];
+      setLicensedOffices(offs);
+      const cc = (explicitClientCode || offs[0]?.clientCode || '').trim().toUpperCase();
+      setClientCode(cc);
+      setClientName(explicitClientName || offs[0]?.clientName || '');
+      setClientNif(explicitClientNif || offs[0]?.clientNif || '');
+      if (offs.length > 0) {
+        sincronizarEscritoriosLocaisComLicenca(offs);
+        if (preferredOfficeId) {
+          const match = offs.find(o => o.officeId === preferredOfficeId);
+          if (match) {
+            selecionarLocalFsCentroAtivo(match.officeId, {
+              nome: match.officeName,
+              pastaEvogex: match.pastaEvogex,
+              pastaGexcelAntiga: match.pastaGexcelAntiga,
+              officeSeq: match.officeSeq,
+            });
+          }
+        }
+      }
+    },
+    []
+  );
+
   const clearSessionState = useCallback(() => {
     setToken(null);
     setCurrentUser(null);
+    setLicensedOffices([]);
+    setClientCode('');
+    setClientName('');
+    setClientNif('');
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(EVO_SESSION_KEY);
       localStorage.removeItem(EVO_SESSION_KEY);
@@ -197,6 +259,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('gexcel-evo06-logout', onForceLogout);
   }, [clearSessionState]);
 
+  const refreshClientCloudState = useCallback(async () => {
+    const activeTok = token || readStoredEvoSession()?.token || '';
+    if (!activeTok || !activeTok.startsWith('gxtk.')) return;
+    try {
+      const res = await fetch('/api/auth/client/state', {
+        headers: { Authorization: `Bearer ${activeTok}` },
+        cache: 'no-store',
+      });
+      if (!res.ok) return;
+      const data = await res.json().catch(() => null);
+      if (data?.ok && Array.isArray(data.offices)) {
+        applyLicensedOfficesState(data.offices, data.client_code, data.client_name, data.client_nif);
+        const saved = readStoredEvoSession();
+        if (saved) {
+          const updatedSess: StoredEvoSession = {
+            ...saved,
+            client_code: data.client_code || saved.client_code,
+            offices: data.offices,
+          };
+          const serialized = JSON.stringify(updatedSess);
+          sessionStorage.setItem(EVO_SESSION_KEY, serialized);
+          localStorage.setItem(EVO_SESSION_KEY, serialized);
+        }
+      }
+    } catch {
+      // manter estado atual se indisponível
+    }
+  }, [token, applyLicensedOfficesState]);
+
   // Validar sessão unificada EVO-11 ativa no arranque/atualização da página
   useEffect(() => {
     let cancel = false;
@@ -212,6 +303,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       try {
         const res = await fetch(`/api/auth/verify?token=${encodeURIComponent(savedEvo.token)}`, {
+          headers: { Authorization: `Bearer ${savedEvo.token}` },
           cache: 'no-store',
         });
         if (res.status === 401 || res.status === 403) {
@@ -231,12 +323,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
           }
           if (!cancel && data?.ok && data?.user) {
+            const offs: LicensedOfficeInfo[] = Array.isArray(data.offices)
+              ? data.offices
+              : Array.isArray(data.user.offices)
+              ? data.user.offices
+              : [];
+            const cc = String(data.user.client_code || savedEvo.client_code || '').trim().toUpperCase();
             const refreshedSession: StoredEvoSession = {
               id: data.user.id ?? savedEvo.id ?? 1,
               username: String(data.user.username || savedEvo.username).trim(),
               nome: String(data.user.nome || savedEvo.nome || savedEvo.username).trim(),
               role: String(data.user.role || savedEvo.role || 'OPERADOR'),
               email: String(data.user.email ?? savedEvo.email ?? ''),
+              client_code: cc || undefined,
+              offices: offs.length > 0 ? offs : undefined,
               token: savedEvo.token,
             };
             const mapped = mapEvoSessionToAppUser(refreshedSession);
@@ -247,6 +347,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             localStorage.setItem(USER_KEY, JSON.stringify(mapped));
             setToken(refreshedSession.token);
             setCurrentUser(mapped);
+            applyLicensedOfficesState(offs, cc);
           }
         }
       } catch {
@@ -255,6 +356,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const mapped = mapEvoSessionToAppUser(savedEvo);
           setToken(savedEvo.token);
           setCurrentUser(mapped);
+          if (savedEvo.offices?.length) {
+            applyLicensedOfficesState(savedEvo.offices, savedEvo.client_code);
+          }
         }
       }
 
@@ -264,7 +368,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     validarSessao();
     return () => { cancel = true; };
-  }, [clearSessionState, refreshConfig]);
+  }, [clearSessionState, refreshConfig, applyLicensedOfficesState]);
 
   const login = async (username: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
@@ -275,12 +379,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       const data = await res.json().catch(() => null);
       if (res.ok && data?.ok && data?.user && data?.token) {
+        const offs: LicensedOfficeInfo[] = Array.isArray(data.offices)
+          ? data.offices
+          : Array.isArray(data.user.offices)
+          ? data.user.offices
+          : [];
+        const cc = String(data.user.client_code || '').trim().toUpperCase();
         const evoSess: StoredEvoSession = {
           id: data.user.id ?? 1,
           username: String(data.user.username || username).trim(),
           nome: String(data.user.nome || username).trim(),
           role: String(data.user.role || 'OPERADOR'),
           email: String(data.user.email || ''),
+          client_code: cc || undefined,
+          offices: offs.length > 0 ? offs : undefined,
           token: String(data.token).trim(),
         };
         const usr = mapEvoSessionToAppUser(evoSess);
@@ -291,6 +403,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem(USER_KEY, JSON.stringify(usr));
         setToken(evoSess.token);
         setCurrentUser(usr);
+        applyLicensedOfficesState(offs, cc);
         setShowLoginModal(false);
         await refreshConfig();
         return { success: true };
@@ -301,29 +414,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const setExternalSession = useCallback((usr: AppUser, sessionToken?: string) => {
-    const cleanTok = (sessionToken || '').trim();
-    if (!cleanTok || !usr?.username) {
-      clearSessionState();
-      return;
-    }
-    const existing = readStoredEvoSession();
-    const evoSess: StoredEvoSession = {
-      id: existing?.id ?? usr.id ?? 1,
-      username: usr.username,
-      nome: usr.nome || usr.username,
-      role: existing?.role || (usr.role === 'superadmin' ? 'DEV' : usr.role === 'admin' ? 'ADMIN' : 'OPERADOR'),
-      email: usr.email || '',
-      token: cleanTok,
-    };
-    const serialized = JSON.stringify(evoSess);
-    sessionStorage.setItem(EVO_SESSION_KEY, serialized);
-    localStorage.setItem(EVO_SESSION_KEY, serialized);
-    localStorage.setItem(USER_KEY, JSON.stringify(usr));
-    localStorage.setItem(TOKEN_KEY, cleanTok);
-    setCurrentUser(usr);
-    setToken(cleanTok);
-  }, [clearSessionState]);
+  const setExternalSession = useCallback(
+    (
+      usr: AppUser,
+      sessionToken?: string,
+      extras?: { offices?: LicensedOfficeInfo[]; clientCode?: string; preferredOfficeId?: string }
+    ) => {
+      const cleanTok = (sessionToken || '').trim();
+      if (!cleanTok || !usr?.username) {
+        clearSessionState();
+        return;
+      }
+      const existing = readStoredEvoSession();
+      const offs = extras?.offices ?? existing?.offices ?? [];
+      const cc = (extras?.clientCode || usr.client_code || existing?.client_code || '').trim().toUpperCase();
+      const evoSess: StoredEvoSession = {
+        id: usr.cloud_id ?? existing?.id ?? usr.id ?? 1,
+        username: usr.username,
+        nome: usr.nome || usr.username,
+        role: usr.role === 'superadmin' ? 'DEV' : usr.role === 'admin' ? 'ADMIN' : existing?.role || 'OPERADOR',
+        email: usr.email || '',
+        client_code: cc || undefined,
+        offices: offs.length > 0 ? offs : undefined,
+        token: cleanTok,
+      };
+      const serialized = JSON.stringify(evoSess);
+      sessionStorage.setItem(EVO_SESSION_KEY, serialized);
+      localStorage.setItem(EVO_SESSION_KEY, serialized);
+      localStorage.setItem(USER_KEY, JSON.stringify(usr));
+      localStorage.setItem(TOKEN_KEY, cleanTok);
+      setCurrentUser({ ...usr, client_code: cc || usr.client_code });
+      setToken(cleanTok);
+      applyLicensedOfficesState(offs, cc, undefined, undefined, extras?.preferredOfficeId);
+    },
+    [clearSessionState, applyLicensedOfficesState]
+  );
 
   const logout = useCallback(() => {
     clearSessionState();
@@ -350,11 +475,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         currentUser,
         token,
         appConfig,
+        licensedOffices,
+        clientCode,
+        clientName,
+        clientNif,
         loading,
         login,
         setExternalSession,
         logout,
         refreshConfig,
+        refreshClientCloudState,
         refreshUsers,
         showLoginModal,
         setShowLoginModal,

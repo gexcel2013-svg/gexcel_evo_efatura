@@ -12,20 +12,87 @@ import { LoginModal } from './components/LoginModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
 import { AuthProvider, useAuth, EVO_SESSION_KEY } from './lib/auth';
 import { EvoLoginGate } from './components/EvoLoginGate';
+import type { CentroDadosItem } from './types/auth';
+import {
+  obterLocalFsCentroConfig,
+  obterLocalFsTodosCentrosMap,
+  selecionarLocalFsCentroAtivo,
+  sugerirPastaEvogexPorEscritorio,
+} from './lib/localFsBridge';
 
 function AppContent() {
-  const { currentUser, token, loading, appConfig, refreshConfig, showLoginModal, showSetupWizard, setShowLoginModal, setExternalSession } = useAuth();
+  const {
+    currentUser,
+    token,
+    loading,
+    appConfig,
+    licensedOffices,
+    refreshConfig,
+    showLoginModal,
+    showSetupWizard,
+    setShowLoginModal,
+    setExternalSession,
+  } = useAuth();
   const [centroKey, setCentroKey] = useState<number>(0);
+  const [localFsRev, setLocalFsRev] = useState<number>(0);
 
-  const centrosDisponiveis = useMemo(() => {
+  useEffect(() => {
+    const onFsUpdated = () => setLocalFsRev(prev => prev + 1);
+    window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
+    return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
+  }, []);
+
+  const centrosDisponiveis = useMemo<CentroDadosItem[]>(() => {
+    const localMap = obterLocalFsTodosCentrosMap();
+    const activeLocalId = obterLocalFsCentroConfig()?.id || '';
+
+    if (licensedOffices.length > 0) {
+      const sorted = [...licensedOffices].sort((a, b) => (a.officeSeq || 1) - (b.officeSeq || 1));
+      const activeId = sorted.some(o => o.officeId === activeLocalId) ? activeLocalId : sorted[0].officeId;
+      return sorted.map(off => {
+        const loc = localMap[off.officeId];
+        const pastaEvo =
+          loc?.pasta_evogex_display ||
+          off.pastaEvogex ||
+          sugerirPastaEvogexPorEscritorio(off.officeId, off.officeSeq);
+        return {
+          id: off.officeId,
+          nome: loc?.nome || off.officeName || `Escritório ${off.officeSeq || 1}`,
+          hostname: loc?.hostname || 'COMPUTADOR-LOCAL',
+          pasta_evogex: pastaEvo,
+          pasta_motor: loc?.pasta_motor_display || `${pastaEvo}\\motor`,
+          pasta_v4_evogex: loc?.pasta_v4_display || `${pastaEvo}\\BdsefaturaV4`,
+          pasta_gexcel_antiga: loc?.pasta_gexcel_antiga_display || off.pastaGexcelAntiga || '',
+          ativo: off.active,
+          selecionado: off.officeId === activeId,
+          office_seq: off.officeSeq,
+          client_code: off.clientCode,
+          max_users: off.maxUsers,
+          occupied_users: off.occupiedUsers,
+          evogex_confirmado: Boolean(loc?.evogex_confirmado),
+        };
+      });
+    }
+
     const todos = appConfig?.centros_dados || [];
     const perms = currentUser?.centros_permitidos || ['*'];
-    if (perms.includes('*') || currentUser?.role === 'admin' || currentUser?.role === 'superadmin') {
-      return todos;
-    }
-    const filtrados = todos.filter(c => perms.includes(c.id));
-    return filtrados.length > 0 ? filtrados : todos;
-  }, [appConfig?.centros_dados, currentUser]);
+    const base =
+      perms.includes('*') || currentUser?.role === 'admin' || currentUser?.role === 'superadmin'
+        ? todos
+        : todos.filter(c => perms.includes(c.id));
+    const list = base.length > 0 ? base : todos;
+    return list.map(c => {
+      const loc = localMap[c.id];
+      return {
+        ...c,
+        nome: loc?.nome || c.nome,
+        pasta_evogex: loc?.pasta_evogex_display || c.pasta_evogex,
+        pasta_gexcel_antiga: loc?.pasta_gexcel_antiga_display || c.pasta_gexcel_antiga,
+        selecionado: activeLocalId ? c.id === activeLocalId : c.selecionado,
+        evogex_confirmado: Boolean(loc?.evogex_confirmado),
+      };
+    });
+  }, [licensedOffices, appConfig?.centros_dados, currentUser, localFsRev]);
 
   const centroAtivo = useMemo(() => {
     return centrosDisponiveis.find(c => c.selecionado) || centrosDisponiveis[0] || null;
@@ -33,6 +100,16 @@ function AppContent() {
 
   const handleSelecionarCentro = async (centroId: string) => {
     if (centroAtivo && centroId === centroAtivo.id) return;
+    const alvo = centrosDisponiveis.find(c => c.id === centroId);
+    const updatedLoc = selecionarLocalFsCentroAtivo(centroId, {
+      nome: alvo?.nome,
+      pastaEvogex: alvo?.pasta_evogex,
+      pastaGexcelAntiga: alvo?.pasta_gexcel_antiga,
+      officeSeq: alvo?.office_seq,
+    });
+    setLocalFsRev(prev => prev + 1);
+    setCentroKey(prev => prev + 1);
+
     try {
       const res = await fetch('http://127.0.0.1:8015/api/app/centros-dados/selecionar', {
         method: 'POST',
@@ -41,9 +118,12 @@ function AppContent() {
       });
       if (res.ok) {
         await refreshConfig();
-        setCentroKey(prev => prev + 1);
       }
     } catch {}
+
+    if (!updatedLoc.evogex_confirmado && currentUser?.role !== 'subutilizador') {
+      setActiveTab('config');
+    }
   };
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -224,17 +304,31 @@ function AppContent() {
           if (!u?.token || !u?.username) return;
           sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(u));
           const rawRole = (u.role || '').toUpperCase();
+          const mappedRole = (rawRole === 'DEV' || rawRole === 'SUPERADMIN' ? 'superadmin' : rawRole === 'ADMIN' ? 'admin' : 'subutilizador') as 'superadmin' | 'admin' | 'subutilizador';
           const mappedUser = {
             id: Number(u.id) || 1,
+            cloud_id: u.id ? String(u.id) : undefined,
             username: u.username,
             nome: u.nome || u.username,
             email: u.email || '',
-            role: (rawRole === 'DEV' || rawRole === 'SUPERADMIN' ? 'superadmin' : rawRole === 'ADMIN' ? 'admin' : 'subutilizador') as 'superadmin' | 'admin' | 'subutilizador',
+            role: mappedRole,
             ativo: true,
             is_system: rawRole === 'DEV' || rawRole === 'SUPERADMIN',
+            client_code: u.client_code,
             created_at: new Date().toISOString(),
           };
-          setExternalSession(mappedUser, u.token);
+          setExternalSession(mappedUser, u.token, {
+            offices: u.offices,
+            clientCode: u.client_code,
+            preferredOfficeId: u.preferred_office_id,
+          });
+          setLocalFsRev(prev => prev + 1);
+          if (u.preferred_office_id && mappedRole !== 'subutilizador') {
+            const cfgAtivo = obterLocalFsCentroConfig();
+            if (!cfgAtivo?.evogex_confirmado) {
+              setActiveTab('config');
+            }
+          }
         }}
       />
     );

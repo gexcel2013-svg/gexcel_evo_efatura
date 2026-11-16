@@ -267,6 +267,16 @@ export function Sidebar({
                 </button>
               </div>
 
+              {centrosDisponiveis.length === 1 && (
+                <div
+                  className="mt-2.5 px-2.5 py-1.5 rounded-md bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800 text-[11px] font-mono font-semibold text-foreground truncate"
+                  title={centrosDisponiveis[0].pasta_evogex || centrosDisponiveis[0].nome}
+                >
+                  {centrosDisponiveis[0].id !== 'escritorio-principal' ? `${centrosDisponiveis[0].id} · ` : ''}
+                  {centrosDisponiveis[0].nome}
+                </div>
+              )}
+
               {centrosDisponiveis.length > 1 && onSelecionarCentro && (
                 <div className="mt-2.5">
                   <select
@@ -276,7 +286,7 @@ export function Sidebar({
                   >
                     {centrosDisponiveis.map(c => (
                       <option key={c.id} value={c.id}>
-                        Centro: {c.nome}
+                        {c.id !== 'escritorio-principal' ? `${c.id} · ` : ''}{c.nome}
                       </option>
                     ))}
                   </select>
@@ -448,18 +458,28 @@ export function Sidebar({
           </button>
         </div>
 
-        {/* Seletor Compacto de Escritório / Centro de Dados (só visível quando existem 2 ou mais Centros configurados) */}
+        {/* Escritório Ativo (Selo quando único ou Seletor quando existem 2+ escritórios) */}
+        {!collapsed && centrosDisponiveis.length === 1 && (
+          <div
+            className="mt-2.5 px-2.5 py-1.5 rounded-md bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800 text-[11px] font-mono font-semibold text-foreground truncate"
+            title={centrosDisponiveis[0].pasta_evogex || centrosDisponiveis[0].nome}
+          >
+            {centrosDisponiveis[0].id !== 'escritorio-principal' ? `${centrosDisponiveis[0].id} · ` : ''}
+            {centrosDisponiveis[0].nome}
+          </div>
+        )}
+
         {!collapsed && centrosDisponiveis.length > 1 && onSelecionarCentro && (
           <div className="mt-2.5">
             <select
               value={centroAtivoId || centrosDisponiveis[0]?.id || ''}
               onChange={e => onSelecionarCentro(e.target.value)}
               className="w-full px-2.5 py-1.5 rounded-md bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] text-xs font-mono font-semibold text-foreground cursor-pointer focus:outline-none"
-              title="Alternar entre os Centros de Dados configurados"
+              title="Alternar entre os Escritórios licenciados"
             >
               {centrosDisponiveis.map(c => (
                 <option key={c.id} value={c.id}>
-                  Centro: {c.nome}
+                  {c.id !== 'escritorio-principal' ? `${c.id} · ` : ''}{c.nome}
                 </option>
               ))}
             </select>

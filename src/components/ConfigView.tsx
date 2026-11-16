@@ -19,9 +19,12 @@ import {
   Building2
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import type { AppUser, CentroDadosItem } from '../types/auth';
+import type { AppUser, CentroDadosItem, LicensedOfficeInfo } from '../types/auth';
 import {
   obterLocalFsCentroConfig,
+  obterLocalFsTodosCentrosMap,
+  selecionarLocalFsCentroAtivo,
+  sugerirPastaEvogexPorEscritorio,
   guardarLocalFsCentroConfig,
   escolherEInstalarPastaDadosEvogex,
   escolherPastaDadosGexcelAntigos,
@@ -41,8 +44,11 @@ export function ConfigView() {
   const { 
     currentUser, 
     token,
-    appConfig, 
-    refreshConfig, 
+    appConfig,
+    licensedOffices,
+    clientCode,
+    refreshConfig,
+    refreshClientCloudState,
     refreshUsers, 
     setShowLoginModal, 
     logout 
@@ -53,6 +59,7 @@ export function ConfigView() {
   const isAdm = currentUser?.role === 'admin';
   const isSuper = currentUser?.role === 'superadmin';
   const canManage = isAdm || isSuper || !currentUser;
+  const isCloudClient = Boolean(clientCode && token?.startsWith('gxtk.'));
 
   const getHeaders = useCallback((): HeadersInit => {
     const h: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -122,6 +129,7 @@ export function ConfigView() {
 
   // Lista de utilizadores e ordenação universal
   const [utilizadores, setUtilizadores] = useState<AppUser[]>([]);
+  const [cloudOfficesSummary, setCloudOfficesSummary] = useState<LicensedOfficeInfo[]>([]);
   const [carregandoUsers, setCarregandoUsers] = useState<boolean>(false);
   const [sortCol, setSortCol] = useState<UserSortColumn>('nome');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -149,6 +157,39 @@ export function ConfigView() {
   }, [pastasLocais.pasta_v4, pastasLocais.pasta_v3, appConfig?.pasta_v4, appConfig?.pasta_v3]);
 
   const centrosDadosLista = useMemo<CentroDadosItem[]>(() => {
+    const cloudOffices = cloudOfficesSummary.length > 0 ? cloudOfficesSummary : licensedOffices;
+    if (cloudOffices.length > 0) {
+      const localMap = obterLocalFsTodosCentrosMap();
+      const sorted = [...cloudOffices].sort((a, b) => (a.officeSeq || 1) - (b.officeSeq || 1));
+      const activeId =
+        localFsCfg?.id && sorted.some(o => o.officeId === localFsCfg.id)
+          ? localFsCfg.id
+          : sorted[0].officeId;
+      return sorted.map(off => {
+        const loc = localMap[off.officeId];
+        const pastaEvo =
+          loc?.pasta_evogex_display ||
+          off.pastaEvogex ||
+          sugerirPastaEvogexPorEscritorio(off.officeId, off.officeSeq);
+        const pastaAnt =
+          loc?.pasta_gexcel_antiga_display || off.pastaGexcelAntiga || '';
+        return {
+          id: off.officeId,
+          nome: loc?.nome || off.officeName || `Escritório ${off.officeSeq || 1}`,
+          hostname: loc?.hostname || 'COMPUTADOR-LOCAL',
+          pasta_evogex: pastaEvo,
+          pasta_motor: loc?.pasta_motor_display || `${pastaEvo}\\motor`,
+          pasta_gexcel_antiga: pastaAnt,
+          ativo: off.active,
+          selecionado: off.officeId === activeId,
+          office_seq: off.officeSeq,
+          client_code: off.clientCode,
+          max_users: off.maxUsers,
+          occupied_users: off.occupiedUsers,
+          evogex_confirmado: Boolean(loc?.evogex_confirmado),
+        };
+      });
+    }
     if (localFsCfg && localFsCfg.pasta_evogex_display) {
       return [
         {
@@ -193,7 +234,7 @@ export function ConfigView() {
         selecionado: true,
       },
     ];
-  }, [localFsCfg, appConfig, pastaRaizRealMotor, caminhoPropostoEvogex, caminhoPropostoAntiga]);
+  }, [cloudOfficesSummary, licensedOffices, localFsCfg, appConfig, pastaRaizRealMotor, caminhoPropostoEvogex, caminhoPropostoAntiga]);
 
   useEffect(() => {
     setPastasLocais(prev => ({
@@ -243,12 +284,80 @@ export function ConfigView() {
     }
   }, [appConfig]);
 
+  const syncCloudOfficeMetadata = useCallback(
+    async (officeId: string, officeName?: string, pastaEvogex?: string, pastaGexcelAntiga?: string) => {
+      if (!isCloudClient || (!isAdm && !isSuper) || !officeId) return;
+      try {
+        const res = await fetch('/api/auth/client/office/update', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({
+            officeId,
+            officeName: officeName?.trim() || undefined,
+            pastaEvogex: pastaEvogex?.trim() ?? undefined,
+            pastaGexcelAntiga: pastaGexcelAntiga?.trim() ?? undefined,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data?.ok && Array.isArray(data.offices)) {
+            setCloudOfficesSummary(data.offices);
+            await refreshClientCloudState();
+          }
+        }
+      } catch {
+        // tolerar se temporariamente offline
+      }
+    },
+    [isCloudClient, isAdm, isSuper, getHeaders, refreshClientCloudState]
+  );
+
   const carregarListaUtilizadores = useCallback(async () => {
     setCarregandoUsers(true);
-    const users = await refreshUsers();
-    setUtilizadores(users.filter(u => u.role !== 'superadmin' && !u.is_system));
-    setCarregandoUsers(false);
-  }, [refreshUsers]);
+    try {
+      if (isCloudClient) {
+        const res = await fetch('/api/auth/client/state', {
+          headers: getHeaders(),
+          cache: 'no-store',
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data?.ok) {
+            if (Array.isArray(data.offices)) {
+              setCloudOfficesSummary(data.offices);
+            }
+            const rawUsers = Array.isArray(data.users) ? data.users : [];
+            const mapped: AppUser[] = rawUsers.map((u: any, idx: number) => {
+              const roleUp = String(u.role || 'OPERADOR').toUpperCase();
+              const offs = Array.isArray(u.officeIds) ? u.officeIds.map(String) : [];
+              return {
+                id: idx + 1,
+                cloud_id: String(u.id),
+                username: String(u.username || ''),
+                nome: String(u.nome || u.username || ''),
+                email: String(u.email || ''),
+                role: roleUp === 'ADMIN' ? 'admin' : 'subutilizador',
+                ativo: Boolean(u.ativo),
+                is_system: false,
+                client_code: data.client_code,
+                office_ids: offs,
+                centros_permitidos: roleUp === 'ADMIN' ? ['*'] : offs,
+                ultimo_login: u.ultimo_login || '',
+                created_at: u.created_at || '',
+              };
+            });
+            setUtilizadores(mapped);
+            setCarregandoUsers(false);
+            return;
+          }
+        }
+      }
+      const users = await refreshUsers();
+      setUtilizadores(users.filter(u => u.role !== 'superadmin' && !u.is_system));
+    } finally {
+      setCarregandoUsers(false);
+    }
+  }, [isCloudClient, getHeaders, refreshUsers]);
 
   useEffect(() => {
     carregarListaUtilizadores();
@@ -271,8 +380,22 @@ export function ConfigView() {
       .catch(() => {});
   }, [carregarListaUtilizadores]);
 
-  const maxUsers = appConfig?.max_users || 5;
-  const lugaresOcupados = utilizadores.length;
+  const activeOfficeMeta = useMemo(() => {
+    const cloudList = cloudOfficesSummary.length > 0 ? cloudOfficesSummary : licensedOffices;
+    if (cloudList.length === 0) return null;
+    const activeId = localFsCfg?.id || cloudList[0].officeId;
+    return cloudList.find(o => o.officeId === activeId) || cloudList[0];
+  }, [cloudOfficesSummary, licensedOffices, localFsCfg?.id]);
+
+  const maxUsers = isCloudClient ? (activeOfficeMeta?.maxUsers || 3) : (appConfig?.max_users || 5);
+  const lugaresOcupados = isCloudClient ? (activeOfficeMeta?.occupiedUsers ?? utilizadores.length) : utilizadores.length;
+
+  const hasAnyFreeSeat = useMemo(() => {
+    if (!isCloudClient) return lugaresOcupados < maxUsers;
+    const cloudList = cloudOfficesSummary.length > 0 ? cloudOfficesSummary : licensedOffices;
+    if (cloudList.length === 0) return true;
+    return cloudList.some(o => (o.occupiedUsers || 0) < (o.maxUsers || 0));
+  }, [isCloudClient, lugaresOcupados, maxUsers, cloudOfficesSummary, licensedOffices]);
 
   const handleSortUsers = (col: UserSortColumn) => {
     if (sortCol === col) {
@@ -284,14 +407,15 @@ export function ConfigView() {
   };
 
   const formatarCentrosUser = useCallback((u: AppUser): string => {
-    if (u.role === 'admin' || u.role === 'superadmin') return 'Todos os Centros';
-    const perms = u.centros_permitidos || ['*'];
-    if (perms.includes('*')) return 'Todos os Centros';
+    if (u.role === 'admin' || u.role === 'superadmin') return 'Todos os Escritórios (Auto)';
+    const perms = u.office_ids && u.office_ids.length > 0 ? u.office_ids : (u.centros_permitidos || []);
+    if (perms.includes('*')) return 'Todos os Escritórios (Auto)';
     const nomes = perms.map(cid => {
       const found = centrosDadosLista.find(c => c.id === cid);
-      return found ? found.nome : cid;
+      if (!found) return cid;
+      return found.id !== 'escritorio-principal' ? `${found.id} · ${found.nome}` : found.nome;
     });
-    return nomes.join(', ') || 'Todos os Centros';
+    return nomes.join(', ') || 'Sem escritório atribuído';
   }, [centrosDadosLista]);
 
   const utilizadoresOrdenados = useMemo(() => {
@@ -356,13 +480,39 @@ export function ConfigView() {
     }
   };
 
+  const handleSelecionarEscritorioPasso1 = async (centro: CentroDadosItem) => {
+    setMensagemErro(null);
+    setMensagemSucesso(null);
+    const updated = selecionarLocalFsCentroAtivo(centro.id, {
+      nome: centro.nome,
+      pastaEvogex: centro.pasta_evogex,
+      pastaGexcelAntiga: centro.pasta_gexcel_antiga,
+      officeSeq: centro.office_seq,
+    });
+    setLocalFsCfg(updated);
+    setCaminhoPropostoEvogex(updated.pasta_evogex_display);
+    if (updated.pasta_gexcel_antiga_display) {
+      setCaminhoPropostoAntiga(updated.pasta_gexcel_antiga_display);
+    }
+    try {
+      await fetch('http://127.0.0.1:8015/api/app/centros-dados/selecionar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ centro_id: centro.id }),
+      });
+      await refreshConfig();
+    } catch {}
+    setMensagemSucesso(`Escritório ativo alterado para '${updated.nome}' (${updated.pasta_evogex_display}).`);
+  };
+
   const handleGuardarFixarConfiguracao = async () => {
     setMensagemErro(null);
-    const evoLimpo = (caminhoPropostoEvogex || 'C:\\Dados_evoGex').trim();
+    const targetId = localFsCfg?.id || centrosDadosLista.find(c => c.selecionado)?.id || 'escritorio-principal';
+    const evoLimpo = (caminhoPropostoEvogex || sugerirPastaEvogexPorEscritorio(targetId)).trim();
     const antLimpo = (localFsCfg?.pasta_gexcel_antiga_display || caminhoPropostoAntiga || '').trim();
     const novoCfg: LocalFsCentroConfig = {
-      id: localFsCfg?.id || 'escritorio-principal',
-      nome: localFsCfg?.nome || 'Escritório Principal',
+      id: targetId,
+      nome: localFsCfg?.nome || centrosDadosLista.find(c => c.id === targetId)?.nome || 'Escritório Principal',
       hostname: localFsCfg?.hostname || 'COMPUTADOR-LOCAL',
       pasta_evogex_display: evoLimpo,
       pasta_motor_display: `${evoLimpo}\\motor`,
@@ -380,18 +530,25 @@ export function ConfigView() {
     };
     guardarLocalFsCentroConfig(novoCfg);
     setLocalFsCfg(novoCfg);
+    await syncCloudOfficeMetadata(novoCfg.id, novoCfg.nome, novoCfg.pasta_evogex_display, novoCfg.pasta_gexcel_antiga_display);
     await refreshConfig();
     setMensagemSucesso(
-      `Configuração gravada permanentemente! Ao fechar e voltar a abrir a aplicação, as pastas (${evoLimpo}${antLimpo ? ` e ${antLimpo}` : ''}) mantêm-se ligadas.`
+      `Configuração gravada para '${novoCfg.nome}'! Ao fechar e voltar a abrir a aplicação, as pastas (${evoLimpo}${antLimpo ? ` e ${antLimpo}` : ''}) mantêm-se ligadas.`
     );
   };
 
   const handleEscolherPastaEvogexDireto = async (customCaminhoProposto?: string, paraModal = false) => {
     setMensagemErro(null);
     setMensagemSucesso(null);
-    const prop = (customCaminhoProposto ?? (paraModal ? formCentroPastaEvogex : caminhoPropostoEvogex)).trim() || 'C:\\Dados_evoGex';
+    const activeCentro = centroEmEdicao || centrosDadosLista.find(c => c.selecionado) || centrosDadosLista[0];
+    const targetId = activeCentro?.id || localFsCfg?.id || 'escritorio-principal';
+    const prop =
+      (customCaminhoProposto ?? (paraModal ? formCentroPastaEvogex : caminhoPropostoEvogex)).trim() ||
+      sugerirPastaEvogexPorEscritorio(targetId, activeCentro?.office_seq);
     const res = await escolherEInstalarPastaDadosEvogex({
-      nomeCentro: paraModal ? formCentroNome : (localFsCfg?.nome || 'Escritório Principal'),
+      centroId: targetId,
+      officeSeq: activeCentro?.office_seq,
+      nomeCentro: paraModal ? formCentroNome : (localFsCfg?.nome || activeCentro?.nome || 'Escritório Principal'),
       hostname: paraModal ? formCentroHost : (localFsCfg?.hostname || 'COMPUTADOR-LOCAL'),
       caminhoProposto: prop,
     });
@@ -404,9 +561,15 @@ export function ConfigView() {
           setFormCentroPastaAntiga(res.config.pasta_gexcel_antiga_display);
         }
       }
+      await syncCloudOfficeMetadata(
+        res.config.id,
+        res.config.nome,
+        res.config.pasta_evogex_display,
+        res.config.pasta_gexcel_antiga_display
+      );
       await refreshConfig();
       setMensagemSucesso(
-        `Pasta '${res.config.pasta_evogex_display}' criada e ligada com sucesso! Estrutura (BdsefaturaV4, SafeDrive, Motor) e bases SQLite gravadas no disco.`
+        `Pasta '${res.config.pasta_evogex_display}' criada e ligada ao escritório '${res.config.nome}'! Estrutura e bases SQLite gravadas no disco.`
       );
     } else if (res.erro && res.erro !== 'Seleção de pasta cancelada.') {
       setMensagemErro(res.erro);
@@ -416,8 +579,10 @@ export function ConfigView() {
   const handleEscolherPastaAntigaDireto = async (customCaminhoProposto?: string, paraModal = false) => {
     setMensagemErro(null);
     setMensagemSucesso(null);
+    const activeCentro = centroEmEdicao || centrosDadosLista.find(c => c.selecionado) || centrosDadosLista[0];
+    const targetId = activeCentro?.id || localFsCfg?.id || 'escritorio-principal';
     const prop = (customCaminhoProposto ?? (paraModal ? formCentroPastaAntiga : caminhoPropostoAntiga)).trim() || 'C:\\Dados_GexcelApps';
-    const res = await escolherPastaDadosGexcelAntigos(prop);
+    const res = await escolherPastaDadosGexcelAntigos(prop, targetId);
     if (res.ok && res.config) {
       setLocalFsCfg(res.config);
       setCaminhoPropostoAntiga(res.config.pasta_gexcel_antiga_display);
@@ -430,6 +595,12 @@ export function ConfigView() {
           setFormCentroPastaEvogex(res.config.pasta_evogex_display);
         }
       }
+      await syncCloudOfficeMetadata(
+        res.config.id,
+        res.config.nome,
+        res.config.pasta_evogex_display,
+        res.config.pasta_gexcel_antiga_display
+      );
       await refreshConfig();
       if (res.erro) {
         setMensagemSucesso(res.erro);
@@ -510,23 +681,26 @@ export function ConfigView() {
     setSalvandoCentro(true);
     setMensagemSucesso(null);
     setMensagemErro(null);
+    const targetId = centroEmEdicao?.id || localFsCfg?.id || 'escritorio-principal';
     const nomeLimpo = formCentroNome.trim() || 'Escritório Principal';
     const hostLimpo = formCentroHost.trim() || 'SERVIDOR-ESCRITORIO';
-    const pastaEvoLimpa = formCentroPastaEvogex.trim() || 'C:\\Dados_evoGex';
-    const pastaAntLimpa = formCentroPastaAntiga.trim() || 'C:\\Dados_GexcelApps';
+    const pastaEvoLimpa = formCentroPastaEvogex.trim() || sugerirPastaEvogexPorEscritorio(targetId, centroEmEdicao?.office_seq);
+    const pastaAntLimpa = formCentroPastaAntiga.trim() || '';
 
     const novoCfg: LocalFsCentroConfig = {
-      id: centroEmEdicao?.id || 'escritorio-principal',
+      id: targetId,
       nome: nomeLimpo,
       hostname: hostLimpo,
       pasta_evogex_display: pastaEvoLimpa,
       pasta_motor_display: `${pastaEvoLimpa}\\motor`,
       pasta_v4_display: `${pastaEvoLimpa}\\BdsefaturaV4`,
-      pasta_v3_display: `${pastaAntLimpa}\\BdsefaturaV3`,
-      pasta_bdsrv_display: `${pastaAntLimpa}\\BdsRV`,
+      pasta_v3_display: `${pastaAntLimpa || 'C:\\Dados_GexcelApps'}\\BdsefaturaV3`,
+      pasta_bdsrv_display: `${pastaAntLimpa || 'C:\\Dados_GexcelApps'}\\BdsRV`,
       pasta_pdfs_display: `${pastaEvoLimpa}\\PDFs_Recibos`,
       pasta_gexcel_antiga_display: pastaAntLimpa,
       ligado: true,
+      evogex_confirmado: Boolean(centroEmEdicao?.evogex_confirmado || localFsCfg?.evogex_confirmado),
+      antiga_confirmada: Boolean(pastaAntLimpa),
       total_entidades_carregadas: localFsCfg?.total_entidades_carregadas,
       total_sqlites_gravados: localFsCfg?.total_sqlites_gravados,
       updated_at: new Date().toISOString(),
@@ -534,28 +708,32 @@ export function ConfigView() {
     guardarLocalFsCentroConfig(novoCfg);
     setLocalFsCfg(novoCfg);
     setCaminhoPropostoEvogex(pastaEvoLimpa);
-    setCaminhoPropostoAntiga(pastaAntLimpa);
+    if (pastaAntLimpa) setCaminhoPropostoAntiga(pastaAntLimpa);
 
     try {
-      await fetch('http://127.0.0.1:8015/api/app/centros-dados', {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({
-          centro_id: centroEmEdicao?.id,
-          nome: nomeLimpo,
-          hostname: hostLimpo,
-          pasta_evogex: pastaEvoLimpa,
-          pasta_gexcel_antiga: pastaAntLimpa,
-          tornar_ativo: true,
-        }),
-      });
+      if (isCloudClient) {
+        await syncCloudOfficeMetadata(targetId, nomeLimpo, pastaEvoLimpa, pastaAntLimpa);
+      } else {
+        await fetch('http://127.0.0.1:8015/api/app/centros-dados', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({
+            centro_id: centroEmEdicao?.id,
+            nome: nomeLimpo,
+            hostname: hostLimpo,
+            pasta_evogex: pastaEvoLimpa,
+            pasta_gexcel_antiga: pastaAntLimpa,
+            tornar_ativo: true,
+          }),
+        });
+      }
       await refreshConfig();
     } catch {
       // guardado localmente no posto
     } finally {
       setModalCentroAberto(false);
       setSalvandoCentro(false);
-      setMensagemSucesso(`Centro de Dados '${nomeLimpo}' configurado em '${pastaEvoLimpa}'.`);
+      setMensagemSucesso(`Escritório '${nomeLimpo}' configurado em '${pastaEvoLimpa}'.`);
     }
   };
 
@@ -564,8 +742,8 @@ export function ConfigView() {
       setMensagemErro('Permissão negada. É obrigatório iniciar sessão como Administrador para criar utilizadores.');
       return;
     }
-    if (lugaresOcupados >= maxUsers) {
-      setMensagemErro(`Limite de utilizadores atingido (${lugaresOcupados} de ${maxUsers} lugares contratados). Elimine um utilizador inativo ou amplie a licença da empresa.`);
+    if (!hasAnyFreeSeat) {
+      setMensagemErro(`Limite de vagas atingido em todos os escritórios (${lugaresOcupados}/${maxUsers}). Amplie as vagas do escritório na licença antes de adicionar novos colaboradores.`);
       return;
     }
     setUserEmEdicao(null);
@@ -575,8 +753,11 @@ export function ConfigView() {
     setFormRole(rolePredefinido);
     setFormPassword('');
     setFormAtivo(true);
-    setFormTodosCentros(true);
-    setFormCentrosSelecionados(centrosDadosLista.map(c => c.id));
+    const activeCid = localFsCfg?.id || centrosDadosLista[0]?.id;
+    setFormTodosCentros(!isCloudClient || centrosDadosLista.length <= 1);
+    setFormCentrosSelecionados(
+      isCloudClient && activeCid ? [activeCid] : centrosDadosLista.map(c => c.id)
+    );
     setErroFormUser(null);
     setModalUserAberto(true);
   };
@@ -586,7 +767,11 @@ export function ConfigView() {
       setMensagemErro('Permissão negada. Inicie sessão para gerir o seu perfil.');
       return;
     }
-    const isSelf = currentUser && user.id === currentUser.id;
+    const isSelf =
+      currentUser &&
+      ((user.cloud_id && currentUser.cloud_id && user.cloud_id === currentUser.cloud_id) ||
+        user.username.toLowerCase() === currentUser.username.toLowerCase() ||
+        user.id === currentUser.id);
 
     if (isSub && !isSelf) {
       setMensagemErro('Permissão negada. Um subutilizador não tem permissão para editar outros utilizadores.');
@@ -598,7 +783,7 @@ export function ConfigView() {
       return;
     }
 
-    const perms = user.centros_permitidos || ['*'];
+    const perms = user.office_ids && user.office_ids.length > 0 ? user.office_ids : (user.centros_permitidos || ['*']);
     const isAll = perms.includes('*') || user.role === 'admin' || user.role === 'superadmin';
 
     setUserEmEdicao(user);
@@ -633,6 +818,53 @@ export function ConfigView() {
         : ['*'];
 
     try {
+      if (isCloudClient) {
+        const officeIdsCloud =
+          formRole === 'admin'
+            ? ['*']
+            : formTodosCentros
+            ? centrosDadosLista.map(c => c.id)
+            : formCentrosSelecionados;
+        if (formRole === 'subutilizador' && formAtivo && officeIdsCloud.length === 0) {
+          setErroFormUser('Selecione pelo menos 1 escritório autorizado para este operador.');
+          setSalvandoUser(false);
+          return;
+        }
+        if (!userEmEdicao && (!formPassword.trim() || formPassword.trim().length < 4)) {
+          setErroFormUser('A palavra-passe deve ter pelo menos 4 caracteres.');
+          setSalvandoUser(false);
+          return;
+        }
+        const res = await fetch('/api/auth/client/users/save', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({
+            id: userEmEdicao?.cloud_id,
+            nome: formNome.trim(),
+            username: formUsername.trim(),
+            email: formEmail.trim(),
+            role: formRole === 'admin' ? 'ADMIN' : 'OPERADOR',
+            password: formPassword.trim(),
+            ativo: formAtivo,
+            officeIds: officeIdsCloud,
+          }),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.ok) {
+          setModalUserAberto(false);
+          await carregarListaUtilizadores();
+          await refreshClientCloudState();
+          setMensagemSucesso(
+            userEmEdicao
+              ? `Utilizador '${formUsername}' atualizado com sucesso.`
+              : `Utilizador '${formUsername}' criado e sincronizado na conta da empresa.`
+          );
+        } else {
+          setErroFormUser(data?.detail || data?.error || 'Falha ao guardar utilizador.');
+        }
+        return;
+      }
+
       if (userEmEdicao) {
         const isSelf = currentUser && userEmEdicao.id === currentUser.id;
 
@@ -723,7 +955,12 @@ export function ConfigView() {
       return;
     }
 
-    if (currentUser && user.id === currentUser.id) {
+    const isSelf =
+      currentUser &&
+      ((user.cloud_id && currentUser.cloud_id && user.cloud_id === currentUser.cloud_id) ||
+        user.username.toLowerCase() === currentUser.username.toLowerCase() ||
+        user.id === currentUser.id);
+    if (isSelf) {
       setMensagemErro('Operação recusada: Não é permitido eliminar a sua própria conta enquanto a sua sessão estiver ativa.');
       return;
     }
@@ -737,6 +974,23 @@ export function ConfigView() {
     if (!conf) return;
 
     try {
+      if (isCloudClient && user.cloud_id) {
+        const res = await fetch('/api/auth/client/users/delete', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({ userId: user.cloud_id }),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.ok) {
+          await carregarListaUtilizadores();
+          await refreshClientCloudState();
+          setMensagemSucesso(`Utilizador '${user.username}' removido com sucesso.`);
+        } else {
+          setMensagemErro(data?.detail || data?.error || 'Falha ao remover utilizador.');
+        }
+        return;
+      }
+
       const res = await fetch(`http://127.0.0.1:8015/api/app/users/${user.id}`, { 
         method: 'DELETE',
         headers: getHeaders()
@@ -986,7 +1240,11 @@ export function ConfigView() {
                 Onde pretende instalar e guardar os novos dados (Dados_evoGex)?
               </h2>
             </div>
-            {canManage && (
+            {isCloudClient ? (
+              <span className="px-3 py-1.5 rounded bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800 text-sky-900 dark:text-sky-200 font-mono text-xs font-semibold shrink-0">
+                Conta {clientCode} · {centrosDadosLista.length} Escritório(s)
+              </span>
+            ) : canManage ? (
               <button
                 type="button"
                 onClick={abrirModalNovoCentro}
@@ -995,7 +1253,7 @@ export function ConfigView() {
                 <Plus className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
                 <span>+ Outro Escritório / Servidor</span>
               </button>
-            )}
+            ) : null}
           </div>
 
           <div className="p-4 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-3 font-mono text-xs">
@@ -1054,47 +1312,99 @@ export function ConfigView() {
             )}
           </div>
 
-          {/* Resumo Limpo da Pasta Ativa */}
+          {/* Lista de Escritórios / Pastas Isoladas */}
           <div className="space-y-2">
-            {centrosDadosLista.map(centro => (
-              <div
-                key={centro.id}
-                className="p-3.5 rounded-md border bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] flex flex-wrap items-center justify-between gap-3 font-mono text-xs"
-              >
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center space-x-2">
-                    <Building2 className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0" />
-                    <span className="font-bold text-foreground">{centro.nome}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800">
-                      ATIVO
-                    </span>
+            {centrosDadosLista.map(centro => {
+              const pathEvogex = centro.pasta_evogex || baseEvogexAtiva;
+              return (
+                <div
+                  key={centro.id}
+                  className={`p-3.5 rounded-md border flex flex-wrap items-center justify-between gap-3 font-mono text-xs ${
+                    centro.selecionado
+                      ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7]'
+                      : 'bg-slate-50 dark:bg-[#132233] border-[#d7e0ea] dark:border-[#222f3e]'
+                  }`}
+                >
+                  <div className="space-y-1 min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Building2 className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                      {centro.id !== 'escritorio-principal' && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-[#253a52] font-bold">
+                          {centro.id}
+                        </span>
+                      )}
+                      <span className="font-bold text-foreground">{centro.nome}</span>
+                      {centro.max_users !== undefined && (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] text-[#0284c7] dark:text-sky-300 font-bold border border-sky-300 dark:border-sky-800">
+                          {centro.occupied_users ?? 0}/{centro.max_users} vagas
+                        </span>
+                      )}
+                      {centro.selecionado && (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-800">
+                          ATIVO
+                        </span>
+                      )}
+                      {!centro.evogex_confirmado && (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-700">
+                          Pasta por ligar
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 text-slate-700 dark:text-slate-300 break-all">
+                      <span>Pasta Dados evoGex:</span>
+                      <strong className="text-foreground break-all" title={pathEvogex}>
+                        {pathEvogex}
+                      </strong>
+                      <button
+                        type="button"
+                        onClick={() => handleAbrirNoWindows(pathEvogex)}
+                        title="Abrir no Explorador do Windows"
+                        className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-amber-600 dark:text-amber-400 cursor-pointer shrink-0"
+                      >
+                        <FolderOpen className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCopiarCaminho(pathEvogex, centro.nome)}
+                        title="Copiar endereço completo"
+                        className="p-1 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer shrink-0"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="text-slate-700 dark:text-slate-300 break-all">
-                    Pasta Dados evoGex: <strong className="text-foreground">{centro.pasta_evogex || baseEvogexAtiva}</strong>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => handleAbrirNoWindows(`${centro.pasta_evogex || baseEvogexAtiva}\\BdsefaturaV4`, 'BdsefaturaV4')}
-                    className="px-3 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground text-xs flex items-center space-x-1.5 cursor-pointer transition"
-                  >
-                    <FolderOpen className="w-3.5 h-3.5 text-amber-500" />
-                    <span>Abrir Pasta SQLites (BdsefaturaV4)</span>
-                  </button>
-                  {canManage && (
+                  <div className="flex items-center space-x-2 shrink-0">
+                    {!centro.selecionado && (
+                      <button
+                        type="button"
+                        onClick={() => handleSelecionarEscritorioPasso1(centro)}
+                        className="px-3 py-1.5 rounded bg-[#0284c7] hover:bg-[#0284c7]/90 text-white text-xs font-semibold cursor-pointer transition"
+                      >
+                        Selecionar Escritório
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => abrirModalEditarCentro(centro)}
-                      className="p-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
-                      title="Editar nome do escritório"
+                      onClick={() => handleAbrirNoWindows(`${pathEvogex}\\BdsefaturaV4`, 'BdsefaturaV4')}
+                      className="px-3 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground text-xs flex items-center space-x-1.5 cursor-pointer transition"
                     >
-                      <Edit2 className="w-3.5 h-3.5" />
+                      <FolderOpen className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Abrir SQLites</span>
                     </button>
-                  )}
+                    {canManage && (
+                      <button
+                        type="button"
+                        onClick={() => abrirModalEditarCentro(centro)}
+                        className="p-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
+                        title="Editar nome ou pasta deste escritório"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Subpastas Técnicas Opcionais (Recolhidas por defeito para não poluir a vista) */}
@@ -1366,6 +1676,41 @@ export function ConfigView() {
                 )}
               </div>
             </div>
+
+            {isCloudClient && centrosDadosLista.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 font-mono text-xs">
+                {centrosDadosLista.map(off => {
+                  const occ = off.occupied_users ?? 0;
+                  const max = off.max_users ?? maxUsers;
+                  const full = occ >= max;
+                  return (
+                    <div
+                      key={off.id}
+                      className={`p-2.5 rounded border ${
+                        off.selecionado
+                          ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7]'
+                          : 'bg-slate-50 dark:bg-[#132233] border-slate-300 dark:border-[#222f3e]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-foreground truncate">
+                          {off.id !== 'escritorio-principal' ? `${off.id} · ` : ''}{off.nome}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${
+                            full
+                              ? 'bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700'
+                              : 'bg-emerald-100 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                          }`}
+                        >
+                          {occ}/{max} vagas
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="overflow-x-auto rounded border border-slate-300 dark:border-[#222f3e]">
               <table className="w-full text-left text-xs font-mono">
@@ -1728,7 +2073,13 @@ export function ConfigView() {
                 </div>
               </div>
 
-              {/* Centros de Dados Autorizados para este Utilizador */}
+              {/* Escritórios / Centros de Dados Autorizados */}
+              {!isSub && formRole === 'admin' && isCloudClient && (
+                <div className="p-2.5 rounded bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-800 text-[11px] font-mono text-sky-900 dark:text-sky-200">
+                  <strong>Acesso Automático a Todos os Escritórios:</strong> Os Administradores acedem automaticamente a todos os escritórios da conta e ocupam 1 vaga em cada escritório.
+                </div>
+              )}
+
               {!isSub && formRole === 'subutilizador' && (
                 <div className="p-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-2">
                   <label className="flex items-center space-x-2 cursor-pointer">
@@ -1739,24 +2090,33 @@ export function ConfigView() {
                       className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7]"
                     />
                     <span className="font-semibold text-foreground text-[11px]">
-                      Acesso a Todos os Centros de Dados da Empresa
+                      Acesso a Todos os Escritórios da Empresa
                     </span>
                   </label>
 
                   {!formTodosCentros && (
                     <div className="pl-5 space-y-1.5 pt-1 border-t border-slate-200 dark:border-[#222f3e]">
                       <span className="block text-[10px] text-slate-600 dark:text-slate-400">
-                        Selecione os Centros de Dados que este operador pode aceder:
+                        Selecione os escritórios autorizados para este operador:
                       </span>
                       {centrosDadosLista.map(c => (
-                        <label key={c.id} className="flex items-center space-x-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={formCentrosSelecionados.includes(c.id)}
-                            onChange={() => toggleCentroUserCheckbox(c.id)}
-                            className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7]"
-                          />
-                          <span className="text-[11px] text-foreground">{c.nome}</span>
+                        <label key={c.id} className="flex items-center justify-between gap-2 cursor-pointer">
+                          <span className="flex items-center space-x-2 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={formCentrosSelecionados.includes(c.id)}
+                              onChange={() => toggleCentroUserCheckbox(c.id)}
+                              className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7]"
+                            />
+                            <span className="text-[11px] text-foreground truncate">
+                              {c.id !== 'escritorio-principal' ? `${c.id} · ` : ''}{c.nome}
+                            </span>
+                          </span>
+                          {c.max_users !== undefined && (
+                            <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 shrink-0">
+                              {c.occupied_users ?? 0}/{c.max_users} vagas
+                            </span>
+                          )}
                         </label>
                       ))}
                     </div>

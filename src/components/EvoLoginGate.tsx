@@ -8,6 +8,9 @@ export interface AuthenticatedEvoUser {
   role: string;
   email: string;
   token?: string;
+  client_code?: string;
+  offices?: any[];
+  preferred_office_id?: string;
 }
 
 interface EvoLoginGateProps {
@@ -22,6 +25,11 @@ interface EvoLoginGateProps {
 interface InspectedTenant {
   id: string;
   token: string;
+  client_code?: string;
+  office_id?: string;
+  office_seq?: number;
+  office_name?: string;
+  offices_count?: number;
   nome_empresa: string;
   nif: string;
   max_users: number;
@@ -57,6 +65,7 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
   const [inspectedTenant, setInspectedTenant] = useState<InspectedTenant | null>(null);
   const [firstAdminNome, setFirstAdminNome] = useState("");
   const [firstAdminEmail, setFirstAdminEmail] = useState("");
+  const [firstOfficeName, setFirstOfficeName] = useState("Escritório Principal");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -68,6 +77,7 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
       .then((data) => {
         if (data?.ok && data?.tenant) {
           setInspectedTenant(data.tenant);
+          setFirstOfficeName(String(data.tenant.office_name || "Escritório Principal"));
         } else if (data?.error) {
           setError(data.error);
         }
@@ -82,6 +92,7 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
     const u = username.trim();
     const p = password.trim();
     const n = firstAdminNome.trim();
+    const oName = firstOfficeName.trim() || inspectedTenant?.office_name || "Escritório Principal";
     if (!u || !p || !n) {
       setError("Preencha o nome completo, o utilizador e a palavra-passe.");
       return;
@@ -103,14 +114,24 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
           username: u,
           password: p,
           email: firstAdminEmail.trim(),
+          officeName: oName,
           appCodigo,
         }),
       });
       const data = await resp.json().catch(() => null);
       if (resp.ok && data?.ok && data?.user) {
+        const officesArr = data.offices || data.user?.offices || [];
+        try {
+          const clean = new URL(window.location.href);
+          clean.searchParams.delete("token");
+          window.history.replaceState({}, document.title, clean.pathname + clean.search + clean.hash);
+        } catch {}
         onAuthenticated({
           ...data.user,
           token: data.token,
+          client_code: data.user?.client_code || inspectedTenant?.client_code,
+          offices: officesArr,
+          preferred_office_id: inspectedTenant?.office_id || officesArr?.[0]?.officeId,
         });
         return;
       }
@@ -158,9 +179,13 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
       });
       const data = await resp.json().catch(() => null);
       if (resp.ok && data?.ok && data?.user) {
+        const officesArr = data.offices || data.user?.offices || [];
         const logged: AuthenticatedEvoUser = {
           ...data.user,
           token: data.token,
+          client_code: data.user?.client_code || inspectedTenant?.client_code,
+          offices: officesArr,
+          preferred_office_id: inspectedTenant?.office_id,
         };
         onAuthenticated(logged);
         return;
@@ -214,20 +239,33 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
           </div>
 
           {inspectedTenant && (
-            <div className="mb-4 p-3 rounded-lg bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-700 text-xs space-y-1">
+            <div className="mb-4 p-3 rounded-lg bg-sky-50 dark:bg-[#0a1929] border border-sky-300 dark:border-sky-700 text-xs space-y-1.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-sky-900 dark:text-sky-200 flex items-center gap-1.5">
-                  <Building2 size={14} />
-                  {inspectedTenant.nome_empresa}
+                <span className="font-semibold text-sky-900 dark:text-sky-200 flex items-center gap-1.5 min-w-0 truncate">
+                  <Building2 size={14} className="shrink-0" />
+                  <span className="truncate">{inspectedTenant.nome_empresa}</span>
                 </span>
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700">
-                  {inspectedTenant.token}
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 shrink-0">
+                  {inspectedTenant.office_id || inspectedTenant.token}
                 </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 text-[10.5px] font-mono text-slate-700 dark:text-slate-300">
+                <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-sky-200 dark:border-sky-800 font-semibold">
+                  {inspectedTenant.office_name || 'Escritório Principal'}
+                </span>
+                <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-sky-200 dark:border-sky-800">
+                  {inspectedTenant.max_users} vagas
+                </span>
+                {inspectedTenant.client_code && (
+                  <span className="px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-sky-200 dark:border-sky-800">
+                    Conta {inspectedTenant.client_code}
+                  </span>
+                )}
               </div>
               <div className="text-[11px] text-slate-700 dark:text-slate-300">
                 {isFirstAdminOnboarding
-                  ? "Convite validado: crie abaixo a 1.ª conta de Administrador da sua empresa."
-                  : "Ambiente ativo: inicie sessão com o seu utilizador e palavra-passe."}
+                  ? "Convite validado: defina o nome deste escritório e crie a 1.ª conta de Administrador."
+                  : "Ambiente ativo: inicie sessão com o seu utilizador (o Administrador acede automaticamente a todos os escritórios)."}
               </div>
             </div>
           )}
@@ -242,6 +280,19 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
           <form onSubmit={isFirstAdminOnboarding ? handleActivateFirstAdmin : handleSubmit} className="space-y-4">
             {isFirstAdminOnboarding && (
               <>
+                <div>
+                  <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
+                    Nome deste Escritório ({inspectedTenant?.office_id || 'Principal'})
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={firstOfficeName}
+                    onChange={(e) => setFirstOfficeName(e.target.value)}
+                    placeholder="Ex.: Escritório Sede / Maia"
+                    className="w-full px-3 py-2.5 rounded-lg border border-border bg-slate-50 dark:bg-[#07121c] text-xs text-foreground focus:outline-none focus:border-primary"
+                  />
+                </div>
                 <div>
                   <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
                     Nome Completo do Responsável

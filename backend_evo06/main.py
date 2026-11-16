@@ -5905,7 +5905,30 @@ class UnifiedEvoActivateRequest(BaseModel):
     username: str
     password: str
     email: Optional[str] = ""
+    officeName: Optional[str] = ""
     appCodigo: Optional[str] = "EVO-06"
+
+
+def _forward_evo11_headers(request: Request) -> Dict[str, str]:
+    headers: Dict[str, str] = {}
+    auth_h = request.headers.get("authorization")
+    x_tok = request.headers.get("x-auth-token")
+    if auth_h:
+        headers["Authorization"] = auth_h
+    if x_tok:
+        headers["X-Auth-Token"] = x_tok
+    return headers
+
+
+def _extract_token_from_request(request: Request, query_token: str = "") -> str:
+    raw = str(query_token or "").strip()
+    if not raw:
+        raw = str(request.headers.get("x-auth-token") or "").strip()
+    if not raw:
+        auth_h = str(request.headers.get("authorization") or "")
+        if auth_h.lower().startswith("bearer "):
+            raw = auth_h[7:].strip()
+    return raw
 
 
 @app.post("/api/auth/login")
@@ -5987,16 +6010,27 @@ def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
             u11 = data_11["user"]
             role_raw = str(u11.get("role") or "OPERADOR").upper()
             local_role = "superadmin" if role_raw == "DEV" else "admin" if role_raw == "ADMIN" else "subutilizador"
+            tok_11 = str(data_11.get("token") or "").strip()
+            offices_11 = data_11.get("offices") or u11.get("offices") or []
+            if offices_11:
+                try:
+                    auth_manager.sincronizar_escritorios_licenciados(offices_11)
+                except Exception:
+                    pass
             tok = auth_manager._criar_sessao({
                 "id": 1,
                 "username": str(u11.get("username") or u_clean),
                 "role": local_role,
-            })
+            }, token_override=tok_11 or None)
             return {
                 "ok": True,
                 "token": tok,
                 "user": u11,
+                "offices": offices_11,
             }
+        err_11 = str(data_11.get("error") or data_11.get("detail") or "")
+        if r_evo11.status_code == 403 or "escritório" in err_11.lower() or "desativada" in err_11.lower():
+            return JSONResponse(status_code=r_evo11.status_code, content={"ok": False, "error": err_11})
     except Exception:
         pass
 
@@ -6050,15 +6084,148 @@ def api_unified_evo_token_activate(req: UnifiedEvoActivateRequest):
         data = r.json()
         if r.status_code == 200 and data.get("ok") and data.get("user"):
             u11 = data["user"]
+            tok_11 = str(data.get("token") or "").strip()
+            offices_11 = data.get("offices") or u11.get("offices") or []
+            if offices_11:
+                try:
+                    auth_manager.sincronizar_escritorios_licenciados(offices_11)
+                except Exception:
+                    pass
             tok = auth_manager._criar_sessao({
                 "id": 1,
                 "username": str(u11.get("username") or req.username),
                 "role": "admin",
-            })
+            }, token_override=tok_11 or None)
             data["token"] = tok
+            data["offices"] = offices_11
         return JSONResponse(status_code=r.status_code, content=data)
     except Exception:
         return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível comunicar com o servidor de autenticação."})
+
+
+@app.get("/api/auth/verify")
+def api_unified_evo_verify(request: Request, token: str = ""):
+    """Valida a sessão ativa (gxtk. no EVO-11 :8010 ou sessão local fallback) e sincroniza escritórios licenciados."""
+    from fastapi.responses import JSONResponse
+    raw_tok = _extract_token_from_request(request, token)
+    if not raw_tok:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Token em falta."})
+
+    if raw_tok.startswith("gxtk."):
+        try:
+            r = requests.get(
+                "http://127.0.0.1:8010/api/auth/verify",
+                params={"token": raw_tok},
+                headers=_forward_evo11_headers(request),
+                timeout=3,
+            )
+            data = r.json()
+            if r.status_code == 200 and data.get("ok"):
+                offices_11 = data.get("offices") or (data.get("user") or {}).get("offices") or []
+                if offices_11:
+                    try:
+                        auth_manager.sincronizar_escritorios_licenciados(offices_11)
+                    except Exception:
+                        pass
+            return JSONResponse(status_code=r.status_code, content=data)
+        except Exception:
+            pass
+
+    u_loc = auth_manager.validar_token_sessao(raw_tok)
+    if not u_loc:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Sessão inválida ou expirada."})
+    role_loc = str(u_loc.get("role") or "subutilizador").lower()
+    mapped_role = "DEV" if role_loc == "superadmin" else "ADMIN" if role_loc == "admin" else "OPERADOR"
+    return {
+        "ok": True,
+        "user": {
+            "id": str(u_loc.get("id") or "1"),
+            "username": str(u_loc.get("username") or ""),
+            "nome": str(u_loc.get("nome") or u_loc.get("username") or ""),
+            "email": str(u_loc.get("email") or ""),
+            "role": mapped_role,
+            "client_code": str(u_loc.get("client_code") or ""),
+            "centros_permitidos": u_loc.get("centros_permitidos") or ["*"],
+            "offices": [],
+        },
+        "offices": [],
+    }
+
+
+@app.get("/api/auth/client/state")
+def api_unified_evo_client_state(request: Request, token: str = ""):
+    """Encaminha a consulta multi-escritório da conta do cliente para o EVO-11 (:8010)."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.get(
+            "http://127.0.0.1:8010/api/auth/client/state",
+            params={"token": token} if token else None,
+            headers=_forward_evo11_headers(request),
+            timeout=4,
+        )
+        data = r.json()
+        if r.status_code == 200 and data.get("ok") and data.get("offices"):
+            try:
+                auth_manager.sincronizar_escritorios_licenciados(data["offices"])
+            except Exception:
+                pass
+        return JSONResponse(status_code=r.status_code, content=data)
+    except Exception:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível comunicar com o servidor de licenças."})
+
+
+@app.post("/api/auth/client/office/update")
+def api_unified_evo_client_office_update(body: Dict[str, Any], request: Request):
+    """Atualiza o nome e caminhos do escritório licenciado no EVO-11 (:8010) e sincroniza localmente."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.post(
+            "http://127.0.0.1:8010/api/auth/client/office/update",
+            json=body,
+            headers=_forward_evo11_headers(request),
+            timeout=4,
+        )
+        data = r.json()
+        if r.status_code == 200 and data.get("ok") and data.get("offices"):
+            try:
+                auth_manager.sincronizar_escritorios_licenciados(data["offices"])
+            except Exception:
+                pass
+        return JSONResponse(status_code=r.status_code, content=data)
+    except Exception:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível atualizar o escritório no servidor central."})
+
+
+@app.post("/api/auth/client/users/save")
+def api_unified_evo_client_users_save(body: Dict[str, Any], request: Request):
+    """Cria/atualiza um utilizador da conta do cliente com validação de vagas por escritório no EVO-11 (:8010)."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.post(
+            "http://127.0.0.1:8010/api/auth/client/users/save",
+            json=body,
+            headers=_forward_evo11_headers(request),
+            timeout=4,
+        )
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível guardar o utilizador no servidor central."})
+
+
+@app.post("/api/auth/client/users/delete")
+def api_unified_evo_client_users_delete(body: Dict[str, Any], request: Request):
+    """Elimina um utilizador não-Admin da conta do cliente no EVO-11 (:8010)."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.post(
+            "http://127.0.0.1:8010/api/auth/client/users/delete",
+            json=body,
+            headers=_forward_evo11_headers(request),
+            timeout=4,
+        )
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível remover o utilizador no servidor central."})
 
 
 @app.post("/api/app/auth/login")

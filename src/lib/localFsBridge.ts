@@ -45,11 +45,99 @@ export function isWindowsPath(p?: string | null): boolean {
 }
 
 const STORAGE_KEY = 'gexcel_local_fs_centro_v1';
+const MAP_STORAGE_KEY = 'gexcel_local_fs_centros_map_v2';
+const ACTIVE_ID_STORAGE_KEY = 'gexcel_local_fs_active_id_v2';
 const IDB_NAME = 'gexcel_evogex_fs_db';
 const IDB_STORE = 'dir_handles';
 
 let activeEvogexHandle: any = null;
+let activeEvogexHandleId: string | null = null;
 let activeAntigaHandle: any = null;
+let activeAntigaHandleId: string | null = null;
+
+export function sugerirPastaEvogexPorEscritorio(officeId?: string, officeSeq?: number): string {
+  const oid = (officeId || '').trim();
+  if (!oid || oid === 'escritorio-principal' || (officeSeq !== undefined && officeSeq <= 1) || /-E01$/i.test(oid)) {
+    return 'C:\\Dados_evoGex';
+  }
+  const safeSuffix = oid.replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || `E${officeSeq || 2}`;
+  return `C:\\Dados_evoGex_${safeSuffix}`;
+}
+
+function normalizeLocalFsCentro(raw: Partial<LocalFsCentroConfig>, fallbackId = 'escritorio-principal', officeSeq?: number): LocalFsCentroConfig {
+  const cfg = { ...raw } as LocalFsCentroConfig;
+  cfg.id = (cfg.id || fallbackId || 'escritorio-principal').trim();
+  cfg.nome = (cfg.nome || 'Escritório Principal').trim();
+  cfg.hostname = (cfg.hostname || 'COMPUTADOR-LOCAL').trim();
+  if (
+    !isWindowsPath(cfg.pasta_evogex_display) ||
+    /dados_gexcelapps[\\/]dados_evogex/i.test(cfg.pasta_evogex_display)
+  ) {
+    cfg.pasta_evogex_display = sugerirPastaEvogexPorEscritorio(cfg.id, officeSeq);
+  }
+  const baseEvo = cfg.pasta_evogex_display;
+  if (!isWindowsPath(cfg.pasta_motor_display) || !cfg.pasta_motor_display.toLowerCase().startsWith(baseEvo.toLowerCase())) {
+    cfg.pasta_motor_display = `${baseEvo}\\motor`;
+  }
+  if (!isWindowsPath(cfg.pasta_v4_display) || !cfg.pasta_v4_display.toLowerCase().startsWith(baseEvo.toLowerCase())) {
+    cfg.pasta_v4_display = `${baseEvo}\\BdsefaturaV4`;
+  }
+  if (!isWindowsPath(cfg.pasta_pdfs_display) || !cfg.pasta_pdfs_display.toLowerCase().startsWith(baseEvo.toLowerCase())) {
+    cfg.pasta_pdfs_display = `${baseEvo}\\PDFs_Recibos`;
+  }
+  if (cfg.pasta_gexcel_antiga_display && !isWindowsPath(cfg.pasta_gexcel_antiga_display)) {
+    cfg.pasta_gexcel_antiga_display = '';
+  }
+  const baseAntiga = isWindowsPath(cfg.pasta_gexcel_antiga_display)
+    ? cfg.pasta_gexcel_antiga_display
+    : 'C:\\Dados_GexcelApps';
+  if (!isWindowsPath(cfg.pasta_v3_display)) {
+    cfg.pasta_v3_display = `${baseAntiga}\\BdsefaturaV3`;
+  }
+  if (!isWindowsPath(cfg.pasta_bdsrv_display)) {
+    cfg.pasta_bdsrv_display = `${baseAntiga}\\BdsRV`;
+  }
+  cfg.ligado = cfg.ligado ?? true;
+  cfg.updated_at = cfg.updated_at || new Date().toISOString();
+  return cfg;
+}
+
+function readRawCentrosMap(): Record<string, LocalFsCentroConfig> {
+  try {
+    const rawMap = localStorage.getItem(MAP_STORAGE_KEY);
+    if (rawMap) {
+      const parsed = JSON.parse(rawMap) as Record<string, Partial<LocalFsCentroConfig>>;
+      const out: Record<string, LocalFsCentroConfig> = {};
+      for (const [k, v] of Object.entries(parsed || {})) {
+        if (v && typeof v === 'object') {
+          const norm = normalizeLocalFsCentro(v, k);
+          out[norm.id] = norm;
+        }
+      }
+      return out;
+    }
+    const rawLegacy = localStorage.getItem(STORAGE_KEY);
+    if (rawLegacy) {
+      const leg = JSON.parse(rawLegacy) as Partial<LocalFsCentroConfig>;
+      const norm = normalizeLocalFsCentro(leg, leg.id || 'escritorio-principal');
+      const initMap = { [norm.id]: norm };
+      localStorage.setItem(MAP_STORAGE_KEY, JSON.stringify(initMap));
+      localStorage.setItem(ACTIVE_ID_STORAGE_KEY, norm.id);
+      return initMap;
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+function writeCentrosMap(map: Record<string, LocalFsCentroConfig>): void {
+  try {
+    localStorage.setItem(MAP_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage quota errors
+  }
+}
 
 function openIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -93,91 +181,194 @@ async function loadHandleIdb(key: string): Promise<any | null> {
   }
 }
 
+export function obterLocalFsTodosCentrosMap(): Record<string, LocalFsCentroConfig> {
+  return readRawCentrosMap();
+}
+
+export function obterLocalFsCentroPorId(officeId: string): LocalFsCentroConfig | null {
+  const oid = (officeId || '').trim();
+  if (!oid) return null;
+  const map = readRawCentrosMap();
+  return map[oid] || null;
+}
+
 export function obterLocalFsCentroConfig(): LocalFsCentroConfig | null {
   try {
+    const map = readRawCentrosMap();
+    const activeId = (localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || '').trim();
+    if (activeId && map[activeId]) {
+      return map[activeId];
+    }
+    const keys = Object.keys(map);
+    if (keys.length > 0) {
+      localStorage.setItem(ACTIVE_ID_STORAGE_KEY, keys[0]);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(map[keys[0]]));
+      return map[keys[0]];
+    }
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as LocalFsCentroConfig;
-    let dirty = false;
-
-    // Bloqueia caminhos Linux (/opt/...) ou pastas incorretas Dados_GexcelApps\Dados_evoGex
-    if (
-      !isWindowsPath(parsed.pasta_evogex_display) ||
-      /dados_gexcelapps[\\/]dados_evogex/i.test(parsed.pasta_evogex_display)
-    ) {
-      parsed.pasta_evogex_display = 'C:\\Dados_evoGex';
-      dirty = true;
-    }
-
-    const baseEvo = parsed.pasta_evogex_display;
-    if (!isWindowsPath(parsed.pasta_motor_display) || /dados_gexcelapps[\\/]dados_evogex/i.test(parsed.pasta_motor_display)) {
-      parsed.pasta_motor_display = `${baseEvo}\\motor`;
-      dirty = true;
-    }
-    if (!isWindowsPath(parsed.pasta_v4_display) || /dados_gexcelapps[\\/]dados_evogex/i.test(parsed.pasta_v4_display)) {
-      parsed.pasta_v4_display = `${baseEvo}\\BdsefaturaV4`;
-      dirty = true;
-    }
-    if (!isWindowsPath(parsed.pasta_pdfs_display) || /dados_gexcelapps[\\/]dados_evogex/i.test(parsed.pasta_pdfs_display)) {
-      parsed.pasta_pdfs_display = `${baseEvo}\\PDFs_Recibos`;
-      dirty = true;
-    }
-
-    if (parsed.pasta_gexcel_antiga_display && !isWindowsPath(parsed.pasta_gexcel_antiga_display)) {
-      parsed.pasta_gexcel_antiga_display = '';
-      dirty = true;
-    }
-
-    const baseAntiga = isWindowsPath(parsed.pasta_gexcel_antiga_display)
-      ? parsed.pasta_gexcel_antiga_display
-      : 'C:\\Dados_GexcelApps';
-
-    if (!isWindowsPath(parsed.pasta_v3_display)) {
-      parsed.pasta_v3_display = `${baseAntiga}\\BdsefaturaV3`;
-      dirty = true;
-    }
-    if (!isWindowsPath(parsed.pasta_bdsrv_display)) {
-      parsed.pasta_bdsrv_display = `${baseAntiga}\\BdsRV`;
-      dirty = true;
-    }
-
-    if (dirty) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
-    }
+    const parsed = normalizeLocalFsCentro(JSON.parse(raw) as LocalFsCentroConfig);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
     return parsed;
   } catch {
     return null;
   }
 }
 
+export function selecionarLocalFsCentroAtivo(
+  officeId: string,
+  defaults?: { nome?: string; pastaEvogex?: string; pastaGexcelAntiga?: string; officeSeq?: number }
+): LocalFsCentroConfig {
+  const oid = (officeId || 'escritorio-principal').trim();
+  const prevId = (localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || '').trim();
+  if (prevId !== oid) {
+    activeEvogexHandle = null;
+    activeEvogexHandleId = null;
+    activeAntigaHandle = null;
+    activeAntigaHandleId = null;
+  }
+  const map = readRawCentrosMap();
+  const existing = map[oid];
+  const baseEvo =
+    (existing?.evogex_confirmado && isWindowsPath(existing.pasta_evogex_display) ? existing.pasta_evogex_display : '') ||
+    (isWindowsPath(defaults?.pastaEvogex) ? defaults!.pastaEvogex! : '') ||
+    (existing && isWindowsPath(existing.pasta_evogex_display) ? existing.pasta_evogex_display : '') ||
+    sugerirPastaEvogexPorEscritorio(oid, defaults?.officeSeq);
+  const baseAnt =
+    (existing?.antiga_confirmada && isWindowsPath(existing.pasta_gexcel_antiga_display) ? existing.pasta_gexcel_antiga_display : '') ||
+    (isWindowsPath(defaults?.pastaGexcelAntiga) ? defaults!.pastaGexcelAntiga! : '') ||
+    (existing?.pasta_gexcel_antiga_display || '');
+
+  const updated = normalizeLocalFsCentro({
+    ...existing,
+    id: oid,
+    nome: defaults?.nome?.trim() || existing?.nome || 'Escritório Principal',
+    hostname: existing?.hostname || 'COMPUTADOR-LOCAL',
+    pasta_evogex_display: baseEvo,
+    pasta_gexcel_antiga_display: baseAnt,
+    evogex_confirmado: Boolean(existing?.evogex_confirmado),
+    antiga_confirmada: Boolean(existing?.antiga_confirmada || baseAnt),
+    updated_at: existing?.updated_at || new Date().toISOString(),
+  }, oid, defaults?.officeSeq);
+
+  map[oid] = updated;
+  writeCentrosMap(map);
+  localStorage.setItem(ACTIVE_ID_STORAGE_KEY, oid);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: updated }));
+  return updated;
+}
+
+export function sincronizarEscritoriosLocaisComLicenca(
+  offices: Array<{
+    officeId: string;
+    officeSeq?: number;
+    officeName?: string;
+    pastaEvogex?: string;
+    pastaGexcelAntiga?: string;
+  }>
+): LocalFsCentroConfig | null {
+  const valid = (offices || []).filter(o => o && o.officeId && o.officeId.trim().length > 0);
+  if (valid.length === 0) return obterLocalFsCentroConfig();
+  const ordered = [...valid].sort((a, b) => (a.officeSeq || 1) - (b.officeSeq || 1));
+  const map = readRawCentrosMap();
+  const legacyDefault = map['escritorio-principal'];
+  const licensedIds = new Set(ordered.map(o => o.officeId.trim()));
+
+  ordered.forEach((off, idx) => {
+    const oid = off.officeId.trim();
+    const oseq = off.officeSeq || idx + 1;
+    let existing = map[oid];
+    if (!existing && idx === 0 && legacyDefault) {
+      existing = { ...legacyDefault, id: oid };
+    }
+    const cloudEvo = isWindowsPath(off.pastaEvogex) ? off.pastaEvogex!.trim() : '';
+    const cloudAnt = isWindowsPath(off.pastaGexcelAntiga) ? off.pastaGexcelAntiga!.trim() : '';
+
+    const pastaEvoFinal =
+      (existing?.evogex_confirmado && isWindowsPath(existing.pasta_evogex_display) ? existing.pasta_evogex_display : '') ||
+      cloudEvo ||
+      (existing && isWindowsPath(existing.pasta_evogex_display) ? existing.pasta_evogex_display : '') ||
+      sugerirPastaEvogexPorEscritorio(oid, oseq);
+    const pastaAntFinal =
+      (existing?.antiga_confirmada && isWindowsPath(existing.pasta_gexcel_antiga_display) ? existing.pasta_gexcel_antiga_display : '') ||
+      cloudAnt ||
+      (existing?.pasta_gexcel_antiga_display || '');
+
+    map[oid] = normalizeLocalFsCentro({
+      ...existing,
+      id: oid,
+      nome: off.officeName?.trim() || existing?.nome || `Escritório ${oseq}`,
+      hostname: existing?.hostname || 'COMPUTADOR-LOCAL',
+      pasta_evogex_display: pastaEvoFinal,
+      pasta_gexcel_antiga_display: pastaAntFinal,
+      evogex_confirmado: Boolean(existing?.evogex_confirmado),
+      antiga_confirmada: Boolean(existing?.antiga_confirmada || pastaAntFinal),
+      updated_at: existing?.updated_at || new Date().toISOString(),
+    }, oid, oseq);
+  });
+
+  if (legacyDefault && !licensedIds.has('escritorio-principal')) {
+    delete map['escritorio-principal'];
+  }
+
+  writeCentrosMap(map);
+
+  const curActive = (localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || '').trim();
+  const activeOid = licensedIds.has(curActive) ? curActive : ordered[0].officeId.trim();
+  if (curActive !== activeOid) {
+    activeEvogexHandle = null;
+    activeEvogexHandleId = null;
+    activeAntigaHandle = null;
+    activeAntigaHandleId = null;
+  }
+  localStorage.setItem(ACTIVE_ID_STORAGE_KEY, activeOid);
+  const activeCfg = map[activeOid];
+  if (activeCfg) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(activeCfg));
+    window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: activeCfg }));
+  }
+  return activeCfg || null;
+}
+
 export function sincronizarLocalFsComAppConfig(appConfig: any): LocalFsCentroConfig {
   const atual = obterLocalFsCentroConfig();
+  const activeIdStored = (localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || '').trim();
   const centros = Array.isArray(appConfig?.centros_dados) ? appConfig.centros_dados : [];
-  const centroAtivo = centros.find((c: any) => c?.selecionado) || centros[0] || null;
+  const centroMatchingActual = activeIdStored ? centros.find((c: any) => c?.id === activeIdStored) : null;
+  const centroAtivo = centroMatchingActual || centros.find((c: any) => c?.selecionado) || centros[0] || null;
+  const preserveCloudOfficeId =
+    Boolean(activeIdStored && activeIdStored !== 'escritorio-principal' && !centroMatchingActual && atual?.id === activeIdStored);
 
-  const candidatoEvo =
-    (isWindowsPath(centroAtivo?.pasta_evogex) && !/dados_gexcelapps/i.test(centroAtivo.pasta_evogex)
-      ? centroAtivo.pasta_evogex
-      : '') ||
-    (isWindowsPath(appConfig?.centro_dados_pasta_evogex) && !/dados_gexcelapps/i.test(appConfig.centro_dados_pasta_evogex)
-      ? appConfig.centro_dados_pasta_evogex
-      : '') ||
-    (isWindowsPath(appConfig?.pasta_v4) && !/dados_gexcelapps/i.test(appConfig.pasta_v4)
-      ? String(appConfig.pasta_v4).replace(/[\\/]BdsefaturaV4[\\/]?$/i, '')
-      : '');
+  const candidatoEvo = preserveCloudOfficeId
+    ? ''
+    : (isWindowsPath(centroAtivo?.pasta_evogex) && !/dados_gexcelapps/i.test(centroAtivo.pasta_evogex)
+        ? centroAtivo.pasta_evogex
+        : '') ||
+      (isWindowsPath(appConfig?.centro_dados_pasta_evogex) && !/dados_gexcelapps/i.test(appConfig.centro_dados_pasta_evogex)
+        ? appConfig.centro_dados_pasta_evogex
+        : '') ||
+      (isWindowsPath(appConfig?.pasta_v4) && !/dados_gexcelapps/i.test(appConfig.pasta_v4)
+        ? String(appConfig.pasta_v4).replace(/[\\/]BdsefaturaV4[\\/]?$/i, '')
+        : '');
 
-  const candidatoAntiga =
-    (isWindowsPath(centroAtivo?.pasta_gexcel_antiga) ? centroAtivo.pasta_gexcel_antiga : '') ||
-    (isWindowsPath(appConfig?.centro_dados_pasta_gexcel_antiga) ? appConfig.centro_dados_pasta_gexcel_antiga : '') ||
-    (isWindowsPath(appConfig?.pasta_v3)
-      ? String(appConfig.pasta_v3).replace(/[\\/]BdsefaturaV3[\\/]?$/i, '')
-      : '');
+  const candidatoAntiga = preserveCloudOfficeId
+    ? ''
+    : (isWindowsPath(centroAtivo?.pasta_gexcel_antiga) ? centroAtivo.pasta_gexcel_antiga : '') ||
+      (isWindowsPath(appConfig?.centro_dados_pasta_gexcel_antiga) ? appConfig.centro_dados_pasta_gexcel_antiga : '') ||
+      (isWindowsPath(appConfig?.pasta_v3)
+        ? String(appConfig.pasta_v3).replace(/[\\/]BdsefaturaV3[\\/]?$/i, '')
+        : '');
+
+  const targetId = preserveCloudOfficeId
+    ? atual!.id
+    : centroAtivo?.id || atual?.id || appConfig?.centro_dados_ativo_id || 'escritorio-principal';
 
   const pastaEvoFinal =
     (atual?.evogex_confirmado && isWindowsPath(atual.pasta_evogex_display) ? atual.pasta_evogex_display : '') ||
     candidatoEvo ||
     (atual && isWindowsPath(atual.pasta_evogex_display) ? atual.pasta_evogex_display : '') ||
-    'C:\\Dados_evoGex';
+    sugerirPastaEvogexPorEscritorio(targetId);
 
   const pastaAntigaFinal =
     (atual?.antiga_confirmada && isWindowsPath(atual.pasta_gexcel_antiga_display) ? atual.pasta_gexcel_antiga_display : '') ||
@@ -187,25 +378,23 @@ export function sincronizarLocalFsComAppConfig(appConfig: any): LocalFsCentroCon
 
   const pastaV4Final =
     (isWindowsPath(atual?.pasta_v4_display) && atual?.evogex_confirmado ? atual.pasta_v4_display : '') ||
-    (isWindowsPath(appConfig?.pasta_v4) ? appConfig.pasta_v4 : '') ||
     `${pastaEvoFinal}\\BdsefaturaV4`;
 
   const baseAntigaDisplay = pastaAntigaFinal || 'C:\\Dados_GexcelApps';
   const pastaV3Final =
-    (isWindowsPath(appConfig?.pasta_v3) ? appConfig.pasta_v3 : '') ||
+    (isWindowsPath(appConfig?.pasta_v3) && !preserveCloudOfficeId ? appConfig.pasta_v3 : '') ||
     `${baseAntigaDisplay}\\BdsefaturaV3`;
   const pastaBdsrvFinal =
-    (isWindowsPath(appConfig?.pasta_bdsrv) ? appConfig.pasta_bdsrv : '') ||
+    (isWindowsPath(appConfig?.pasta_bdsrv) && !preserveCloudOfficeId ? appConfig.pasta_bdsrv : '') ||
     `${baseAntigaDisplay}\\BdsRV`;
   const pastaPdfsFinal =
     (isWindowsPath(atual?.pasta_pdfs_display) && atual?.evogex_confirmado ? atual.pasta_pdfs_display : '') ||
-    (isWindowsPath(appConfig?.pasta_pdfs) ? appConfig.pasta_pdfs : '') ||
     `${pastaEvoFinal}\\PDFs_Recibos`;
 
   const merged: LocalFsCentroConfig = {
-    id: centroAtivo?.id || appConfig?.centro_dados_ativo_id || atual?.id || 'escritorio-principal',
-    nome: centroAtivo?.nome || appConfig?.centro_dados_nome || atual?.nome || 'Escritório Principal',
-    hostname: centroAtivo?.hostname || appConfig?.centro_dados_hostname || atual?.hostname || 'COMPUTADOR-LOCAL',
+    id: targetId,
+    nome: (preserveCloudOfficeId ? atual?.nome : centroAtivo?.nome) || appConfig?.centro_dados_nome || atual?.nome || 'Escritório Principal',
+    hostname: (preserveCloudOfficeId ? atual?.hostname : centroAtivo?.hostname) || appConfig?.centro_dados_hostname || atual?.hostname || 'COMPUTADOR-LOCAL',
     pasta_evogex_display: pastaEvoFinal,
     pasta_motor_display: `${pastaEvoFinal}\\motor`,
     pasta_v4_display: pastaV4Final,
@@ -222,6 +411,10 @@ export function sincronizarLocalFsComAppConfig(appConfig: any): LocalFsCentroCon
   };
 
   try {
+    const map = readRawCentrosMap();
+    map[merged.id] = merged;
+    writeCentrosMap(map);
+    localStorage.setItem(ACTIVE_ID_STORAGE_KEY, merged.id);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
     window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: merged }));
   } catch {
@@ -258,19 +451,24 @@ export function obterResumoDestinosConfigurados(appConfig?: any): ResumoDestinos
 }
 
 export function guardarLocalFsCentroConfig(cfg: LocalFsCentroConfig): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
-  window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: cfg }));
+  const norm = normalizeLocalFsCentro(cfg, cfg.id || 'escritorio-principal');
+  const map = readRawCentrosMap();
+  map[norm.id] = norm;
+  writeCentrosMap(map);
+  localStorage.setItem(ACTIVE_ID_STORAGE_KEY, norm.id);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(norm));
+  window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: norm }));
   // Persistir também no servidor central para nunca se perder ao fechar/reabrir a aplicação
   void fetch('/api/app/centros-dados/registar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      centro_id: cfg.id || 'escritorio-principal',
-      nome: cfg.nome || 'Escritório Principal',
-      hostname: cfg.hostname || 'COMPUTADOR-LOCAL',
+      centro_id: norm.id || 'escritorio-principal',
+      nome: norm.nome || 'Escritório Principal',
+      hostname: norm.hostname || 'COMPUTADOR-LOCAL',
       ip_local: '127.0.0.1:8015',
-      pasta_evogex: cfg.pasta_evogex_display || 'C:\\Dados_evoGex',
-      pasta_gexcel_antiga: cfg.pasta_gexcel_antiga_display || '',
+      pasta_evogex: norm.pasta_evogex_display || 'C:\\Dados_evoGex',
+      pasta_gexcel_antiga: norm.pasta_gexcel_antiga_display || '',
     }),
   }).catch(() => {});
 }
@@ -317,8 +515,13 @@ async function garantirPermissaoHandle(handle: any, mode: 'read' | 'readwrite' =
 }
 
 export async function obterHandleEvogexAtivo(pedirPermissao = false): Promise<any | null> {
-  if (!activeEvogexHandle) {
-    activeEvogexHandle = await loadHandleIdb('evogex_root');
+  const curId = obterLocalFsCentroConfig()?.id || 'escritorio-principal';
+  if (!activeEvogexHandle || activeEvogexHandleId !== curId) {
+    activeEvogexHandle = await loadHandleIdb(`evogex_root::${curId}`);
+    if (!activeEvogexHandle && (curId === 'escritorio-principal' || /-E01$/i.test(curId))) {
+      activeEvogexHandle = await loadHandleIdb('evogex_root');
+    }
+    activeEvogexHandleId = activeEvogexHandle ? curId : null;
   }
   if (!activeEvogexHandle) return null;
   if (pedirPermissao) {
@@ -620,8 +823,17 @@ export async function abrirPastaNoExploradorNativo(
   if (typeof win.showDirectoryPicker !== 'function') return false;
   try {
     if (origem === 'antiga') {
-      const antHandle = activeAntigaHandle || (await loadHandleIdb('gexcel_antiga_root'));
+      const curId = obterLocalFsCentroConfig()?.id || 'escritorio-principal';
+      let antHandle = activeAntigaHandle && activeAntigaHandleId === curId ? activeAntigaHandle : null;
+      if (!antHandle) {
+        antHandle = await loadHandleIdb(`gexcel_antiga_root::${curId}`);
+        if (!antHandle && (curId === 'escritorio-principal' || /-E01$/i.test(curId))) {
+          antHandle = await loadHandleIdb('gexcel_antiga_root');
+        }
+      }
       if (antHandle) {
+        activeAntigaHandle = antHandle;
+        activeAntigaHandleId = curId;
         let targetHandle = antHandle;
         if (subpasta) {
           try {
@@ -719,6 +931,9 @@ function inferirCaminhoCompletoAntiga(pickedName: string, xmlContent: string | n
  * (BdsefaturaV4, safedrive, index_core, motor, BdsRV, PDFs) e sincroniza os SQLites.
  */
 export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
+  centroId?: string;
+  officeSeq?: number;
+  subpastaSugerida?: string;
   nomeCentro?: string;
   hostname?: string;
   caminhoProposto?: string;
@@ -735,31 +950,42 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
   }
 
   try {
+    const cfgAtivo = obterLocalFsCentroConfig();
+    const targetId = (opcoes?.centroId || cfgAtivo?.id || 'escritorio-principal').trim();
+    const cfgAlvo = obterLocalFsCentroPorId(targetId) || cfgAtivo;
+    const isPrimary = targetId === 'escritorio-principal' || /-E01$/i.test(targetId) || (opcoes?.officeSeq !== undefined && opcoes.officeSeq <= 1);
+    const defaultEvoPath = sugerirPastaEvogexPorEscritorio(targetId, opcoes?.officeSeq);
+    const prop = (opcoes?.caminhoProposto || cfgAlvo?.pasta_evogex_display || '').trim();
+    const defaultFolderName =
+      opcoes?.subpastaSugerida?.trim() ||
+      (isPrimary
+        ? 'Dados_evoGex'
+        : defaultEvoPath.split(/[\\/]/).filter(Boolean).pop() || `Dados_evoGex_${targetId.replace(/[^A-Za-z0-9_-]+/g, '_')}`);
+
     const pickedHandle = await win.showDirectoryPicker({ mode: 'readwrite' });
-    const pickedName: string = (pickedHandle.name || 'Dados_evoGex').trim();
+    const pickedName: string = (pickedHandle.name || defaultFolderName).trim();
 
     let evogexHandle = pickedHandle;
-    const prop = (opcoes?.caminhoProposto || '').trim();
-    let displayRoot = 'C:\\Dados_evoGex';
+    let displayRoot = defaultEvoPath;
 
-    if (/^dados_evogex$/i.test(pickedName)) {
+    if (/^dados_evogex/i.test(pickedName)) {
       evogexHandle = pickedHandle;
-      displayRoot = prop && /dados_evogex/i.test(prop) ? prop : 'C:\\Dados_evoGex';
+      displayRoot = prop && prop.toLowerCase().endsWith(pickedName.toLowerCase()) ? prop : `C:\\${pickedName}`;
     } else if (/^[A-Za-z]:\\?$/i.test(pickedName) || pickedName.includes('(')) {
       // Utilizador escolheu a raiz do disco (ex: "Disco Local (C:)")
-      evogexHandle = await pickedHandle.getDirectoryHandle('Dados_evoGex', { create: true });
-      displayRoot = 'C:\\Dados_evoGex';
+      evogexHandle = await pickedHandle.getDirectoryHandle(defaultFolderName, { create: true });
+      displayRoot = `C:\\${defaultFolderName}`;
     } else {
-      // Utilizador escolheu uma pasta específica onde quer criar Dados_evoGex
-      evogexHandle = await pickedHandle.getDirectoryHandle('Dados_evoGex', { create: true });
+      // Utilizador escolheu uma pasta específica onde quer criar a pasta deste escritório
+      evogexHandle = await pickedHandle.getDirectoryHandle(defaultFolderName, { create: true });
       if (prop && prop.toLowerCase().endsWith(pickedName.toLowerCase())) {
-        displayRoot = `${prop}\\Dados_evoGex`;
+        displayRoot = `${prop}\\${defaultFolderName}`;
       } else {
-        displayRoot = `C:\\${pickedName}\\Dados_evoGex`;
+        displayRoot = `C:\\${pickedName}\\${defaultFolderName}`;
       }
     }
 
-    // Criar toda a estrutura oficial automaticamente dentro de Dados_evoGex
+    // Criar toda a estrutura oficial automaticamente dentro da pasta deste escritório
     for (const sub of ['BdsefaturaV4', 'BdsefaturaV3', 'BdsRV', 'PDFs_Recibos', 'safedrive', 'index_core', 'motor', 'logs']) {
       await evogexHandle.getDirectoryHandle(sub, { create: true });
     }
@@ -767,15 +993,14 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
     // Limpar de imediato qualquer pasta 'motor\app' descompilada (.py) se tiver ficado de testes anteriores
     await limparMotorDescompiladoSeExistir(evogexHandle);
 
-    const cfgAtual = obterLocalFsCentroConfig();
-    const nomeFinal = opcoes?.nomeCentro?.trim() || cfgAtual?.nome || 'Escritório Principal';
-    const hostFinal = opcoes?.hostname?.trim() || cfgAtual?.hostname || 'COMPUTADOR-LOCAL';
+    const nomeFinal = opcoes?.nomeCentro?.trim() || cfgAlvo?.nome || 'Escritório Principal';
+    const hostFinal = opcoes?.hostname?.trim() || cfgAlvo?.hostname || 'COMPUTADOR-LOCAL';
 
-    const totalEntidades = cfgAtual?.total_entidades_carregadas || 0;
-    const pastaAntigaDisplay = cfgAtual?.pasta_gexcel_antiga_display || '';
+    const totalEntidades = cfgAlvo?.total_entidades_carregadas || 0;
+    const pastaAntigaDisplay = cfgAlvo?.pasta_gexcel_antiga_display || '';
 
     const novoCfg: LocalFsCentroConfig = {
-      id: 'escritorio-principal',
+      id: targetId,
       nome: nomeFinal,
       hostname: hostFinal,
       pasta_evogex_display: displayRoot,
@@ -787,7 +1012,7 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
       pasta_gexcel_antiga_display: pastaAntigaDisplay,
       ligado: true,
       evogex_confirmado: true,
-      antiga_confirmada: Boolean(cfgAtual?.antiga_confirmada || pastaAntigaDisplay),
+      antiga_confirmada: Boolean(cfgAlvo?.antiga_confirmada || pastaAntigaDisplay),
       total_entidades_carregadas: totalEntidades,
       updated_at: new Date().toISOString(),
     };
@@ -801,7 +1026,11 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
     );
 
     activeEvogexHandle = evogexHandle;
-    await saveHandleIdb('evogex_root', evogexHandle);
+    activeEvogexHandleId = targetId;
+    await saveHandleIdb(`evogex_root::${targetId}`, evogexHandle);
+    if (isPrimary) {
+      await saveHandleIdb('evogex_root', evogexHandle);
+    }
     guardarLocalFsCentroConfig(novoCfg);
 
     const estadoV4Local = await lerEstadoRealPastaLocalV4DeHandle(evogexHandle);
@@ -831,7 +1060,8 @@ export async function escolherEInstalarPastaDadosEvogex(opcoes?: {
  * automaticamente todas as empresas e senhas da AT para o novo sistema.
  */
 export async function escolherPastaDadosGexcelAntigos(
-  caminhoProposto?: string
+  caminhoProposto?: string,
+  centroId?: string
 ): Promise<{ ok: boolean; totalEntidades?: number; config?: LocalFsCentroConfig; erro?: string }> {
   const win = window as any;
   if (typeof win.showDirectoryPicker !== 'function') {
@@ -843,8 +1073,14 @@ export async function escolherPastaDadosGexcelAntigos(
 
   try {
     const pickedHandle = await win.showDirectoryPicker({ mode: 'readwrite' });
+    const cfgAtualPrev = (centroId ? obterLocalFsCentroPorId(centroId) : null) || obterLocalFsCentroConfig();
+    const targetId = (centroId || cfgAtualPrev?.id || 'escritorio-principal').trim();
     activeAntigaHandle = pickedHandle;
-    await saveHandleIdb('gexcel_antiga_root', pickedHandle);
+    activeAntigaHandleId = targetId;
+    await saveHandleIdb(`gexcel_antiga_root::${targetId}`, pickedHandle);
+    if (targetId === 'escritorio-principal' || /-E01$/i.test(targetId)) {
+      await saveHandleIdb('gexcel_antiga_root', pickedHandle);
+    }
 
     const pickedName: string = (pickedHandle.name || 'Dados_GexcelApps').trim();
     const xmlContent = await tentarLerTCredenciaisDeHandle(pickedHandle);
@@ -864,12 +1100,12 @@ export async function escolherPastaDadosGexcelAntigos(
       }
     }
 
-    // NUNCA colocar Dados_evoGex dentro de Dados_GexcelApps por defeito: o padrão de Dados_evoGex é sempre C:\Dados_evoGex
-    let cfgAtual = obterLocalFsCentroConfig();
-    const evoPath = cfgAtual?.pasta_evogex_display || 'C:\\Dados_evoGex';
+    // NUNCA colocar Dados_evoGex dentro de Dados_GexcelApps por defeito
+    let cfgAtual = cfgAtualPrev;
+    const evoPath = cfgAtual?.pasta_evogex_display || sugerirPastaEvogexPorEscritorio(targetId);
 
     cfgAtual = {
-      id: cfgAtual?.id || 'escritorio-principal',
+      id: targetId,
       nome: cfgAtual?.nome || 'Escritório Principal',
       hostname: cfgAtual?.hostname || 'COMPUTADOR-LOCAL',
       pasta_evogex_display: evoPath,

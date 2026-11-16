@@ -12,6 +12,8 @@ import os
 import re
 import sys
 import json
+import hmac
+import base64
 import socket
 import sqlite3
 import hashlib
@@ -24,6 +26,7 @@ from typing import Optional, Dict, List, Any
 # Chave Mestra Oficial do Programador (Superadministrador Universal)
 MASTER_KEY_PLAINTEXT = "41238886"
 SUPERADMIN_USERNAMES = ("superadmin", "dev", "victorgamboa")
+_MASTER_SECRET = b"GEXCEL_EVO_CB2027_MASTER_KEY_9463_AUTONOMOUS_V2"
 
 
 def _slugify_centro(nome: str) -> str:
@@ -106,8 +109,8 @@ def garantir_estrutura_pasta_evogex(pasta_evogex: str, pasta_gexcel_antiga: str 
         "pasta_v4": os.path.join(p_evo, "BdsefaturaV4"),
         "logs": os.path.join(p_evo, "logs"),
     }
-    # Só cria fisicamente no disco se estivermos no Windows ou caminho relativo/acessível
-    if sys.platform == "win32" or not re.match(r"^[a-zA-Z]:\\", p_evo):
+    # Só cria fisicamente no disco se estivermos no Windows com caminho explícito válido
+    if sys.platform == "win32" and p_evo:
         try:
             for k, sp in subpastas.items():
                 os.makedirs(sp, exist_ok=True)
@@ -701,29 +704,87 @@ def autenticar_utilizador(username: str, password: str) -> Optional[Dict[str, An
             "modo_master": False
         }
 
-def _criar_sessao(user: Dict[str, Any], ttl_horas: int = 48) -> str:
-    """Gera um token de sessão de 48h e garante sessão única flutuante por utilizador (escritório <-> casa)."""
-    token = secrets.token_urlsafe(32)
+def _descodificar_token_gxtk(token: str) -> Optional[Dict[str, Any]]:
+    """Valida e descodifica um token stateless HMAC SHA-256 emitido pelo Gexcel Auth Online (gxtk.<payload>.<sig>)."""
+    tok = str(token or "").strip()
+    if not tok.startswith("gxtk."):
+        return None
+    parts = tok.split(".")
+    if len(parts) != 3:
+        return None
+    _, b64_payload, sig = parts
+    expected_sig = hmac.new(_MASTER_SECRET, b64_payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_sig, sig):
+        return None
+    try:
+        padded = b64_payload + "=" * ((4 - len(b64_payload) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+    except Exception:
+        return None
+    exp = float(payload.get("exp") or 0)
+    if exp and exp < time.time():
+        return None
+    role_raw = str(payload.get("role") or "OPERADOR").upper()
+    local_role = "superadmin" if role_raw == "DEV" else "admin" if role_raw == "ADMIN" else "subutilizador"
+    office_ids = payload.get("office_ids") or [
+        str(o.get("officeId") or "").strip()
+        for o in (payload.get("offices") or [])
+        if isinstance(o, dict) and str(o.get("officeId") or "").strip()
+    ]
+    centros = ["*"] if local_role in ("superadmin", "admin") else [str(x) for x in office_ids if str(x).strip()]
+    raw_id = payload.get("id") or payload.get("uid") or 1
+    try:
+        uid_val: Any = int(raw_id)
+    except Exception:
+        uid_val = str(raw_id)
+    return {
+        "id": uid_val,
+        "username": str(payload.get("username") or payload.get("sub") or ""),
+        "nome": str(payload.get("nome") or payload.get("username") or payload.get("sub") or ""),
+        "email": str(payload.get("email") or ""),
+        "role": local_role,
+        "ativo": True,
+        "is_system": local_role == "superadmin",
+        "client_code": str(payload.get("client_code") or ""),
+        "centros_permitidos": centros,
+        "office_ids": [str(x) for x in office_ids if str(x).strip()],
+    }
+
+
+def _criar_sessao(user: Dict[str, Any], ttl_horas: int = 48, token_override: Optional[str] = None) -> str:
+    """Gera ou regista um token de sessão de 48h e garante sessão única flutuante por utilizador (escritório <-> casa)."""
+    token = (token_override or "").strip() or secrets.token_urlsafe(32)
     now = time.time()
     expires = now + (ttl_horas * 3600)
     uname_clean = str(user.get("username") or "").strip().lower()
+    try:
+        uid_int = int(user.get("id") or 1)
+    except Exception:
+        uid_int = 1
     
     db_path = obter_caminho_db_app()
     with sqlite3.connect(db_path, timeout=30) as conn:
         c = conn.cursor()
         # Limpar sessões expiradas e encerrar sessão anterior do mesmo utilizador (1 sessão ativa por conta)
         c.execute('DELETE FROM app_sessions WHERE expires_at < ? OR lower(username) = ?', (now, uname_clean))
-        c.execute('''
-            INSERT INTO app_sessions (token, user_id, username, role, created_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (token, user["id"], user["username"], user["role"], now, expires))
-        conn.commit()
+        try:
+            c.execute('''
+                INSERT INTO app_sessions (token, user_id, username, role, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (token, uid_int, user["username"], user["role"], now, expires))
+            conn.commit()
+        except Exception:
+            pass
     return token
 
+
 def validar_token_sessao(token: str) -> Optional[Dict[str, Any]]:
-    """Valida um token de sessão e retorna o utilizador correspondente."""
+    """Valida um token de sessão (local ou gxtk. emitido pelo EVO-11) e retorna o utilizador correspondente."""
     if not token:
         return None
+    gxtk_user = _descodificar_token_gxtk(token)
+    if gxtk_user is not None:
+        return gxtk_user
     now = time.time()
     db_path = obter_caminho_db_app()
     with sqlite3.connect(db_path, timeout=30) as conn:
@@ -747,6 +808,87 @@ def validar_token_sessao(token: str) -> Optional[Dict[str, Any]]:
             "is_system": bool(row[6]),
             "centros_permitidos": _parse_centros_permitidos(row[7]),
         }
+
+
+def sincronizar_escritorios_licenciados(offices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Sincroniza a tabela app_centros_dados com os escritórios licenciados devolvidos pelo EVO-11,
+    garantindo pastas Dados_evoGex isoladas lado a lado por officeId.
+    """
+    if not offices:
+        return listar_centros_dados()
+
+    ordered = sorted(
+        [o for o in offices if str(o.get("officeId") or "").strip()],
+        key=lambda o: int(o.get("officeSeq") or 1),
+    )
+    if not ordered:
+        return listar_centros_dados()
+
+    db_path = obter_caminho_db_app()
+    agora_str = datetime.now().isoformat()
+    licensed_ids = [str(o.get("officeId") or "").strip() for o in ordered]
+
+    with sqlite3.connect(db_path, timeout=30) as conn:
+        c = conn.cursor()
+        # Recuperar eventual caminho já configurado no centro legacy 'escritorio-principal' para o 1.º escritório
+        c.execute("SELECT pasta_evogex, pasta_gexcel_antiga, hostname, ip_local FROM app_centros_dados WHERE id = 'escritorio-principal'")
+        legacy_row = c.fetchone()
+
+        for idx, off in enumerate(ordered):
+            oid = str(off.get("officeId") or "").strip()
+            oseq = int(off.get("officeSeq") or (idx + 1))
+            oname = str(off.get("officeName") or f"Escritório {oseq}").strip()
+            p_evo_cloud = str(off.get("pastaEvogex") or "").strip()
+            p_ant_cloud = str(off.get("pastaGexcelAntiga") or "").strip()
+
+            c.execute("SELECT hostname, pasta_evogex, pasta_gexcel_antiga, ip_local FROM app_centros_dados WHERE id = ?", (oid,))
+            existing = c.fetchone()
+
+            if existing:
+                hname = existing[0] or "SERVIDOR-ESCRITORIO"
+                p_evo = p_evo_cloud or existing[1] or ""
+                p_ant = p_ant_cloud or existing[2] or ""
+                ip_loc = existing[3] or "127.0.0.1:8015"
+            else:
+                hname = (legacy_row[2] if (legacy_row and idx == 0) else "") or "SERVIDOR-ESCRITORIO"
+                p_evo = p_evo_cloud or (legacy_row[0] if (legacy_row and idx == 0 and legacy_row[0]) else "")
+                p_ant = p_ant_cloud or (legacy_row[1] if (legacy_row and idx == 0 and legacy_row[1]) else "")
+                ip_loc = (legacy_row[3] if (legacy_row and idx == 0) else "") or "127.0.0.1:8015"
+
+            if not p_evo:
+                if oseq <= 1:
+                    p_evo = r"C:\Dados_evoGex"
+                else:
+                    safe_oid = re.sub(r"[^a-zA-Z0-9_-]+", "_", oid).strip("_") or f"E{oseq:02d}"
+                    p_evo = rf"C:\Dados_evoGex_{safe_oid}"
+
+            c.execute('''
+                INSERT INTO app_centros_dados (id, nome, hostname, pasta_evogex, pasta_gexcel_antiga, ip_local, ativo, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    nome = excluded.nome,
+                    pasta_evogex = CASE WHEN excluded.pasta_evogex != '' THEN excluded.pasta_evogex ELSE app_centros_dados.pasta_evogex END,
+                    pasta_gexcel_antiga = CASE WHEN excluded.pasta_gexcel_antiga != '' THEN excluded.pasta_gexcel_antiga ELSE app_centros_dados.pasta_gexcel_antiga END,
+                    ativo = 1,
+                    updated_at = excluded.updated_at
+            ''', (oid, oname, hname, p_evo, p_ant, ip_loc, agora_str, agora_str))
+
+        if legacy_row and "escritorio-principal" not in licensed_ids:
+            c.execute("DELETE FROM app_centros_dados WHERE id = 'escritorio-principal'")
+
+        c.execute("SELECT valor FROM app_config WHERE chave = 'centro_dados_ativo_id'")
+        r_ativo = c.fetchone()
+        if not r_ativo or r_ativo[0] not in licensed_ids:
+            c.execute('''
+                INSERT INTO app_config (chave, valor, updated_at)
+                VALUES ('centro_dados_ativo_id', ?, ?)
+                ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor, updated_at = excluded.updated_at
+            ''', (licensed_ids[0], agora_str))
+
+        conn.commit()
+
+    return listar_centros_dados()
 
 def terminar_sessao(token: str):
     """Termina a sessão ativa removendo o token."""
