@@ -478,7 +478,7 @@ export function MapasResumoView({
         tipo: tipoOperacao,
         nif: nifSelecionado,
         ano: String(ano),
-        apenas_ano_emissao: 'false',
+        apenas_ano_emissao: 'true',
         limite: '15000',
         offset: '0',
         ordenar_por: 'dta_emissao',
@@ -531,6 +531,24 @@ export function MapasResumoView({
       if (resRv.ok) {
         const jsonRv = await resRv.json();
         todosDocsRv = Array.isArray(jsonRv.linhas) ? jsonRv.linhas : [];
+        const totalDocsRv = Number(jsonRv.total_documentos || 0);
+
+        if (totalDocsRv > todosDocsRv.length) {
+          let offsetRv = todosDocsRv.length;
+          while (offsetRv < totalDocsRv && offsetRv < 100000) {
+            const nextParamsRv = new URLSearchParams(paramsRv);
+            nextParamsRv.set('offset', String(offsetRv));
+            const nextResRv = await fetch(
+              `http://127.0.0.1:8015/api/recibos-verdes/consultar?${nextParamsRv.toString()}`
+            );
+            if (!nextResRv.ok) break;
+            const nextJsonRv = await nextResRv.json();
+            const batchRv: DocumentoRV[] = Array.isArray(nextJsonRv.linhas) ? nextJsonRv.linhas : [];
+            if (batchRv.length === 0) break;
+            todosDocsRv = todosDocsRv.concat(batchRv);
+            offsetRv += batchRv.length;
+          }
+        }
       }
 
       if (reqId !== reqCounterRef.current) return;
@@ -1076,11 +1094,11 @@ export function MapasResumoView({
     const sitRvSet = new Set<string>();
     const mapRv = new Map<number, Record<string, number>>();
     for (const rv of docsRVBase) {
-      const anoRef = rv.ano_emissao > 1900 ? rv.ano_emissao : rv.ano_efetivo;
-      if (anoRef && anoRef !== ano) continue;
+      const anoRef = rv.ano_efetivo > 1900 ? rv.ano_efetivo : rv.ano_emissao;
+      if (!anoRef || anoRef !== ano) continue;
       const sit = (rv.situacao || '').trim() || '(em branco)';
       sitRvSet.add(sit);
-      const m = rv.mes_emissao >= 1 && rv.mes_emissao <= 12 ? rv.mes_emissao : rv.mes_efetivo || 0;
+      const m = rv.mes_efetivo >= 1 && rv.mes_efetivo <= 12 ? rv.mes_efetivo : rv.mes_emissao || 0;
       const row = mapRv.get(m) || {};
       row[sit] = (row[sit] || 0) + 1;
       mapRv.set(m, row);
@@ -1131,7 +1149,10 @@ export function MapasResumoView({
   const dadosRetencoesIrs = useMemo(() => {
     const q = pesquisa.trim().toLowerCase();
     const filtrados = docsRVBase.filter(rv => {
-      const mesRef = rv.mes_emissao > 0 ? rv.mes_emissao : rv.mes_efetivo;
+      const anoRef = rv.ano_efetivo > 1900 ? rv.ano_efetivo : rv.ano_emissao;
+      if (!anoRef || anoRef !== ano) return false;
+
+      const mesRef = rv.mes_efetivo > 0 ? rv.mes_efetivo : rv.mes_emissao;
       if (mesesPermitidos && !mesesPermitidos.has(mesRef)) return false;
 
       const isRenda = rv.categoria === 'renda' || rv.tipo_doc === 'RECIBO-RENDA';
@@ -1228,7 +1249,7 @@ export function MapasResumoView({
     }
 
     return { lista, totais };
-  }, [docsRVBase, mesesPermitidos, filtroTipoRV, filtroSituacaoIRS, pesquisa, sortConfig.retencoes_irs]);
+  }, [docsRVBase, ano, mesesPermitidos, filtroTipoRV, filtroSituacaoIRS, pesquisa, sortConfig.retencoes_irs]);
 
   const temFiltrosAtivos = Boolean(
     mesFiltro !== null ||
