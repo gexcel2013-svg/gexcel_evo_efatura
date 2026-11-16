@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Lock, User, ShieldAlert, ArrowRight, Sun, Moon, ShieldCheck, KeyRound, Building2, Mail } from "lucide-react";
+import { Lock, User, ShieldAlert, ArrowRight, Sun, Moon, ShieldCheck, KeyRound, Building2, Mail, Phone } from "lucide-react";
+import { validateEmail, validatePhone } from "../lib/contactValidation";
 
 export interface AuthenticatedEvoUser {
   id: string;
@@ -7,6 +8,7 @@ export interface AuthenticatedEvoUser {
   nome: string;
   role: string;
   email: string;
+  telefone?: string;
   token?: string;
   client_code?: string;
   offices?: any[];
@@ -65,6 +67,7 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
   const [inspectedTenant, setInspectedTenant] = useState<InspectedTenant | null>(null);
   const [firstAdminNome, setFirstAdminNome] = useState("");
   const [firstAdminEmail, setFirstAdminEmail] = useState("");
+  const [firstAdminTelefone, setFirstAdminTelefone] = useState("");
   const [firstOfficeName, setFirstOfficeName] = useState("Escritório Principal");
 
   useEffect(() => {
@@ -97,6 +100,16 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
       setError("Preencha o nome completo, o utilizador e a palavra-passe.");
       return;
     }
+    const checkEmail = validateEmail(firstAdminEmail);
+    if (!checkEmail.valid) {
+      setError(checkEmail.error);
+      return;
+    }
+    const checkPhone = validatePhone(firstAdminTelefone, true);
+    if (!checkPhone.valid) {
+      setError(checkPhone.error);
+      return;
+    }
     if (BLOCKED_DEV_IDENTIFIERS.has(u.toLowerCase())) {
       setError("Por motivos de segurança, identificadores de desenvolvimento não podem ser utilizados.");
       return;
@@ -113,7 +126,8 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
           nome: n,
           username: u,
           password: p,
-          email: firstAdminEmail.trim(),
+          email: checkEmail.normalized,
+          telefone: checkPhone.normalized,
           officeName: oName,
           appCodigo,
         }),
@@ -308,18 +322,38 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
                 </div>
                 <div>
                   <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
-                    E-mail Profissional (Opcional)
+                    E-mail Profissional *
                   </label>
                   <div className="relative">
                     <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input
                       type="email"
+                      required
                       value={firstAdminEmail}
                       onChange={(e) => setFirstAdminEmail(e.target.value)}
                       placeholder="nome@empresa.pt"
                       className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-border bg-slate-50 dark:bg-[#07121c] text-xs font-mono text-foreground focus:outline-none focus:border-primary"
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
+                    Telemóvel / WhatsApp Direto *
+                  </label>
+                  <div className="relative">
+                    <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="tel"
+                      required
+                      value={firstAdminTelefone}
+                      onChange={(e) => setFirstAdminTelefone(e.target.value)}
+                      placeholder="+351 912 345 678"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-border bg-slate-50 dark:bg-[#07121c] text-xs font-mono text-foreground focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                  <p className="mt-1 font-mono text-[10px] text-slate-600 dark:text-slate-400">
+                    Contacto rápido para apoio técnico e avisos importantes via WhatsApp/E-mail.
+                  </p>
                 </div>
               </>
             )}

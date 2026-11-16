@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Sidebar, MobileBottomNav } from './components/Sidebar';
+import { InicioHubView } from './components/InicioHubView';
 import CommandCenter from './components/CommandCenter';
 import { RecibosVerdesView } from './components/RecibosVerdesView';
 import { InconformidadesView } from './components/InconformidadesView';
@@ -132,7 +133,8 @@ function AppContent() {
     return 'dark'; // Dark como padrão de fábrica
   });
 
-  const [activeTab, setActiveTab] = useState<string>('matriz');
+  const [activeTab, setActiveTab] = useState<string>('inicio');
+  const [startHubUnreadCount, setStartHubUnreadCount] = useState<number>(0);
   const [selectedCount, setSelectedCount] = useState<number>(0);
   const [totalCount, setTotalCount] = useState<number>(0);
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
@@ -359,13 +361,22 @@ function AppContent() {
           centrosDisponiveis={centrosDisponiveis}
           centroAtivoId={centroAtivo?.id}
           onSelecionarCentro={handleSelecionarCentro}
+          startHubUnreadCount={startHubUnreadCount}
         />
       </div>
 
       {/* Área Principal de Trabalho Delimitada (z-10) */}
       <main className="flex-1 flex flex-col p-2 sm:p-3.5 min-h-0 overflow-hidden relative z-10">
         <div key={centroKey} className="flex-1 flex flex-col min-h-0 overflow-y-auto md:overflow-hidden">
-          {activeTab === 'recibos' ? (
+          {activeTab === 'inicio' ? (
+            <InicioHubView
+              ano={anoGlobal}
+              modoPrivacidade={modoPrivacidade}
+              onNavigateTab={setActiveTab}
+              onNavegarParaDados={handleNavegarParaDados}
+              onUnreadCountChange={setStartHubUnreadCount}
+            />
+          ) : activeTab === 'recibos' ? (
             <RecibosVerdesView
               ano={anoGlobal}
               onAnoChange={setAnoGlobal}
@@ -428,6 +439,7 @@ function AppContent() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         totalCount={totalCount}
+        startHubUnreadCount={startHubUnreadCount}
       />
 
       {/* Modais Globais de Autenticação e Configuração Inicial */}

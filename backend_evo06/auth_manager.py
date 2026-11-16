@@ -209,6 +209,10 @@ def inicializar_db_app():
             c.execute("ALTER TABLE app_users ADD COLUMN centros_permitidos TEXT DEFAULT '*'")
         except Exception:
             pass
+        try:
+            c.execute("ALTER TABLE app_users ADD COLUMN telefone TEXT DEFAULT ''")
+        except Exception:
+            pass
         
         # 3. Tabela de Sessões Ativas
         c.execute('''
@@ -623,6 +627,48 @@ def definir_modo_dados(novo_modo: str) -> Dict[str, Any]:
 # AUTENTICAÇÃO E SESSÕES
 # ==============================================================================
 
+_FAKE_PHONES = {
+    "000000000", "111111111", "222222222", "333333333", "444444444",
+    "555555555", "666666666", "777777777", "888888888", "999999999",
+    "123456789", "987654321", "912345678", "911111111", "910000000",
+    "960000000", "930000000", "920000000", "210000000", "220000000",
+}
+
+
+def _validar_email_obrigatorio(email: str) -> str:
+    clean = str(email or "").strip().lower()
+    if not clean or not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$", clean):
+        raise ValueError("Indique um e-mail profissional válido (campo obrigatório).")
+    return clean
+
+
+def _validar_telemovel_contacto(telefone: str, obrigatorio: bool = False) -> str:
+    txt = str(telefone or "").strip()
+    if not txt:
+        if obrigatorio:
+            raise ValueError("O telemóvel / WhatsApp é obrigatório para o Administrador.")
+        return ""
+    cleaned = re.sub(r"[\s\-.()]", "", txt)
+    if cleaned.startswith("00") and len(cleaned) >= 11:
+        cleaned = "+" + cleaned[2:]
+    local_pt = cleaned
+    if local_pt.startswith("+351"):
+        local_pt = local_pt[4:]
+    elif not local_pt.startswith("+") and local_pt.startswith("351") and len(local_pt) == 12:
+        local_pt = local_pt[3:]
+    if re.match(r"^\d{9}$", local_pt):
+        if local_pt in _FAKE_PHONES or len(set(local_pt)) <= 2 or bool(re.search(r"(\d)\1{6,}", local_pt)):
+            raise ValueError("O número de telefone indicado parece inválido ou fictício.")
+        if not (re.match(r"^(91|92|93|96)\d{7}$", local_pt) or re.match(r"^2\d{8}$", local_pt)):
+            raise ValueError("Indique um telemóvel (91/92/93/96) ou fixo (2...) válido de 9 dígitos.")
+        return f"+351{local_pt}"
+    if re.match(r"^\+\d{9,15}$", cleaned):
+        if len(set(cleaned[1:])) <= 2 or bool(re.search(r"(\d)\1{6,}", cleaned[1:])):
+            raise ValueError("O número internacional indicado parece fictício.")
+        return cleaned
+    raise ValueError("O número de telefone deve ter 9 dígitos válidos (ex.: 912 345 678 ou +351...).")
+
+
 def autenticar_utilizador(username: str, password: str) -> Optional[Dict[str, Any]]:
     """
     Autentica um utilizador local ou valida a Chave Mestra do Superadministrador.
@@ -638,6 +684,7 @@ def autenticar_utilizador(username: str, password: str) -> Optional[Dict[str, An
             "username": "superadmin",
             "nome": "Victor Gamboa (Superadmin)",
             "email": "admin@gexcel.pt",
+            "telefone": "",
             "role": "superadmin",
             "is_system": 1,
             "centros_permitidos": ["*"],
@@ -654,7 +701,7 @@ def autenticar_utilizador(username: str, password: str) -> Optional[Dict[str, An
     with sqlite3.connect(db_path, timeout=30) as conn:
         c = conn.cursor()
         c.execute('''
-            SELECT id, username, nome, email, password_hash, role, ativo, is_system, centros_permitidos
+            SELECT id, username, nome, email, COALESCE(telefone, ''), password_hash, role, ativo, is_system, centros_permitidos
             FROM app_users 
             WHERE lower(username) = ?
         ''', (u_clean,))
@@ -662,7 +709,7 @@ def autenticar_utilizador(username: str, password: str) -> Optional[Dict[str, An
         if not row:
             return None
             
-        uid, uname, nome, email, pwd_hash, role, ativo, is_sys, centros_raw = row
+        uid, uname, nome, email, telefone, pwd_hash, role, ativo, is_sys, centros_raw = row
         if not ativo:
             raise PermissionError("Esta conta de utilizador encontra-se inativa ou desativada.")
             
@@ -693,6 +740,7 @@ def autenticar_utilizador(username: str, password: str) -> Optional[Dict[str, An
             "username": uname,
             "nome": nome,
             "email": email,
+            "telefone": telefone or "",
             "role": role,
             "is_system": bool(is_sys),
             "centros_permitidos": centros_list,
@@ -742,6 +790,7 @@ def _descodificar_token_gxtk(token: str) -> Optional[Dict[str, Any]]:
         "username": str(payload.get("username") or payload.get("sub") or ""),
         "nome": str(payload.get("nome") or payload.get("username") or payload.get("sub") or ""),
         "email": str(payload.get("email") or ""),
+        "telefone": str(payload.get("telefone") or ""),
         "role": local_role,
         "ativo": True,
         "is_system": local_role == "superadmin",
@@ -790,7 +839,7 @@ def validar_token_sessao(token: str) -> Optional[Dict[str, Any]]:
     with sqlite3.connect(db_path, timeout=30) as conn:
         c = conn.cursor()
         c.execute('''
-            SELECT u.id, u.username, u.nome, u.email, u.role, u.ativo, u.is_system, u.centros_permitidos
+            SELECT u.id, u.username, u.nome, u.email, COALESCE(u.telefone, ''), u.role, u.ativo, u.is_system, u.centros_permitidos
             FROM app_sessions s
             JOIN app_users u ON s.user_id = u.id
             WHERE s.token = ? AND s.expires_at > ? AND u.ativo = 1
@@ -803,10 +852,11 @@ def validar_token_sessao(token: str) -> Optional[Dict[str, Any]]:
             "username": row[1],
             "nome": row[2],
             "email": row[3],
-            "role": row[4],
-            "ativo": bool(row[5]),
-            "is_system": bool(row[6]),
-            "centros_permitidos": _parse_centros_permitidos(row[7]),
+            "telefone": row[4] or "",
+            "role": row[5],
+            "ativo": bool(row[6]),
+            "is_system": bool(row[7]),
+            "centros_permitidos": _parse_centros_permitidos(row[8]),
         }
 
 
@@ -910,9 +960,9 @@ def listar_utilizadores(incluir_superadmin: bool = False) -> List[Dict[str, Any]
     with sqlite3.connect(db_path, timeout=30) as conn:
         c = conn.cursor()
         if incluir_superadmin:
-            c.execute('SELECT id, username, nome, email, role, ativo, is_system, created_at, ultimo_login, centros_permitidos FROM app_users ORDER BY id ASC')
+            c.execute('SELECT id, username, nome, email, COALESCE(telefone, ""), role, ativo, is_system, created_at, ultimo_login, centros_permitidos FROM app_users ORDER BY id ASC')
         else:
-            c.execute("SELECT id, username, nome, email, role, ativo, is_system, created_at, ultimo_login, centros_permitidos FROM app_users WHERE role != 'superadmin' AND is_system = 0 ORDER BY id ASC")
+            c.execute("SELECT id, username, nome, email, COALESCE(telefone, ''), role, ativo, is_system, created_at, ultimo_login, centros_permitidos FROM app_users WHERE role != 'superadmin' AND is_system = 0 ORDER BY id ASC")
         rows = c.fetchall()
         
     resultado = []
@@ -922,12 +972,13 @@ def listar_utilizadores(incluir_superadmin: bool = False) -> List[Dict[str, Any]
             "username": r[1],
             "nome": r[2],
             "email": r[3],
-            "role": r[4],
-            "ativo": bool(r[5]),
-            "is_system": bool(r[6]),
-            "created_at": r[7],
-            "ultimo_login": r[8],
-            "centros_permitidos": _parse_centros_permitidos(r[9]),
+            "telefone": r[4] or "",
+            "role": r[5],
+            "ativo": bool(r[6]),
+            "is_system": bool(r[7]),
+            "created_at": r[8],
+            "ultimo_login": r[9],
+            "centros_permitidos": _parse_centros_permitidos(r[10]),
         })
     return resultado
 
@@ -937,10 +988,11 @@ def criar_utilizador(
     password: str,
     role: str = "subutilizador",
     email: str = "",
+    telefone: str = "",
     centros_permitidos: Optional[List[str]] = None,
     caller_token: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Cria um novo utilizador local com validação estrita de RBAC e centros de dados autorizados."""
+    """Cria um novo utilizador local com validação estrita de RBAC, contactos obrigatórios e centros autorizados."""
     u_clean = username.strip().lower()
     if not u_clean or len(u_clean) < 3:
         raise ValueError("O nome de utilizador deve ter pelo menos 3 caracteres.")
@@ -950,6 +1002,8 @@ def criar_utilizador(
         raise ValueError("Perfil inválido. Escolha 'admin' ou 'subutilizador'.")
     if u_clean in SUPERADMIN_USERNAMES:
         raise ValueError("Este nome de utilizador está reservado para o sistema.")
+    email_limpo = _validar_email_obrigatorio(email)
+    telefone_limpo = _validar_telemovel_contacto(telefone, obrigatorio=(role == "admin"))
 
     if caller_token:
         caller = validar_token_sessao(caller_token)
@@ -968,9 +1022,9 @@ def criar_utilizador(
         c = conn.cursor()
         try:
             c.execute('''
-                INSERT INTO app_users (username, nome, email, password_hash, role, ativo, is_system, centros_permitidos, created_at)
-                VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)
-            ''', (u_clean, nome.strip(), email.strip(), hash_pwd, role, centros_str, agora_str))
+                INSERT INTO app_users (username, nome, email, telefone, password_hash, role, ativo, is_system, centros_permitidos, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
+            ''', (u_clean, nome.strip(), email_limpo, telefone_limpo, hash_pwd, role, centros_str, agora_str))
             new_id = c.lastrowid
             conn.commit()
         except sqlite3.IntegrityError:
@@ -980,7 +1034,8 @@ def criar_utilizador(
         "id": new_id,
         "username": u_clean,
         "nome": nome.strip(),
-        "email": email.strip(),
+        "email": email_limpo,
+        "telefone": telefone_limpo,
         "role": role,
         "ativo": True,
         "centros_permitidos": _parse_centros_permitidos(centros_str),
@@ -990,7 +1045,8 @@ def criar_utilizador(
 def atualizar_utilizador(
     user_id: int,
     nome: Optional[str] = None,
-    email: Optional[str] = None, 
+    email: Optional[str] = None,
+    telefone: Optional[str] = None,
     role: Optional[str] = None,
     ativo: Optional[bool] = None, 
     nova_password: Optional[str] = None,
@@ -1041,7 +1097,11 @@ def atualizar_utilizador(
             params.append(nome.strip())
         if email is not None:
             updates.append("email = ?")
-            params.append(email.strip())
+            params.append(_validar_email_obrigatorio(email))
+        if telefone is not None:
+            role_eff = role or cur_role
+            updates.append("telefone = ?")
+            params.append(_validar_telemovel_contacto(telefone, obrigatorio=(role_eff == "admin")))
         if role is not None and not is_sys and cur_role != "superadmin":
             if role in ("superadmin", "admin", "subutilizador"):
                 updates.append("role = ?")

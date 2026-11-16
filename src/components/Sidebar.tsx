@@ -23,7 +23,8 @@ import {
   LayoutGrid,
   ExternalLink,
   Menu,
-  X
+  X,
+  Home
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import type { CentroDadosItem } from '../types/auth';
@@ -49,6 +50,7 @@ interface SidebarProps {
   centrosDisponiveis?: CentroDadosItem[];
   centroAtivoId?: string;
   onSelecionarCentro?: (centroId: string) => void;
+  startHubUnreadCount?: number;
 }
 
 export function Sidebar({
@@ -69,6 +71,7 @@ export function Sidebar({
   centrosDisponiveis = [],
   centroAtivoId,
   onSelecionarCentro,
+  startHubUnreadCount = 0,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem('gexcel_sidebar_collapsed') === 'true';
@@ -107,6 +110,12 @@ export function Sidebar({
     : basePainelUrl;
 
   const navItems = [
+    {
+      id: 'inicio',
+      label: 'Início',
+      icon: <Home className="w-4 h-4 shrink-0" />,
+      badge: startHubUnreadCount > 0 ? String(startHubUnreadCount) : undefined,
+    },
     {
       id: 'matriz',
       label: 'e-Fatura',
@@ -172,16 +181,11 @@ export function Sidebar({
           >
             <Menu className="w-4 h-4" />
           </button>
-          <div className="w-7 h-7 rounded-md bg-white dark:bg-[#07121c] border border-border flex items-center justify-center p-0.5 shadow-2xs shrink-0 overflow-hidden">
+          <div className="w-7 h-7 rounded-md bg-white border border-border flex items-center justify-center p-0.5 shadow-2xs shrink-0 overflow-hidden">
             <img
               src="/evogex_simbolo_fundo_branco.png"
               alt="evoGex.com"
-              className="w-full h-full object-contain dark:hidden"
-            />
-            <img
-              src="/evogex_simbolo_fundo_dark.png"
-              alt="evoGex.com"
-              className="w-full h-full object-contain hidden dark:block"
+              className="w-full h-full object-contain"
             />
           </div>
           <div className="flex flex-col min-w-0">
@@ -244,9 +248,8 @@ export function Sidebar({
             <div className="p-3 border-b border-border/80 bg-white dark:bg-[#0c1520]">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2.5 overflow-hidden">
-                  <div className="w-8 h-8 rounded-lg bg-white dark:bg-[#07121c] border border-border flex items-center justify-center p-0.5 shadow-sm shrink-0 overflow-hidden">
-                    <img src="/evogex_simbolo_fundo_branco.png" alt="evoGex.com" className="w-full h-full object-contain dark:hidden" />
-                    <img src="/evogex_simbolo_fundo_dark.png" alt="evoGex.com" className="w-full h-full object-contain hidden dark:block" />
+                  <div className="w-8 h-8 rounded-lg bg-white border border-border flex items-center justify-center p-0.5 shadow-sm shrink-0 overflow-hidden">
+                    <img src="/evogex_simbolo_fundo_branco.png" alt="evoGex.com" className="w-full h-full object-contain" />
                   </div>
                   <div className="flex flex-col min-w-0">
                     <span className="font-display font-light text-sm tracking-tight text-foreground truncate">
@@ -426,16 +429,11 @@ export function Sidebar({
       <div className="p-3 border-b border-border/80 bg-white dark:bg-[#0c1520]">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2.5 overflow-hidden">
-            <div className="w-8 h-8 rounded-lg bg-[#ffffff] dark:bg-[#07121c] border border-border flex items-center justify-center p-0.5 shadow-sm shrink-0 overflow-hidden">
+            <div className="w-8 h-8 rounded-lg bg-white border border-border flex items-center justify-center p-0.5 shadow-sm shrink-0 overflow-hidden">
               <img
                 src="/evogex_simbolo_fundo_branco.png"
                 alt="evoGex.com"
-                className="w-full h-full object-contain dark:hidden"
-              />
-              <img
-                src="/evogex_simbolo_fundo_dark.png"
-                alt="evoGex.com"
-                className="w-full h-full object-contain hidden dark:block"
+                className="w-full h-full object-contain"
               />
             </div>
             {!collapsed && (
@@ -727,16 +725,17 @@ interface MobileBottomNavProps {
   activeTab: string;
   onSelectTab: (tab: string) => void;
   totalCount: number;
+  startHubUnreadCount?: number;
 }
 
-export function MobileBottomNav({ activeTab, onSelectTab, totalCount }: MobileBottomNavProps) {
+export function MobileBottomNav({ activeTab, onSelectTab, totalCount, startHubUnreadCount = 0 }: MobileBottomNavProps) {
   const mobileTabs = [
+    { id: 'inicio', label: 'Início', icon: Home, badge: startHubUnreadCount > 0 ? startHubUnreadCount : undefined },
     { id: 'matriz', label: 'e-Fatura', icon: Table2, badge: totalCount > 0 ? totalCount : undefined },
     { id: 'recibos', label: 'Recibos', icon: FileText },
     { id: 'anulados', label: 'Anulados', icon: ShieldAlert },
     { id: 'faturas', label: 'Dados', icon: FileSpreadsheet },
     { id: 'mapas_resumo', label: 'Mapas', icon: BarChart3 },
-    { id: 'agendador', label: 'Agenda', icon: Calendar },
   ];
 
   return (

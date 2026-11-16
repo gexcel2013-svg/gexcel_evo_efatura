@@ -39,6 +39,7 @@ import scheduler
 from scheduler import SCHEDULER_ENGINE
 import cofre_ledger
 import auth_manager
+import start_hub_evo06
 import pipeline_worker
 
 # -------------------------------------------------------------------------
@@ -5488,11 +5489,13 @@ class AppCriarUserRequest(BaseModel):
     password: str
     role: str = "subutilizador"
     email: Optional[str] = ""
+    telefone: Optional[str] = ""
     centros_permitidos: Optional[List[str]] = None
 
 class AppAtualizarUserRequest(BaseModel):
     nome: Optional[str] = None
     email: Optional[str] = None
+    telefone: Optional[str] = None
     role: Optional[str] = None
     ativo: Optional[bool] = None
     nova_password: Optional[str] = None
@@ -5905,6 +5908,7 @@ class UnifiedEvoActivateRequest(BaseModel):
     username: str
     password: str
     email: Optional[str] = ""
+    telefone: Optional[str] = ""
     officeName: Optional[str] = ""
     appCodigo: Optional[str] = "EVO-06"
 
@@ -6291,6 +6295,7 @@ def api_app_criar_user(
             password=req.password,
             role=req.role,
             email=req.email or "",
+            telefone=req.telefone or "",
             centros_permitidos=req.centros_permitidos,
             caller_token=operador.get("token")
         )
@@ -6316,6 +6321,7 @@ def api_app_atualizar_user(
             user_id=user_id,
             nome=req.nome,
             email=req.email,
+            telefone=req.telefone,
             role=req.role,
             ativo=req.ativo,
             nova_password=req.nova_password,
@@ -6349,6 +6355,108 @@ def api_app_eliminar_user(
         raise HTTPException(status_code=403, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class StartHubMarkReadPayload(BaseModel):
+    notification_ids: List[str] = []
+    mark_all: bool = False
+
+
+class StartHubSubmitRatingPayload(BaseModel):
+    stars: int = 5
+    comment: Optional[str] = ""
+    app_version: Optional[str] = ""
+    version_context: Optional[str] = "ATUAL"
+    operator_name: Optional[str] = ""
+    client_nif: Optional[str] = ""
+    client_name: Optional[str] = ""
+    office_id: Optional[str] = ""
+    dificuldades: List[str] = []
+    frequencia: Optional[str] = ""
+    pediu_contacto: bool = False
+    contacto_nome: Optional[str] = ""
+    contacto_telefone: Optional[str] = ""
+    contacto_email: Optional[str] = ""
+    horario_preferencial: Optional[str] = ""
+
+
+class StartHubSubmitLogicReportPayload(BaseModel):
+    category: str = "REGRA_EFATURA"
+    subject: str
+    expected_behavior: str
+    actual_behavior: Optional[str] = ""
+    app_version: Optional[str] = ""
+    version_context: Optional[str] = "ATUAL"
+    operator_name: Optional[str] = ""
+    client_nif: Optional[str] = ""
+    client_name: Optional[str] = ""
+    office_id: Optional[str] = ""
+    pediu_contacto: bool = True
+    contacto_nome: Optional[str] = ""
+    contacto_telefone: Optional[str] = ""
+    contacto_email: Optional[str] = ""
+    horario_preferencial: Optional[str] = ""
+
+
+@app.get("/api/start-hub/overview")
+def api_evo06_start_hub_overview(refresh: bool = False):
+    return start_hub_evo06.start_hub_evo06.get_overview(refresh_remote=refresh)
+
+
+@app.post("/api/start-hub/notifications/read")
+def api_evo06_start_hub_mark_read(payload: StartHubMarkReadPayload):
+    return start_hub_evo06.start_hub_evo06.mark_notifications_read(
+        notification_ids=payload.notification_ids,
+        mark_all=payload.mark_all,
+    )
+
+
+@app.post("/api/start-hub/rating")
+def api_evo06_start_hub_rating(payload: StartHubSubmitRatingPayload):
+    try:
+        return start_hub_evo06.start_hub_evo06.submit_rating(
+            stars=payload.stars,
+            comment=payload.comment or "",
+            app_version=payload.app_version or "",
+            version_context=payload.version_context or "ATUAL",
+            operator_name=payload.operator_name or "",
+            client_nif=payload.client_nif or "",
+            client_name=payload.client_name or "",
+            office_id=payload.office_id or "",
+            dificuldades=payload.dificuldades,
+            frequencia=payload.frequencia or "",
+            pediu_contacto=bool(payload.pediu_contacto),
+            contacto_nome=payload.contacto_nome or "",
+            contacto_telefone=payload.contacto_telefone or "",
+            contacto_email=payload.contacto_email or "",
+            horario_preferencial=payload.horario_preferencial or "",
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
+@app.post("/api/start-hub/report-logic")
+def api_evo06_start_hub_report_logic(payload: StartHubSubmitLogicReportPayload):
+    try:
+        return start_hub_evo06.start_hub_evo06.submit_logic_report(
+            category=payload.category,
+            subject=payload.subject,
+            expected_behavior=payload.expected_behavior,
+            actual_behavior=payload.actual_behavior or "",
+            app_version=payload.app_version or "",
+            version_context=payload.version_context or "ATUAL",
+            operator_name=payload.operator_name or "",
+            client_nif=payload.client_nif or "",
+            client_name=payload.client_name or "",
+            office_id=payload.office_id or "",
+            pediu_contacto=bool(payload.pediu_contacto),
+            contacto_nome=payload.contacto_nome or "",
+            contacto_telefone=payload.contacto_telefone or "",
+            contacto_email=payload.contacto_email or "",
+            horario_preferencial=payload.horario_preferencial or "",
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
 
 @app.post("/api/app/setup-inicial")
 def api_app_setup_inicial(req: AppSetupInicialRequest):

@@ -45,6 +45,7 @@ export interface AppUser {
   username: string;
   nome: string;
   email?: string;
+  telefone?: string;
   role: UserRole;
   ativo: boolean;
   is_system: boolean;

@@ -46,6 +46,7 @@ interface StoredEvoSession {
   nome: string;
   role: string;
   email?: string;
+  telefone?: string;
   client_code?: string;
   offices?: LicensedOfficeInfo[];
   token: string;
@@ -78,6 +79,7 @@ function decodeGxtkSsoToken(rawToken: string): StoredEvoSession | null {
       nome: String(payload.nome || username).trim(),
       role: String(payload.role || 'OPERADOR'),
       email: String(payload.email || ''),
+      telefone: String(payload.telefone || ''),
       client_code: String(payload.client_code || '').trim().toUpperCase() || undefined,
       offices: Array.isArray(payload.offices) ? (payload.offices as LicensedOfficeInfo[]) : undefined,
       token: clean,
@@ -128,6 +130,7 @@ function readStoredEvoSession(): StoredEvoSession | null {
       nome: (parsed.nome || parsed.username).trim(),
       role: parsed.role || 'OPERADOR',
       email: parsed.email || '',
+      telefone: parsed.telefone || '',
       client_code: parsed.client_code ? String(parsed.client_code).trim().toUpperCase() : undefined,
       offices: Array.isArray(parsed.offices) ? parsed.offices : undefined,
       token: parsed.token.trim(),
@@ -154,6 +157,7 @@ function mapEvoSessionToAppUser(u: StoredEvoSession): AppUser {
     username: u.username,
     nome: u.nome || u.username,
     email: u.email || '',
+    telefone: u.telefone || '',
     role: mappedRole,
     ativo: true,
     is_system: mappedRole === 'superadmin',
@@ -335,6 +339,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               nome: String(data.user.nome || savedEvo.nome || savedEvo.username).trim(),
               role: String(data.user.role || savedEvo.role || 'OPERADOR'),
               email: String(data.user.email ?? savedEvo.email ?? ''),
+              telefone: String(data.user.telefone ?? savedEvo.telefone ?? ''),
               client_code: cc || undefined,
               offices: offs.length > 0 ? offs : undefined,
               token: savedEvo.token,
@@ -391,6 +396,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           nome: String(data.user.nome || username).trim(),
           role: String(data.user.role || 'OPERADOR'),
           email: String(data.user.email || ''),
+          telefone: String(data.user.telefone || ''),
           client_code: cc || undefined,
           offices: offs.length > 0 ? offs : undefined,
           token: String(data.token).trim(),
@@ -434,6 +440,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         nome: usr.nome || usr.username,
         role: usr.role === 'superadmin' ? 'DEV' : usr.role === 'admin' ? 'ADMIN' : existing?.role || 'OPERADOR',
         email: usr.email || '',
+        telefone: usr.telefone || existing?.telefone || '',
         client_code: cc || undefined,
         offices: offs.length > 0 ? offs : undefined,
         token: cleanTok,

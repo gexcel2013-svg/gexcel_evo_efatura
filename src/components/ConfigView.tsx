@@ -19,6 +19,7 @@ import {
   Building2
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { validateEmail, validatePhone, formatPhoneDisplay } from '../lib/contactValidation';
 import type { AppUser, CentroDadosItem, LicensedOfficeInfo } from '../types/auth';
 import {
   obterLocalFsCentroConfig,
@@ -140,6 +141,7 @@ export function ConfigView() {
   const [formNome, setFormNome] = useState<string>('');
   const [formUsername, setFormUsername] = useState<string>('');
   const [formEmail, setFormEmail] = useState<string>('');
+  const [formTelefone, setFormTelefone] = useState<string>('');
   const [formRole, setFormRole] = useState<'admin' | 'subutilizador' | 'superadmin'>('subutilizador');
   const [formPassword, setFormPassword] = useState<string>('');
   const [formAtivo, setFormAtivo] = useState<boolean>(true);
@@ -336,6 +338,7 @@ export function ConfigView() {
                 username: String(u.username || ''),
                 nome: String(u.nome || u.username || ''),
                 email: String(u.email || ''),
+                telefone: String(u.telefone || ''),
                 role: roleUp === 'ADMIN' ? 'admin' : 'subutilizador',
                 ativo: Boolean(u.ativo),
                 is_system: false,
@@ -750,6 +753,7 @@ export function ConfigView() {
     setFormNome('');
     setFormUsername('');
     setFormEmail('');
+    setFormTelefone('');
     setFormRole(rolePredefinido);
     setFormPassword('');
     setFormAtivo(true);
@@ -790,6 +794,7 @@ export function ConfigView() {
     setFormNome(user.nome);
     setFormUsername(user.username);
     setFormEmail(user.email || '');
+    setFormTelefone(user.telefone || '');
     setFormRole(user.role as any);
     setFormPassword('');
     setFormAtivo(user.ativo);
@@ -809,6 +814,19 @@ export function ConfigView() {
     e.preventDefault();
     setSalvandoUser(true);
     setErroFormUser(null);
+
+    const emailCheck = validateEmail(formEmail);
+    if (!emailCheck.valid) {
+      setErroFormUser(emailCheck.error);
+      setSalvandoUser(false);
+      return;
+    }
+    const phoneCheck = validatePhone(formTelefone, formRole === 'admin');
+    if (!phoneCheck.valid) {
+      setErroFormUser(phoneCheck.error);
+      setSalvandoUser(false);
+      return;
+    }
 
     const centrosPayload =
       formRole === 'admin' || formTodosCentros
@@ -842,7 +860,8 @@ export function ConfigView() {
             id: userEmEdicao?.cloud_id,
             nome: formNome.trim(),
             username: formUsername.trim(),
-            email: formEmail.trim(),
+            email: emailCheck.normalized,
+            telefone: phoneCheck.normalized,
             role: formRole === 'admin' ? 'ADMIN' : 'OPERADOR',
             password: formPassword.trim(),
             ativo: formAtivo,
@@ -876,7 +895,8 @@ export function ConfigView() {
 
         const body: any = {
           nome: formNome.trim(),
-          email: formEmail.trim(),
+          email: emailCheck.normalized,
+          telefone: phoneCheck.normalized,
           role: isSub ? 'subutilizador' : formRole,
           ativo: isSub ? true : formAtivo,
           centros_permitidos: isSub ? undefined : centrosPayload,
@@ -925,7 +945,8 @@ export function ConfigView() {
           body: JSON.stringify({
             nome: formNome.trim(),
             username: formUsername.trim(),
-            email: formEmail.trim(),
+            email: emailCheck.normalized,
+            telefone: phoneCheck.normalized,
             role: formRole,
             password: formPassword.trim(),
             centros_permitidos: centrosPayload,
@@ -1720,7 +1741,7 @@ export function ConfigView() {
                       Nome / Utilizador {renderSortIndicator('nome')}
                     </th>
                     <th onClick={() => handleSortUsers('email')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
-                      Email {renderSortIndicator('email')}
+                      Contacto (E-mail / WhatsApp) {renderSortIndicator('email')}
                     </th>
                     <th onClick={() => handleSortUsers('role')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
                       Perfil {renderSortIndicator('role')}
@@ -1754,7 +1775,12 @@ export function ConfigView() {
                           </div>
                         </td>
                         <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">
-                          {u.email || '—'}
+                          <div>{u.email || '—'}</div>
+                          {u.telefone && (
+                            <div className="mt-0.5 inline-block text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800">
+                              WhatsApp: {formatPhoneDisplay(u.telefone)}
+                            </div>
+                          )}
                         </td>
                         <td className="py-2.5 px-3">
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
@@ -2028,18 +2054,39 @@ export function ConfigView() {
                 />
               </div>
 
-              <div>
-                <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
-                  Email (Opcional)
-                </label>
-                <input
-                  type="email"
-                  placeholder="colaborador@empresa.pt"
-                  value={formEmail}
-                  onChange={e => setFormEmail(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                    E-mail Profissional *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="colaborador@empresa.pt"
+                    value={formEmail}
+                    onChange={e => setFormEmail(e.target.value)}
+                    className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                    Telemóvel / WhatsApp {formRole === 'admin' ? '*' : '(Facultativo)'}
+                  </label>
+                  <input
+                    type="tel"
+                    required={formRole === 'admin'}
+                    placeholder="+351 912 345 678"
+                    value={formTelefone}
+                    onChange={e => setFormTelefone(e.target.value)}
+                    className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7]"
+                  />
+                </div>
               </div>
+              <p className="text-[10px] text-slate-600 dark:text-slate-400 leading-snug">
+                {formRole === 'admin'
+                  ? 'E-mail e WhatsApp obrigatórios no Administrador para suporte e avisos críticos.'
+                  : 'Nos operadores o telemóvel é facultativo — pode repetir o número do escritório sem duplicar avisos.'}
+              </p>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
