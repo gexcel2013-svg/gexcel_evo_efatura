@@ -238,6 +238,20 @@ export function ConfigView() {
     ];
   }, [cloudOfficesSummary, licensedOffices, localFsCfg, appConfig, pastaRaizRealMotor, caminhoPropostoEvogex, caminhoPropostoAntiga]);
 
+  const activeCentroSelecionado = useMemo<CentroDadosItem | null>(() => {
+    return centrosDadosLista.find(c => c.selecionado) || centrosDadosLista[0] || null;
+  }, [centrosDadosLista]);
+
+  const [nomePropostoEscritorio, setNomePropostoEscritorio] = useState<string>(
+    () => activeCentroSelecionado?.nome || obterLocalFsCentroConfig()?.nome || 'Escritório Principal'
+  );
+
+  useEffect(() => {
+    if (activeCentroSelecionado?.nome) {
+      setNomePropostoEscritorio(activeCentroSelecionado.nome);
+    }
+  }, [activeCentroSelecionado?.id, activeCentroSelecionado?.nome]);
+
   useEffect(() => {
     setPastasLocais(prev => ({
       pasta_evogex: isWindowsPath(appConfig?.centro_dados_pasta_evogex) ? (appConfig?.centro_dados_pasta_evogex || '') : prev.pasta_evogex,
@@ -493,6 +507,7 @@ export function ConfigView() {
       officeSeq: centro.office_seq,
     });
     setLocalFsCfg(updated);
+    setNomePropostoEscritorio(updated.nome);
     setCaminhoPropostoEvogex(updated.pasta_evogex_display);
     if (updated.pasta_gexcel_antiga_display) {
       setCaminhoPropostoAntiga(updated.pasta_gexcel_antiga_display);
@@ -510,12 +525,18 @@ export function ConfigView() {
 
   const handleGuardarFixarConfiguracao = async () => {
     setMensagemErro(null);
-    const targetId = localFsCfg?.id || centrosDadosLista.find(c => c.selecionado)?.id || 'escritorio-principal';
-    const evoLimpo = (caminhoPropostoEvogex || sugerirPastaEvogexPorEscritorio(targetId)).trim();
+    setMensagemSucesso(null);
+    const targetId = activeCentroSelecionado?.id || localFsCfg?.id || 'escritorio-principal';
+    const nomeLimpo =
+      nomePropostoEscritorio.trim() ||
+      activeCentroSelecionado?.nome ||
+      localFsCfg?.nome ||
+      'Escritório Principal';
+    const evoLimpo = (caminhoPropostoEvogex || sugerirPastaEvogexPorEscritorio(targetId, activeCentroSelecionado?.office_seq)).trim();
     const antLimpo = (localFsCfg?.pasta_gexcel_antiga_display || caminhoPropostoAntiga || '').trim();
     const novoCfg: LocalFsCentroConfig = {
       id: targetId,
-      nome: localFsCfg?.nome || centrosDadosLista.find(c => c.id === targetId)?.nome || 'Escritório Principal',
+      nome: nomeLimpo,
       hostname: localFsCfg?.hostname || 'COMPUTADOR-LOCAL',
       pasta_evogex_display: evoLimpo,
       pasta_motor_display: `${evoLimpo}\\motor`,
@@ -533,17 +554,35 @@ export function ConfigView() {
     };
     guardarLocalFsCentroConfig(novoCfg);
     setLocalFsCfg(novoCfg);
-    await syncCloudOfficeMetadata(novoCfg.id, novoCfg.nome, novoCfg.pasta_evogex_display, novoCfg.pasta_gexcel_antiga_display);
+    setNomePropostoEscritorio(nomeLimpo);
+    if (isCloudClient) {
+      await syncCloudOfficeMetadata(novoCfg.id, novoCfg.nome, novoCfg.pasta_evogex_display, novoCfg.pasta_gexcel_antiga_display);
+    } else {
+      try {
+        await fetch('http://127.0.0.1:8015/api/app/centros-dados', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({
+            centro_id: novoCfg.id,
+            nome: novoCfg.nome,
+            hostname: novoCfg.hostname,
+            pasta_evogex: novoCfg.pasta_evogex_display,
+            pasta_gexcel_antiga: novoCfg.pasta_gexcel_antiga_display,
+            tornar_ativo: true,
+          }),
+        });
+      } catch {}
+    }
     await refreshConfig();
     setMensagemSucesso(
-      `Configuração gravada para '${novoCfg.nome}'! Ao fechar e voltar a abrir a aplicação, as pastas (${evoLimpo}${antLimpo ? ` e ${antLimpo}` : ''}) mantêm-se ligadas.`
+      `Configuração gravada para '${novoCfg.nome}'! Ao fechar e voltar a abrir a aplicação, o nome e as pastas (${evoLimpo}${antLimpo ? ` e ${antLimpo}` : ''}) mantêm-se ligados.`
     );
   };
 
   const handleEscolherPastaEvogexDireto = async (customCaminhoProposto?: string, paraModal = false) => {
     setMensagemErro(null);
     setMensagemSucesso(null);
-    const activeCentro = centroEmEdicao || centrosDadosLista.find(c => c.selecionado) || centrosDadosLista[0];
+    const activeCentro = centroEmEdicao || activeCentroSelecionado || centrosDadosLista.find(c => c.selecionado) || centrosDadosLista[0];
     const targetId = activeCentro?.id || localFsCfg?.id || 'escritorio-principal';
     const prop =
       (customCaminhoProposto ?? (paraModal ? formCentroPastaEvogex : caminhoPropostoEvogex)).trim() ||
@@ -551,12 +590,13 @@ export function ConfigView() {
     const res = await escolherEInstalarPastaDadosEvogex({
       centroId: targetId,
       officeSeq: activeCentro?.office_seq,
-      nomeCentro: paraModal ? formCentroNome : (localFsCfg?.nome || activeCentro?.nome || 'Escritório Principal'),
+      nomeCentro: paraModal ? formCentroNome : (nomePropostoEscritorio.trim() || activeCentro?.nome || localFsCfg?.nome || 'Escritório Principal'),
       hostname: paraModal ? formCentroHost : (localFsCfg?.hostname || 'COMPUTADOR-LOCAL'),
       caminhoProposto: prop,
     });
     if (res.ok && res.config) {
       setLocalFsCfg(res.config);
+      setNomePropostoEscritorio(res.config.nome);
       setCaminhoPropostoEvogex(res.config.pasta_evogex_display);
       if (paraModal) {
         setFormCentroPastaEvogex(res.config.pasta_evogex_display);
@@ -582,7 +622,7 @@ export function ConfigView() {
   const handleEscolherPastaAntigaDireto = async (customCaminhoProposto?: string, paraModal = false) => {
     setMensagemErro(null);
     setMensagemSucesso(null);
-    const activeCentro = centroEmEdicao || centrosDadosLista.find(c => c.selecionado) || centrosDadosLista[0];
+    const activeCentro = centroEmEdicao || activeCentroSelecionado || centrosDadosLista.find(c => c.selecionado) || centrosDadosLista[0];
     const targetId = activeCentro?.id || localFsCfg?.id || 'escritorio-principal';
     const prop = (customCaminhoProposto ?? (paraModal ? formCentroPastaAntiga : caminhoPropostoAntiga)).trim() || 'C:\\Dados_GexcelApps';
     const res = await escolherPastaDadosGexcelAntigos(prop, targetId);
@@ -684,7 +724,7 @@ export function ConfigView() {
     setSalvandoCentro(true);
     setMensagemSucesso(null);
     setMensagemErro(null);
-    const targetId = centroEmEdicao?.id || localFsCfg?.id || 'escritorio-principal';
+    const targetId = centroEmEdicao?.id || activeCentroSelecionado?.id || localFsCfg?.id || 'escritorio-principal';
     const nomeLimpo = formCentroNome.trim() || 'Escritório Principal';
     const hostLimpo = formCentroHost.trim() || 'SERVIDOR-ESCRITORIO';
     const pastaEvoLimpa = formCentroPastaEvogex.trim() || sugerirPastaEvogexPorEscritorio(targetId, centroEmEdicao?.office_seq);
@@ -710,6 +750,9 @@ export function ConfigView() {
     };
     guardarLocalFsCentroConfig(novoCfg);
     setLocalFsCfg(novoCfg);
+    if (!activeCentroSelecionado || activeCentroSelecionado.id === targetId || centroEmEdicao?.selecionado) {
+      setNomePropostoEscritorio(nomeLimpo);
+    }
     setCaminhoPropostoEvogex(pastaEvoLimpa);
     if (pastaAntLimpa) setCaminhoPropostoAntiga(pastaAntLimpa);
 
@@ -1278,6 +1321,27 @@ export function ConfigView() {
           </div>
 
           <div className="p-4 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-3 font-mono text-xs">
+            <div className="space-y-1.5 pb-2 border-b border-slate-200 dark:border-[#222f3e]">
+              <label className="block text-xs font-bold text-foreground">
+                Nome deste Escritório (visível no menu lateral e cabeçalhos):
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={nomePropostoEscritorio}
+                  onChange={e => setNomePropostoEscritorio(e.target.value)}
+                  disabled={!canManage}
+                  placeholder="Ex: Escritório Principal, Escritório do Porto, Sede Maia..."
+                  className="flex-1 min-w-[240px] h-9 px-3 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-foreground text-xs outline-hidden focus:ring-1 focus:ring-[#0284c7] disabled:opacity-65 disabled:cursor-not-allowed"
+                />
+                {!canManage && (
+                  <span className="text-[10.5px] text-slate-600 dark:text-slate-400">
+                    Apenas o Administrador pode alterar o nome do escritório.
+                  </span>
+                )}
+              </div>
+            </div>
+
             <label className="block text-xs font-bold text-foreground">
               Pasta principal onde ficam as novas bases de dados SQLite (padrão recomendado: <code className="text-[#0284c7] dark:text-sky-400">C:\Dados_evoGex</code>):
             </label>
@@ -1416,10 +1480,11 @@ export function ConfigView() {
                       <button
                         type="button"
                         onClick={() => abrirModalEditarCentro(centro)}
-                        className="p-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
+                        className="px-3 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-slate-800 dark:text-slate-100 text-xs font-semibold flex items-center space-x-1.5 cursor-pointer transition"
                         title="Editar nome ou pasta deste escritório"
                       >
-                        <Edit2 className="w-3.5 h-3.5" />
+                        <Edit2 className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+                        <span>Editar Nome</span>
                       </button>
                     )}
                   </div>
@@ -1881,7 +1946,7 @@ export function ConfigView() {
               </div>
               <div>
                 <h3 className="text-base font-display font-light text-foreground tracking-tight">
-                  {centroEmEdicao ? `Editar Centro de Dados: ${centroEmEdicao.nome}` : 'Novo Centro de Dados Nomeado'}
+                  {centroEmEdicao ? `Editar Escritório: ${centroEmEdicao.nome}` : 'Novo Escritório Nomeado'}
                 </h3>
                 <p className="text-[11px] font-mono text-slate-700 dark:text-slate-300">
                   Isole escritórios ou grupos de empresas (ex: Escritório da Maia, Porto, Empresas PHC, Empresas Sage)
@@ -1892,7 +1957,7 @@ export function ConfigView() {
             <form onSubmit={handleGuardarCentroModal} className="space-y-3 font-mono text-xs">
               <div>
                 <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
-                  Nome do Centro de Dados (Visível no Topo da Plataforma)
+                  Nome do Escritório (Visível no Topo e Menu Lateral)
                 </label>
                 <input
                   type="text"

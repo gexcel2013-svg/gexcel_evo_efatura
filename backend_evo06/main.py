@@ -5286,8 +5286,11 @@ def alterar_config_performance(req: PerformanceConfigRequest):
 def startup_event():
     """Inicia os subsistemas autónomos no arranque da API."""
     try:
-        SCHEDULER_ENGINE.start()
-        LOGGER.info("API e-Fatura pronta e reativa (Agendador autónomo de background ativo).")
+        if sys.platform == "win32":
+            SCHEDULER_ENGINE.start()
+            LOGGER.info("API e-Fatura pronta e reativa (Agendador autónomo de background ativo).")
+        else:
+            LOGGER.info("API e-Fatura pronta em modo Cloud Online (Agendador reservado ao Conector Local).")
     except Exception as e_sc:
         LOGGER.warning(f"Aviso ao iniciar agendador no arranque: {e_sc}")
 
@@ -5356,6 +5359,11 @@ def api_listar_agendamentos():
 @app.post("/api/agendador/tarefas")
 def api_criar_agendamento(req: AgendamentoCriarRequest):
     """Cria uma nova tarefa agendada persistente."""
+    if sys.platform != "win32":
+        raise HTTPException(
+            status_code=503,
+            detail="⚠️ Em atualização — disponível em breve (requer Conector Local do escritório)."
+        )
     dados = req.dict()
     tarefa = scheduler.criar_agendamento(dados)
     return {
@@ -5404,6 +5412,11 @@ def api_toggle_agendamento(task_id: str):
 @app.post("/api/agendador/tarefas/{task_id}/executar")
 def api_executar_tarefa_agora(task_id: str):
     """Dispara a execução imediata em background de uma tarefa agendada."""
+    if sys.platform != "win32":
+        raise HTTPException(
+            status_code=503,
+            detail="⚠️ Em atualização — disponível em breve (requer Conector Local do escritório)."
+        )
     iniciado = SCHEDULER_ENGINE.executar_agora_async(task_id)
     if not iniciado:
         raise HTTPException(status_code=400, detail="Tarefa não encontrada ou já se encontra em execução.")

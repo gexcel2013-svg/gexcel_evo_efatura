@@ -85,6 +85,8 @@ interface AgendadorViewProps {
   modoPrivacidade?: boolean;
 }
 
+export const AGENDADOR_EM_ATUALIZACAO: boolean = true;
+
 const DIAS_SEMANA_OPCOES = [
   { id: 'seg', label: 'Seg' },
   { id: 'ter', label: 'Ter' },
@@ -138,7 +140,60 @@ function formatarProximaExecucao(proxIso: string): string {
   }
 }
 
-export function AgendadorView({ onApiStatusChange, modoPrivacidade = false }: AgendadorViewProps) {
+export function AgendadorView(props: AgendadorViewProps) {
+  if (AGENDADOR_EM_ATUALIZACAO) {
+    return (
+      <div className="h-full flex flex-col space-y-4 min-h-0 select-none overflow-y-auto">
+        <header className="flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div>
+            <span className="page-kicker text-[#0284c7] dark:text-sky-400 font-mono text-[9.5px] uppercase tracking-[0.2em] font-semibold block mb-0.5">
+              AUTOMAÇÃO &amp; TAREFAS PROGRAMADAS
+            </span>
+            <h1 className="page-title text-lg sm:text-xl font-display font-light text-foreground tracking-[-0.015em] flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+              <span>Agendador</span>
+            </h1>
+          </div>
+        </header>
+
+        <div className="relative bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded-md shadow-2xs overflow-hidden">
+          <div className="relative px-5 py-3.5 border-b border-[#d7e0ea] dark:border-[#222f3e] before:content-[''] before:absolute before:left-0 before:top-3.5 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-display font-light text-foreground">
+              Estado do Agendamento Automático
+            </h2>
+            <span className="px-2.5 py-0.5 rounded bg-amber-100 dark:bg-[#241a08] text-amber-900 dark:text-amber-300 border border-amber-400 dark:border-amber-700 font-mono text-[10.5px] font-bold">
+              ⚠️ Em atualização
+            </span>
+          </div>
+
+          <div className="p-5">
+            <div className="bg-amber-50 dark:bg-[#241a08] border border-amber-400 dark:border-amber-700 rounded-md p-4 flex items-start space-x-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1.5">
+                <h3 className="text-sm font-mono font-bold text-amber-950 dark:text-amber-200">
+                  ⚠️ Em atualização — disponível em breve
+                </h3>
+                <p className="text-xs font-sans text-slate-800 dark:text-slate-200 leading-relaxed">
+                  A execução automática em horários programados está a ser adaptada para correr dedicada ao{' '}
+                  <strong>Conector Local</strong> instalado no computador do escritório, garantindo gravação direta nas
+                  suas pastas locais com total privacidade.
+                </p>
+                <p className="text-xs font-sans text-slate-700 dark:text-slate-300 leading-relaxed">
+                  Entretanto, todas as extrações e consultas manuais funcionam normalmente nos separadores{' '}
+                  <strong>e-Fatura</strong>, <strong>Recibos Verdes e Rendas</strong> e <strong>Anulados</strong>.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return <AgendadorViewCore {...props} />;
+}
+
+function AgendadorViewCore({ onApiStatusChange, modoPrivacidade = false }: AgendadorViewProps) {
   const [tarefas, setTarefas] = useState<Agendamento[]>([]);
   const [pendentes, setPendentes] = useState<Agendamento[]>([]);
   const [carregando, setCarregando] = useState<boolean>(true);

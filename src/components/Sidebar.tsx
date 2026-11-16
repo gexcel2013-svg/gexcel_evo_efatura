@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { 
   Table2, 
   FileSpreadsheet, 
@@ -109,7 +109,14 @@ export function Sidebar({
     ? `${basePainelUrl}/?sso=${encodeURIComponent(token)}`
     : basePainelUrl;
 
-  const navItems = [
+  const navItems: Array<{
+    id: string;
+    label: string;
+    icon: ReactNode;
+    badge?: string;
+    badgeTone?: 'warning';
+    warningTitle?: string;
+  }> = [
     {
       id: 'inicio',
       label: 'Início',
@@ -150,7 +157,9 @@ export function Sidebar({
       id: 'agendador',
       label: 'Agendador',
       icon: <Calendar className="w-4 h-4 shrink-0" />,
-      badge: undefined,
+      badge: '⚠️',
+      badgeTone: 'warning',
+      warningTitle: '⚠️ Em atualização — disponível em breve',
     },
     {
       id: 'config',
@@ -326,6 +335,7 @@ export function Sidebar({
                       onSelectTab(item.id);
                       setMobileDrawerOpen(false);
                     }}
+                    title={item.warningTitle}
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-md text-xs font-semibold transition cursor-pointer ${
                       isActive
                         ? 'bg-[#0284c7] text-white shadow-xs border border-[#0284c7]'
@@ -338,9 +348,11 @@ export function Sidebar({
                     </div>
                     {item.badge && (
                       <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                        isActive
-                          ? 'bg-[#0369a1] text-white font-bold border border-sky-300'
-                          : 'bg-white dark:bg-[#1a2c3f] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-[#304764]'
+                        item.badgeTone === 'warning'
+                          ? 'bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 border border-amber-400 dark:border-amber-700 font-bold'
+                          : isActive
+                            ? 'bg-[#0369a1] text-white font-bold border border-sky-300'
+                            : 'bg-white dark:bg-[#1a2c3f] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-[#304764]'
                       }`}>
                         {item.badge}
                       </span>
@@ -514,7 +526,7 @@ export function Sidebar({
             <button
               key={item.id}
               onClick={() => onSelectTab(item.id)}
-              title={collapsed ? item.label : undefined}
+              title={collapsed ? (item.warningTitle ? `${item.label} (${item.warningTitle})` : item.label) : item.warningTitle}
               className={`w-full flex items-center px-3 py-2 rounded-md text-xs font-semibold transition cursor-pointer ${
                 isActive
                   ? 'bg-[#0284c7] text-white shadow-xs border border-[#0284c7]'
@@ -529,9 +541,11 @@ export function Sidebar({
               </div>
               {!collapsed && item.badge && (
                 <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                  isActive 
-                    ? 'bg-[#0369a1] text-white font-bold border border-sky-300' 
-                    : 'bg-white dark:bg-[#1a2c3f] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-[#304764]'
+                  item.badgeTone === 'warning'
+                    ? 'bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 border border-amber-400 dark:border-amber-700 font-bold'
+                    : isActive 
+                      ? 'bg-[#0369a1] text-white font-bold border border-sky-300' 
+                      : 'bg-white dark:bg-[#1a2c3f] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-[#304764]'
                 }`}>
                   {item.badge}
                 </span>

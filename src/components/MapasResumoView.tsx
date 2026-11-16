@@ -24,8 +24,19 @@ import {
   X,
   CheckCircle2,
   AlertCircle,
+  Sparkles,
+  Copy,
+  Check,
+  FolderOpen,
+  Loader2,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
+import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
+import {
+  obterResumoDestinosConfigurados,
+  abrirPastaNoExploradorNativo,
+} from '../lib/localFsBridge';
 import type { LinhaFatura } from './FaturasView';
 import {
   exportarMapaUnicoXlsx,
@@ -314,6 +325,7 @@ export function MapasResumoView({
   // Filtros equivalentes às Tabelas Dinâmicas do Excel
   const [mesFiltro, setMesFiltro] = useState<number | null>(null);
   const [trimestreFiltro, setTrimestreFiltro] = useState<number | null>(null);
+  const [mesesCustomAssistente, setMesesCustomAssistente] = useState<Set<number> | null>(null);
   const [filtroDocsTrabalho, setFiltroDocsTrabalho] = useState<FiltroDocsTrabalho>('todos');
   const [filtroTipoDoc, setFiltroTipoDoc] = useState<string>('');
   const [filtroSetor, setFiltroSetor] = useState<string>('');
@@ -321,6 +333,65 @@ export function MapasResumoView({
   const [filtroContraparteNif, setFiltroContraparteNif] = useState<string>('');
   const [pesquisa, setPesquisa] = useState<string>('');
   const [agruparPorFornecedor, setAgruparPorFornecedor] = useState<boolean>(true);
+
+  // Assistente Passo a Passo & Destino Local
+  const [assistenteAberto, setAssistenteAberto] = useState<boolean>(
+    () => localStorage.getItem('gexcel_mapas_assistente_fechado') !== 'true'
+  );
+  const [passoAssistente, setPassoAssistente] = useState<1 | 2 | 3 | 4>(1);
+  const [caminhoDestinoLocal, setCaminhoDestinoLocal] = useState<string>(
+    () => obterResumoDestinosConfigurados().pastaV4
+  );
+  const [copiadoPasta, setCopiadoPasta] = useState<boolean>(false);
+  const [apiOnlineLocal, setApiOnlineLocal] = useState<boolean | null>(true);
+  const [selecionadasAssistente, setSelecionadasAssistente] = useState<Set<string>>(() => new Set());
+
+  const inicializouAssistenteRef = useRef<boolean>(false);
+  const assistenteAlterouSelecaoRef = useRef<boolean>(false);
+
+  const abrirAssistente = () => {
+    setAssistenteAberto(true);
+    localStorage.setItem('gexcel_mapas_assistente_fechado', 'false');
+  };
+
+  const fecharAssistente = () => {
+    setAssistenteAberto(false);
+    localStorage.setItem('gexcel_mapas_assistente_fechado', 'true');
+  };
+
+  useEffect(() => {
+    const onFsUpdated = () => {
+      setCaminhoDestinoLocal(obterResumoDestinosConfigurados().pastaV4);
+    };
+    window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
+    return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
+  }, []);
+
+  const copiarCaminhoDados = async () => {
+    try {
+      await navigator.clipboard.writeText(caminhoDestinoLocal);
+      setCopiadoPasta(true);
+      window.setTimeout(() => setCopiadoPasta(false), 1800);
+    } catch {}
+  };
+
+  const abrirPastaDadosWindows = async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:8015/api/sistema/abrir-explorador', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caminho: caminhoDestinoLocal }),
+      });
+      if (res.ok) {
+        const d = await res.json().catch(() => null);
+        if (d?.status === 'ok' && d?.origem !== 'cloud') return;
+      }
+    } catch {}
+    const abriu = await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
+    if (!abriu) {
+      await copiarCaminhoDados();
+    }
+  };
 
   // Filtros específicos de Retenções IRS
   const [filtroSituacaoIRS, setFiltroSituacaoIRS] = useState<FiltroSituacaoIRS>('emitidos');
@@ -423,11 +494,13 @@ export function MapasResumoView({
 
       if (!resEf.ok && !resRv.ok) {
         onApiStatusChange?.(false);
+        setApiOnlineLocal(false);
         setErroCarga('Não foi possível contactar a API de dados do e-Fatura.');
         return;
       }
 
       onApiStatusChange?.(true);
+      setApiOnlineLocal(true);
 
       let todasLinhasEf: LinhaFatura[] = [];
       if (resEf.ok) {
@@ -466,6 +539,7 @@ export function MapasResumoView({
     } catch {
       if (reqId !== reqCounterRef.current) return;
       onApiStatusChange?.(false);
+      setApiOnlineLocal(false);
       setErroCarga('Falha de ligação ao motor de dados.');
     } finally {
       if (reqId === reqCounterRef.current) {
@@ -478,6 +552,75 @@ export function MapasResumoView({
     carregarDados();
   }, [carregarDados]);
 
+  // Sincronização inicial e helpers multi-empresa/multi-mês para o Assistente
+  useEffect(() => {
+    if (entidades.length === 0 || inicializouAssistenteRef.current) return;
+    inicializouAssistenteRef.current = true;
+    if (nifSelecionado) {
+      setSelecionadasAssistente(new Set([nifSelecionado]));
+    } else {
+      setSelecionadasAssistente(
+        new Set(entidades.map(e => (e.nif || e.nif_cc || '').trim()).filter(Boolean))
+      );
+    }
+  }, [entidades, nifSelecionado]);
+
+  const toggleEmpresaAssistente = useCallback((nif: string) => {
+    assistenteAlterouSelecaoRef.current = true;
+    setSelecionadasAssistente(prev => {
+      const next = new Set(prev);
+      if (next.has(nif)) next.delete(nif);
+      else next.add(nif);
+      return next;
+    });
+  }, []);
+
+  const selecionarTodasAssistente = useCallback(() => {
+    assistenteAlterouSelecaoRef.current = true;
+    setSelecionadasAssistente(
+      new Set(entidades.map(e => (e.nif || e.nif_cc || '').trim()).filter(Boolean))
+    );
+  }, [entidades]);
+
+  const limparSelecionadasAssistente = useCallback(() => {
+    assistenteAlterouSelecaoRef.current = true;
+    setSelecionadasAssistente(new Set());
+  }, []);
+
+  useEffect(() => {
+    if (!assistenteAlterouSelecaoRef.current) return;
+    assistenteAlterouSelecaoRef.current = false;
+    setFiltroContraparteNif('');
+    if (selecionadasAssistente.size === 1) {
+      setNifSelecionado(Array.from(selecionadasAssistente)[0]);
+    } else {
+      setNifSelecionado('');
+    }
+  }, [selecionadasAssistente]);
+
+  const mesAtual = new Date().getMonth() + 1;
+
+  const aplicarAnoTodo = useCallback(() => {
+    setMesFiltro(null);
+    setTrimestreFiltro(null);
+    setMesesCustomAssistente(null);
+  }, []);
+
+  const aplicarMesAtual = useCallback(() => {
+    if (ano !== anoAtual) {
+      onAnoChange(anoAtual);
+    }
+    setTrimestreFiltro(null);
+    setMesesCustomAssistente(null);
+    setMesFiltro(mesAtual);
+  }, [ano, anoAtual, mesAtual, onAnoChange]);
+
+  const aplicarTrimestre = useCallback((t: number) => {
+    setMesFiltro(null);
+    setMesesCustomAssistente(null);
+    setTrimestreFiltro(prev => (prev === t ? null : t));
+  }, []);
+
   const entidadeSelecionadaObj = useMemo(() => {
     if (!nifSelecionado) return null;
     return (
@@ -489,17 +632,27 @@ export function MapasResumoView({
 
   const nomeEntidadeCabecalho = useMemo(() => {
     if (!nifSelecionado) {
+      if (selecionadasAssistente.size > 0 && selecionadasAssistente.size < entidades.length) {
+        return `Empresas Selecionadas (${selecionadasAssistente.size} de ${entidades.length})`;
+      }
       return `Todas as Entidades (${entidades.length})`;
     }
     const nome = entidadeSelecionadaObj?.nomecli || nifSelecionado;
     return modoPrivacidade ? mascararTexto(nome) : nome;
-  }, [nifSelecionado, entidadeSelecionadaObj, entidades.length, modoPrivacidade]);
+  }, [nifSelecionado, entidadeSelecionadaObj, entidades.length, selecionadasAssistente.size, modoPrivacidade]);
 
   // 3. Agrupamento de linhas verticais em documentos horizontais (fiel a efaturaDados)
   const docsEfaturaHorizontais = useMemo<DocHorizontalEfatura[]>(() => {
     const mapa = new Map<string, DocHorizontalEfatura>();
+    const filtrarMultiEmpresa =
+      nifSelecionado === '' &&
+      selecionadasAssistente.size > 0 &&
+      selecionadasAssistente.size < entidades.length;
 
     for (const linha of linhasFatura) {
+      if (filtrarMultiEmpresa && !selecionadasAssistente.has((linha.nif_cliente || '').trim())) {
+        continue;
+      }
       const chave =
         (linha.id_fatura_unico || '').trim() ||
         `${linha.nif_cliente}_${linha.contraparte_nif}_${linha.fatura}_${linha.data_emissao}`;
@@ -593,7 +746,16 @@ export function MapasResumoView({
     }
 
     return lista;
-  }, [linhasFatura, ano]);
+  }, [linhasFatura, ano, nifSelecionado, selecionadasAssistente, entidades.length]);
+
+  const docsRVBase = useMemo(() => {
+    const filtrarMultiEmpresa =
+      nifSelecionado === '' &&
+      selecionadasAssistente.size > 0 &&
+      selecionadasAssistente.size < entidades.length;
+    if (!filtrarMultiEmpresa) return docsRV;
+    return docsRV.filter(rv => selecionadasAssistente.has((rv.nif_cliente || '').trim()));
+  }, [docsRV, nifSelecionado, selecionadasAssistente, entidades.length]);
 
   // Opções dinâmicas para os filtros de TipoDoc e Setor
   const opcoesTipoDoc = useMemo(() => {
@@ -613,13 +775,40 @@ export function MapasResumoView({
   }, [docsEfaturaHorizontais]);
 
   const mesesPermitidos = useMemo<Set<number> | null>(() => {
+    if (mesesCustomAssistente && mesesCustomAssistente.size > 0 && mesesCustomAssistente.size < 12) {
+      return mesesCustomAssistente;
+    }
     if (mesFiltro !== null) return new Set([mesFiltro]);
     if (trimestreFiltro !== null) {
       const ini = (trimestreFiltro - 1) * 3 + 1;
       return new Set([ini, ini + 1, ini + 2]);
     }
     return null;
-  }, [mesFiltro, trimestreFiltro]);
+  }, [mesesCustomAssistente, mesFiltro, trimestreFiltro]);
+
+  const mesesAtivosAssistente = useMemo<Set<number>>(() => {
+    return mesesPermitidos ?? new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  }, [mesesPermitidos]);
+
+  const toggleMesAssistente = useCallback(
+    (m: number) => {
+      const base = new Set(mesesAtivosAssistente);
+      if (base.has(m)) base.delete(m);
+      else base.add(m);
+      if (base.size === 0 || base.size === 12) {
+        aplicarAnoTodo();
+      } else if (base.size === 1) {
+        setTrimestreFiltro(null);
+        setMesesCustomAssistente(null);
+        setMesFiltro(Array.from(base)[0]);
+      } else {
+        setMesFiltro(null);
+        setTrimestreFiltro(null);
+        setMesesCustomAssistente(base);
+      }
+    },
+    [mesesAtivosAssistente, aplicarAnoTodo]
+  );
 
   // 4. Documentos e-Fatura Filtrados (partilhado por Recapitulativos, ResumoDocs, Por Tipo Doc, Por Dia)
   const docsEfaturaFiltrados = useMemo(() => {
@@ -886,7 +1075,7 @@ export function MapasResumoView({
     // B. RECIBOS ELETRÓNICOS (Recibos Verdes + Rendas)
     const sitRvSet = new Set<string>();
     const mapRv = new Map<number, Record<string, number>>();
-    for (const rv of docsRV) {
+    for (const rv of docsRVBase) {
       const anoRef = rv.ano_emissao > 1900 ? rv.ano_emissao : rv.ano_efetivo;
       if (anoRef && anoRef !== ano) continue;
       const sit = (rv.situacao || '').trim() || '(em branco)';
@@ -936,12 +1125,12 @@ export function MapasResumoView({
       totaisRv,
       grandTotalRv,
     };
-  }, [docsEfaturaHorizontais, docsRV, ano, filtroDocsTrabalho]);
+  }, [docsEfaturaHorizontais, docsRVBase, ano, filtroDocsTrabalho]);
 
   // 5.6 Dados para Sub-Vista: Resumo Retenções IRS
   const dadosRetencoesIrs = useMemo(() => {
     const q = pesquisa.trim().toLowerCase();
-    const filtrados = docsRV.filter(rv => {
+    const filtrados = docsRVBase.filter(rv => {
       const mesRef = rv.mes_emissao > 0 ? rv.mes_emissao : rv.mes_efetivo;
       if (mesesPermitidos && !mesesPermitidos.has(mesRef)) return false;
 
@@ -1039,11 +1228,12 @@ export function MapasResumoView({
     }
 
     return { lista, totais };
-  }, [docsRV, mesesPermitidos, filtroTipoRV, filtroSituacaoIRS, pesquisa, sortConfig.retencoes_irs]);
+  }, [docsRVBase, mesesPermitidos, filtroTipoRV, filtroSituacaoIRS, pesquisa, sortConfig.retencoes_irs]);
 
   const temFiltrosAtivos = Boolean(
     mesFiltro !== null ||
       trimestreFiltro !== null ||
+      (mesesCustomAssistente && mesesCustomAssistente.size > 0 && mesesCustomAssistente.size < 12) ||
       filtroDocsTrabalho !== 'todos' ||
       filtroTipoDoc ||
       filtroSetor ||
@@ -1055,6 +1245,7 @@ export function MapasResumoView({
   const limparFiltros = () => {
     setMesFiltro(null);
     setTrimestreFiltro(null);
+    setMesesCustomAssistente(null);
     setFiltroDocsTrabalho('todos');
     setFiltroTipoDoc('');
     setFiltroSetor('');
@@ -1066,11 +1257,16 @@ export function MapasResumoView({
   // Metadados comuns para exportação Excel
   const metadadosExport = useMemo(() => {
     const periodo =
-      mesFiltro !== null
-        ? `${MESES.find(m => m.num === mesFiltro)?.full || mesFiltro}/${ano}`
-        : trimestreFiltro !== null
-          ? `${trimestreFiltro}.º Trimestre ${ano}`
-          : `Ano Completo ${ano}`;
+      mesesCustomAssistente && mesesCustomAssistente.size > 0 && mesesCustomAssistente.size < 12
+        ? `Meses: ${Array.from(mesesCustomAssistente)
+            .sort((a, b) => a - b)
+            .map(m => MESES.find(x => x.num === m)?.nome || String(m))
+            .join(', ')}/${ano}`
+        : mesFiltro !== null
+          ? `${MESES.find(m => m.num === mesFiltro)?.full || mesFiltro}/${ano}`
+          : trimestreFiltro !== null
+            ? `${trimestreFiltro}.º Trimestre ${ano}`
+            : `Ano Completo ${ano}`;
     return [
       { label: 'Entidade', value: nomeEntidadeCabecalho },
       { label: 'CV / Fluxo', value: tipoOperacao === 'compras' ? 'C (Compras)' : 'V (Vendas)' },
@@ -1091,6 +1287,7 @@ export function MapasResumoView({
     ano,
     nomeEntidadeCabecalho,
     tipoOperacao,
+    mesesCustomAssistente,
     mesFiltro,
     trimestreFiltro,
     filtroDocsTrabalho,
@@ -1472,7 +1669,7 @@ export function MapasResumoView({
           </h1>
         </div>
 
-        {/* Botões de Exportação Excel & Atualização */}
+        {/* Botões do Assistente, Exportação Excel & Atualização */}
         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
           {feedbackExport && (
             <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-md bg-emerald-50 dark:bg-[#091e1a] border border-emerald-400 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-[11px] font-mono font-semibold">
@@ -1480,6 +1677,20 @@ export function MapasResumoView({
               <span>{feedbackExport}</span>
             </div>
           )}
+
+          <button
+            type="button"
+            onClick={() => (assistenteAberto ? fecharAssistente() : abrirAssistente())}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-bold transition shadow-xs cursor-pointer ${
+              assistenteAberto
+                ? 'bg-[#eef2ff] dark:bg-[#162032] text-[#4338ca] dark:text-[#a5b4fc] border border-[#4f46e5] dark:border-[#6366f1]'
+                : 'bg-[#4f46e5] hover:bg-[#4338ca] text-white border border-[#4f46e5]'
+            }`}
+            title="Abrir ou fechar o Assistente Guiado Passo a Passo"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{assistenteAberto ? 'Ocultar Assistente' : 'Assistente Passo a Passo'}</span>
+          </button>
 
           <button
             type="button"
@@ -1533,183 +1744,355 @@ export function MapasResumoView({
         </div>
       </header>
 
-      {/* 2. Cartão de Controlos e Filtros Dinâmicos (100% Opaco · Evo Grid) */}
-      <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 space-y-2 shadow-2xs shrink-0 overflow-visible">
-        {/* Linha 1: Fluxo + Empresa + Ano + DocsTrabalho + Pesquisa */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Alternador Compras (C) / Vendas (V) */}
-          <div className="flex items-center space-x-1 bg-slate-100 dark:bg-[#101c2b] p-0.5 rounded border border-[#d7e0ea] dark:border-[#222f3e] shrink-0">
-            <button
-              type="button"
-              onClick={() => setTipoOperacao('compras')}
-              className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition cursor-pointer flex items-center space-x-1.5 ${
-                tipoOperacao === 'compras'
-                  ? 'bg-[#0284c7] text-white shadow-2xs'
-                  : 'text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-[#162538]'
-              }`}
-            >
-              <ShoppingCart className="w-3.5 h-3.5" />
-              <span>Compras (C)</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setTipoOperacao('vendas')}
-              className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition cursor-pointer flex items-center space-x-1.5 ${
-                tipoOperacao === 'vendas'
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-[#162538]'
-              }`}
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>Vendas (V)</span>
-            </button>
-          </div>
+      {/* Área Principal + Assistente Encaixado à Direita */}
+      <div className="flex flex-col lg:flex-row gap-3 flex-1 min-h-0">
 
-          {/* Seletor de Empresa */}
-          <EmpresaSelectorCombobox
-            entidades={entidades}
-            value={nifSelecionado}
-            onChange={nif => {
-              setNifSelecionado(nif);
-              setFiltroContraparteNif('');
-            }}
-            modoPrivacidade={modoPrivacidade}
-            allLabel={`Todas as Empresas (${entidades.length})`}
-            placeholder="Pesquisar empresa (NIF ou nome)..."
-            className="w-full sm:w-auto sm:min-w-[260px] max-w-full sm:max-w-[360px]"
-            dropdownClassName="w-96 md:w-[460px]"
-            align="left"
-          />
+        {/* Lado Esquerdo: Controlos (4 Zonas Sincronizadas) + Sub-vistas + KPIs + Tabela */}
+        <div className="flex-1 flex flex-col gap-2.5 min-w-0 min-h-0">
 
-          {/* Seletor de Ano */}
-          <div className="flex items-center space-x-1 bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-600 rounded px-2 py-1 shrink-0">
-            <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
-            <button
-              type="button"
-              onClick={() => onAnoChange(ano - 1)}
-              className="p-0.5 rounded hover:bg-sky-200 dark:hover:bg-[#14304d] text-slate-800 dark:text-slate-100 cursor-pointer"
-              title="Ano Anterior"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <span className="font-mono font-bold text-xs text-slate-900 dark:text-white px-1 min-w-[38px] text-center tabular-nums">
-              {ano}
+      {/* 2. Cartão de Controlos e Filtros Dinâmicos (4 Zonas Sincronizadas · 100% Opaco · Evo Grid) */}
+      <div className="relative evo-card-signature bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2.5 space-y-2 shadow-2xs shrink-0 overflow-visible before:content-[''] before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:bg-[#0284c7] dark:before:bg-sky-400 before:z-20">
+        {/* Linha 1: Zona 1 (Destino) + Zona 2 (Fluxo & Empresas) + Zona 4 (Opções & Consultar) */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Zona 1: Pasta de Destino dos Dados */}
+          <div
+            data-evo-guide-target="zona-1"
+            onClick={() => assistenteAberto && setPassoAssistente(1)}
+            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded border text-[11px] font-mono transition ${
+              assistenteAberto && passoAssistente === 1
+                ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                : 'bg-slate-50 dark:bg-[#101c2b] border-[#d7e0ea] dark:border-[#1e344f]'
+            }`}
+          >
+            {assistenteAberto && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
+                  passoAssistente === 1 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                }`}
+              >
+                ① Destino
+              </span>
+            )}
+            <span className="text-slate-600 dark:text-slate-300 font-semibold shrink-0 hidden sm:inline">Dados:</span>
+            <span title={caminhoDestinoLocal} className="text-foreground font-semibold break-all max-w-[230px]">
+              {caminhoDestinoLocal}
             </span>
             <button
               type="button"
-              onClick={() => onAnoChange(ano < anoAtual ? ano + 1 : ano)}
-              disabled={ano >= anoAtual}
-              className={`p-0.5 rounded ${
-                ano >= anoAtual
-                  ? 'opacity-30 cursor-not-allowed text-slate-400'
-                  : 'hover:bg-sky-200 dark:hover:bg-[#14304d] text-slate-800 dark:text-slate-100 cursor-pointer'
-              }`}
-              title="Ano Seguinte"
+              onClick={e => { e.stopPropagation(); copiarCaminhoDados(); }}
+              title="Copiar endereço completo (📋)"
+              className="p-0.5 text-slate-600 dark:text-slate-300 hover:text-[#0284c7] cursor-pointer shrink-0"
             >
-              <ChevronRight className="w-3.5 h-3.5" />
+              {copiadoPasta ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              type="button"
+              data-evo-guide-target="btn-abrir-pasta"
+              onClick={e => { e.stopPropagation(); abrirPastaDadosWindows(); }}
+              title="Abrir pasta no Explorador do Windows (📂)"
+              className="p-0.5 text-[#0284c7] dark:text-sky-400 hover:opacity-80 cursor-pointer shrink-0"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          {/* Filtro DocsTrabalho (tDocsNãoAdmitidos) */}
-          <div className="flex items-center space-x-1 bg-slate-100 dark:bg-[#101c2b] p-0.5 rounded border border-[#d7e0ea] dark:border-[#222f3e] shrink-0">
-            {(
-              [
-                { id: 'todos', label: 'Todos Docs' },
-                { id: 'fiscais', label: 'Omitir Docs Trabalho' },
-                { id: 'trabalho', label: 'Só Docs Trabalho' },
-              ] as const
-            ).map(opt => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => setFiltroDocsTrabalho(opt.id)}
-                className={`px-2 py-1 text-[11px] font-mono rounded font-semibold transition cursor-pointer ${
-                  filtroDocsTrabalho === opt.id
-                    ? 'bg-slate-800 dark:bg-sky-500 text-white dark:text-slate-950'
-                    : 'text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-[#162538]'
+          {/* Zona 2: Fluxo (Compras/Vendas) + Empresa + DocsTrabalho + Pesquisa */}
+          <div
+            data-evo-guide-target="zona-2"
+            onClick={() => assistenteAberto && setPassoAssistente(2)}
+            className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition flex-1 min-w-0 ${
+              assistenteAberto && passoAssistente === 2
+                ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                : 'bg-slate-50 dark:bg-[#101c2b] border-[#d7e0ea] dark:border-[#1e344f]'
+            }`}
+          >
+            {assistenteAberto && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                  passoAssistente === 2 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
                 }`}
               >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+                ② Empresas
+              </span>
+            )}
 
-          {/* Pesquisa Rápida */}
-          <div className="relative flex-1 min-w-[180px]">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-500 dark:text-slate-400" />
-            <input
-              type="text"
-              value={pesquisa}
-              onChange={e => setPesquisa(e.target.value)}
-              placeholder="Filtrar NIF, nome ou n.º fatura..."
-              className="w-full pl-8 pr-7 py-1.5 text-xs font-mono bg-slate-50 dark:bg-[#101c2b] border border-[#d7e0ea] dark:border-[#222f3e] rounded text-foreground placeholder:text-slate-500 dark:placeholder:text-slate-400 focus:outline-none focus:border-[#0284c7]"
-            />
-            {pesquisa && (
+            {/* Alternador Compras (C) / Vendas (V) */}
+            <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] p-0.5 rounded border border-[#d7e0ea] dark:border-[#222f3e] shrink-0">
               <button
                 type="button"
-                onClick={() => setPesquisa('')}
-                className="absolute right-2 top-2 text-slate-500 hover:text-foreground cursor-pointer"
-                title="Limpar pesquisa"
+                data-evo-guide-target="op-compras"
+                onClick={() => setTipoOperacao('compras')}
+                className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition cursor-pointer flex items-center space-x-1.5 ${
+                  tipoOperacao === 'compras'
+                    ? 'bg-[#0284c7] text-white shadow-2xs'
+                    : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#162538]'
+                }`}
               >
-                <X className="w-3.5 h-3.5" />
+                <ShoppingCart className="w-3.5 h-3.5" />
+                <span>Compras (C)</span>
               </button>
+              <button
+                type="button"
+                data-evo-guide-target="op-vendas"
+                onClick={() => setTipoOperacao('vendas')}
+                className={`py-1 px-2.5 text-xs font-mono rounded font-semibold transition cursor-pointer flex items-center space-x-1.5 ${
+                  tipoOperacao === 'vendas'
+                    ? 'bg-emerald-600 text-white shadow-2xs'
+                    : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#162538]'
+                }`}
+              >
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>Vendas (V)</span>
+              </button>
+            </div>
+
+            {/* Seletor de Empresa + Contador */}
+            <div data-evo-guide-target="empresa-selector" className="flex items-center gap-1.5 w-full sm:w-auto">
+              <EmpresaSelectorCombobox
+                entidades={entidades}
+                value={nifSelecionado}
+                onChange={nif => {
+                  setNifSelecionado(nif);
+                  setFiltroContraparteNif('');
+                  if (nif) {
+                    setSelecionadasAssistente(new Set([nif]));
+                  } else {
+                    setSelecionadasAssistente(
+                      new Set(entidades.map(e => (e.nif || e.nif_cc || '').trim()).filter(Boolean))
+                    );
+                  }
+                }}
+                modoPrivacidade={modoPrivacidade}
+                allLabel={`Todas as Empresas (${entidades.length})`}
+                placeholder="Pesquisar empresa (NIF ou nome)..."
+                className="w-full sm:w-auto sm:min-w-[230px] max-w-full sm:max-w-[320px]"
+                dropdownClassName="w-96 md:w-[460px]"
+                align="left"
+              />
+              <span className="text-[11px] font-mono text-slate-700 dark:text-slate-200 font-semibold px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-slate-200 dark:border-[#1e344f] shrink-0 tabular-nums">
+                {selecionadasAssistente.size}/{entidades.length}
+              </span>
+            </div>
+
+            {/* Filtro DocsTrabalho (tDocsNãoAdmitidos) */}
+            <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] p-0.5 rounded border border-[#d7e0ea] dark:border-[#222f3e] shrink-0">
+              {(
+                [
+                  { id: 'todos', label: 'Todos Docs' },
+                  { id: 'fiscais', label: 'Omitir Docs Trabalho' },
+                  { id: 'trabalho', label: 'Só Docs Trabalho' },
+                ] as const
+              ).map(opt => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setFiltroDocsTrabalho(opt.id)}
+                  className={`px-2 py-1 text-[11px] font-mono rounded font-semibold transition cursor-pointer ${
+                    filtroDocsTrabalho === opt.id
+                      ? 'bg-slate-800 dark:bg-sky-500 text-white dark:text-slate-950'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#162538]'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Pesquisa Rápida */}
+            <div className="relative flex-1 min-w-[160px]">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-500 dark:text-slate-400" />
+              <input
+                type="text"
+                value={pesquisa}
+                onChange={e => setPesquisa(e.target.value)}
+                placeholder="Filtrar NIF, nome ou n.º fatura..."
+                className="w-full pl-8 pr-7 py-1.5 text-xs font-mono bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded text-foreground placeholder:text-slate-500 dark:placeholder:text-slate-400 focus:outline-none focus:border-[#0284c7]"
+              />
+              {pesquisa && (
+                <button
+                  type="button"
+                  onClick={() => setPesquisa('')}
+                  className="absolute right-2 top-2 text-slate-500 hover:text-foreground cursor-pointer"
+                  title="Limpar pesquisa"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Zona 4: Opções & Consultar */}
+          <div
+            data-evo-guide-target="zona-4"
+            onClick={() => assistenteAberto && setPassoAssistente(4)}
+            className={`flex items-center space-x-2 px-2 py-1 rounded border transition shrink-0 ${
+              assistenteAberto && passoAssistente === 4
+                ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                : 'bg-slate-50 dark:bg-[#101c2b] border-[#d7e0ea] dark:border-[#1e344f]'
+            }`}
+          >
+            {assistenteAberto && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                  passoAssistente === 4 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                }`}
+              >
+                ④ Consultar
+              </span>
             )}
+
+            <button
+              type="button"
+              data-evo-guide-target="btn-opcoes"
+              onClick={e => {
+                e.stopPropagation();
+                if (!assistenteAberto) abrirAssistente();
+                setPassoAssistente(4);
+              }}
+              className="px-2 py-1.5 rounded border text-[11px] font-mono font-semibold flex items-center space-x-1 cursor-pointer transition bg-white dark:bg-[#0c1520] hover:bg-slate-100 dark:hover:bg-[#1a2d42] border-slate-300 dark:border-[#253a52] text-foreground"
+              title="Abrir opções rápidas de vista e exportação no Assistente"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+              <span>Opções</span>
+            </button>
+
+            <button
+              type="button"
+              data-evo-guide-target="btn-iniciar"
+              onClick={e => {
+                e.stopPropagation();
+                carregarDados();
+              }}
+              disabled={carregando}
+              className="px-3 py-1.5 rounded bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-60 text-white font-mono text-xs font-bold uppercase tracking-wider flex items-center space-x-1.5 cursor-pointer shadow-xs transition"
+              title="Consultar e recalcular os Mapas Resumo"
+            >
+              {carregando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              <span>Consultar</span>
+            </button>
           </div>
         </div>
 
-        {/* Linha 2: Filtros de Mês/Trimestre + TipoDoc + Setor + DiaSemana */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#d7e0ea] dark:border-[#1c2b3d]">
+        {/* Linha 2: Zona 3 (Período: Ano + Atalhos + 12 Meses + TipoDoc + Setor + DiaSemana) */}
+        <div
+          data-evo-guide-target="zona-3"
+          onClick={() => assistenteAberto && setPassoAssistente(3)}
+          className={`flex flex-wrap items-center justify-between gap-2 px-2 py-1.5 rounded border transition ${
+            assistenteAberto && passoAssistente === 3
+              ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+              : 'bg-slate-50 dark:bg-[#101c2b] border-[#d7e0ea] dark:border-[#1e344f]'
+          }`}
+        >
           {/* Pílulas Temporais */}
           <div className="flex flex-wrap items-center gap-1">
+            {assistenteAberto && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                  passoAssistente === 3 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                }`}
+              >
+                ③ Período
+              </span>
+            )}
+
+            {/* Seletor de Ano */}
+            <div
+              data-evo-guide-target="ano-selector"
+              className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#0284c7] dark:border-sky-600 rounded px-2 py-0.5 shrink-0"
+            >
+              <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+              <button
+                type="button"
+                onClick={() => onAnoChange(ano - 1)}
+                className="p-0.5 rounded hover:bg-sky-200 dark:hover:bg-[#14304d] text-slate-800 dark:text-slate-100 cursor-pointer"
+                title="Ano Anterior"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <span className="font-mono font-bold text-xs text-slate-900 dark:text-white px-1 min-w-[38px] text-center tabular-nums">
+                {ano}
+              </span>
+              <button
+                type="button"
+                onClick={() => onAnoChange(ano < anoAtual ? ano + 1 : ano)}
+                disabled={ano >= anoAtual}
+                className={`p-0.5 rounded ${
+                  ano >= anoAtual
+                    ? 'opacity-30 cursor-not-allowed text-slate-400'
+                    : 'hover:bg-sky-200 dark:hover:bg-[#14304d] text-slate-800 dark:text-slate-100 cursor-pointer'
+                }`}
+                title="Ano Seguinte"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
             <button
               type="button"
-              onClick={() => {
-                setMesFiltro(null);
-                setTrimestreFiltro(null);
-              }}
+              data-evo-guide-target="periodo-ano-todo"
+              onClick={aplicarAnoTodo}
               className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold border transition cursor-pointer ${
-                mesFiltro === null && trimestreFiltro === null
+                mesFiltro === null && trimestreFiltro === null && (!mesesCustomAssistente || mesesCustomAssistente.size === 0 || mesesCustomAssistente.size === 12)
                   ? 'bg-[#0284c7] border-[#0284c7] text-white'
-                  : 'bg-slate-50 dark:bg-[#101c2b] border-[#d7e0ea] dark:border-[#222f3e] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#162538]'
+                  : 'bg-white dark:bg-[#0c1520] border-[#d7e0ea] dark:border-[#222f3e] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#162538]'
               }`}
             >
               Ano Todo
             </button>
+
+            {ano === anoAtual && (
+              <button
+                type="button"
+                data-evo-guide-target="periodo-mes-atual"
+                onClick={aplicarMesAtual}
+                className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold border transition cursor-pointer ${
+                  mesFiltro === mesAtual && !mesesCustomAssistente
+                    ? 'bg-[#0284c7] border-[#0284c7] text-white'
+                    : 'bg-white dark:bg-[#0c1520] border-[#d7e0ea] dark:border-[#222f3e] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#162538]'
+                }`}
+              >
+                Mês Atual
+              </button>
+            )}
+
             {[1, 2, 3, 4].map(t => (
               <button
                 key={t}
                 type="button"
-                onClick={() => {
-                  setMesFiltro(null);
-                  setTrimestreFiltro(prev => (prev === t ? null : t));
-                }}
+                onClick={() => aplicarTrimestre(t)}
                 className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold border transition cursor-pointer ${
                   trimestreFiltro === t
                     ? 'bg-[#0284c7] border-[#0284c7] text-white'
-                    : 'bg-slate-50 dark:bg-[#101c2b] border-[#d7e0ea] dark:border-[#222f3e] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#162538]'
+                    : 'bg-white dark:bg-[#0c1520] border-[#d7e0ea] dark:border-[#222f3e] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#162538]'
                 }`}
               >
                 {t}T
               </button>
             ))}
             <span className="h-3.5 w-px bg-[#d7e0ea] dark:bg-[#222f3e] mx-0.5" />
-            {MESES.map(m => (
-              <button
-                key={m.num}
-                type="button"
-                onClick={() => {
-                  setTrimestreFiltro(null);
-                  setMesFiltro(prev => (prev === m.num ? null : m.num));
-                }}
-                className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold border transition cursor-pointer ${
-                  mesFiltro === m.num
-                    ? 'bg-[#0284c7] border-[#0284c7] text-white'
-                    : 'bg-slate-50 dark:bg-[#101c2b] border-[#d7e0ea] dark:border-[#222f3e] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#162538]'
-                }`}
-              >
-                {m.nome}
-              </button>
-            ))}
+            {MESES.map(m => {
+              const ativoMes =
+                mesFiltro === m.num ||
+                (mesesCustomAssistente ? mesesCustomAssistente.has(m.num) : false);
+              return (
+                <button
+                  key={m.num}
+                  type="button"
+                  onClick={() => {
+                    setTrimestreFiltro(null);
+                    setMesesCustomAssistente(null);
+                    setMesFiltro(prev => (prev === m.num ? null : m.num));
+                  }}
+                  className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold border transition cursor-pointer ${
+                    ativoMes
+                      ? 'bg-[#0284c7] border-[#0284c7] text-white'
+                      : 'bg-white dark:bg-[#0c1520] border-[#d7e0ea] dark:border-[#222f3e] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#162538]'
+                  }`}
+                >
+                  {m.nome}
+                </button>
+              );
+            })}
           </div>
 
           {/* Dropdowns de Tabela Dinâmica */}
@@ -1717,7 +2100,7 @@ export function MapasResumoView({
             <select
               value={filtroTipoDoc}
               onChange={e => setFiltroTipoDoc(e.target.value)}
-              className="px-2 py-1 rounded text-[11px] font-mono bg-slate-50 dark:bg-[#101c2b] border border-[#d7e0ea] dark:border-[#222f3e] text-slate-800 dark:text-slate-100 cursor-pointer focus:outline-none focus:border-[#0284c7]"
+              className="px-2 py-1 rounded text-[11px] font-mono bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] text-slate-800 dark:text-slate-100 cursor-pointer focus:outline-none focus:border-[#0284c7]"
               title="Filtrar por Tipo de Documento"
             >
               <option value="">Tipo Doc: (Tudo)</option>
@@ -1731,7 +2114,7 @@ export function MapasResumoView({
             <select
               value={filtroSetor}
               onChange={e => setFiltroSetor(e.target.value)}
-              className="px-2 py-1 rounded text-[11px] font-mono bg-slate-50 dark:bg-[#101c2b] border border-[#d7e0ea] dark:border-[#222f3e] text-slate-800 dark:text-slate-100 cursor-pointer focus:outline-none focus:border-[#0284c7]"
+              className="px-2 py-1 rounded text-[11px] font-mono bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] text-slate-800 dark:text-slate-100 cursor-pointer focus:outline-none focus:border-[#0284c7]"
               title="Filtrar por Atividade / Setor"
             >
               <option value="">Setor: (Tudo)</option>
@@ -1745,7 +2128,7 @@ export function MapasResumoView({
             <select
               value={filtroDiaSemana}
               onChange={e => setFiltroDiaSemana(e.target.value)}
-              className="px-2 py-1 rounded text-[11px] font-mono bg-slate-50 dark:bg-[#101c2b] border border-[#d7e0ea] dark:border-[#222f3e] text-slate-800 dark:text-slate-100 cursor-pointer focus:outline-none focus:border-[#0284c7]"
+              className="px-2 py-1 rounded text-[11px] font-mono bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] text-slate-800 dark:text-slate-100 cursor-pointer focus:outline-none focus:border-[#0284c7]"
               title="Filtrar por Dia da Semana"
             >
               <option value="">Dia Semana: (Tudo)</option>
@@ -2595,6 +2978,135 @@ export function MapasResumoView({
             </div>
           </div>
         )}
+      </div>
+        </div>
+
+        {/* Painel Direito Encaixado: Assistente Passo a Passo */}
+        <AssistenteImportacaoPanel
+          aberto={assistenteAberto}
+          onClose={fecharAssistente}
+          modoConsulta={true}
+          moduloTitulo="Mapas Resumo"
+          apiOnline={apiOnlineLocal}
+          caminhoDados={caminhoDestinoLocal}
+          onCaminhoDadosChange={setCaminhoDestinoLocal}
+          tipoOperacao={tipoOperacao}
+          permitirAmbos={false}
+          onTipoOperacaoChange={op => {
+            if (op === 'compras' || op === 'vendas') {
+              setTipoOperacao(op);
+            }
+          }}
+          empresas={entidades
+            .map(e => {
+              const nif = (e.nif || e.nif_cc || '').trim();
+              return {
+                id: nif,
+                cod: e.cod,
+                nif,
+                nome: e.nomecli || nif,
+              };
+            })
+            .filter(e => Boolean(e.id))}
+          selecionadasIds={selecionadasAssistente}
+          onToggleEmpresa={toggleEmpresaAssistente}
+          onSelecionarTodasEmpresas={selecionarTodasAssistente}
+          onLimparEmpresas={limparSelecionadasAssistente}
+          modoPrivacidade={modoPrivacidade}
+          ano={ano}
+          anoAtual={anoAtual}
+          onAnoChange={onAnoChange}
+          mesesSelecionados={mesesAtivosAssistente}
+          onToggleMes={toggleMesAssistente}
+          onSelecionarAnoTodo={aplicarAnoTodo}
+          onSelecionarMesAtual={aplicarMesAtual}
+          onSelecionarTrimestre={aplicarTrimestre}
+          isSyncing={carregando}
+          labelBotaoIniciar="Atualizar Mapas Resumo"
+          onIniciarImportacao={carregarDados}
+          passoAtivo={passoAssistente}
+          onPassoAtivoChange={setPassoAssistente}
+          opcoesExtras={
+            <div className="space-y-2.5 text-xs font-mono">
+              <div>
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">
+                  Vista de Mapa Ativa
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {SUB_VISTAS.map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setSubVista(tab.id)}
+                      className={`px-2 py-1 rounded text-[10px] font-mono font-semibold border transition cursor-pointer ${
+                        subVista === tab.id
+                          ? 'bg-[#0284c7] text-white border-[#0284c7]'
+                          : 'bg-white dark:bg-[#111827] text-slate-800 dark:text-slate-200 border-[#cbd5e1] dark:border-[#334155]'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">
+                  Documentos de Trabalho
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {(
+                    [
+                      { id: 'todos', label: 'Todos Docs' },
+                      { id: 'fiscais', label: 'Omitir Docs Trabalho' },
+                      { id: 'trabalho', label: 'Só Docs Trabalho' },
+                    ] as const
+                  ).map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setFiltroDocsTrabalho(opt.id)}
+                      className={`px-2 py-1 rounded text-[10px] font-mono font-semibold border transition cursor-pointer ${
+                        filtroDocsTrabalho === opt.id
+                          ? 'bg-slate-800 dark:bg-sky-500 text-white dark:text-slate-950 border-slate-800 dark:border-sky-500'
+                          : 'bg-white dark:bg-[#111827] text-slate-800 dark:text-slate-200 border-[#cbd5e1] dark:border-[#334155]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-1 border-t border-[#cbd5e1] dark:border-[#2a3a54] space-y-1.5">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                  Exportação Rápida Excel
+                </span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleExportarMapaAtual}
+                    disabled={carregando}
+                    className="px-2 py-1.5 rounded text-[10px] font-mono font-semibold border border-[#cbd5e1] dark:border-[#334155] bg-white dark:bg-[#111827] hover:bg-slate-100 dark:hover:bg-[#1e293b] text-slate-800 dark:text-slate-200 flex items-center justify-center space-x-1 cursor-pointer"
+                  >
+                    <Download className="w-3 h-3 text-[#0284c7] dark:text-sky-400" />
+                    <span>Mapa Atual</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportarTodosMapas}
+                    disabled={carregando}
+                    className="px-2 py-1.5 rounded text-[10px] font-mono font-semibold border border-[#0284c7] bg-[#0284c7] hover:bg-[#0369a1] text-white flex items-center justify-center space-x-1 cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-3 h-3" />
+                    <span>Todos os Mapas</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          }
+        />
+
       </div>
     </div>
   );
