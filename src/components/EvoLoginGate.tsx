@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Lock, User, ShieldAlert, ArrowRight, Sun, Moon, ShieldCheck, KeyRound, Building2, Mail, Phone } from "lucide-react";
+import { Lock, User, ShieldAlert, ArrowRight, Sun, Moon, ShieldCheck, KeyRound, Building2, Mail, Phone, Laptop } from "lucide-react";
 import { validateEmail, validatePhone } from "../lib/contactValidation";
+import { obterDeviceIdPosto } from "../lib/localFsBridge";
 
 export interface AuthenticatedEvoUser {
   id: string;
@@ -11,6 +12,8 @@ export interface AuthenticatedEvoUser {
   telefone?: string;
   token?: string;
   client_code?: string;
+  session_context?: "OFFICE" | "TELEWORK";
+  telework_expires_at?: string;
   offices?: any[];
   preferred_office_id?: string;
 }
@@ -61,7 +64,16 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => {
+    try {
+      const kick = sessionStorage.getItem("gexcel_evo06_security_kick");
+      if (kick) {
+        sessionStorage.removeItem("gexcel_evo06_security_kick");
+        return kick;
+      }
+    } catch {}
+    return null;
+  });
 
   const [inviteToken, setInviteToken] = useState<string>("");
   const [inspectedTenant, setInspectedTenant] = useState<InspectedTenant | null>(null);
@@ -69,6 +81,9 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
   const [firstAdminEmail, setFirstAdminEmail] = useState("");
   const [firstAdminTelefone, setFirstAdminTelefone] = useState("");
   const [firstOfficeName, setFirstOfficeName] = useState("Escritório Principal");
+  const [firstOfficeNif, setFirstOfficeNif] = useState("");
+  const [needsPairingCode, setNeedsPairingCode] = useState(false);
+  const [pairingCode, setPairingCode] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -81,6 +96,10 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
         if (data?.ok && data?.tenant) {
           setInspectedTenant(data.tenant);
           setFirstOfficeName(String(data.tenant.office_name || "Escritório Principal"));
+          const rawNif = String(data.tenant.nif || "").replace(/\D/g, "");
+          if (rawNif.length === 9 && !rawNif.startsWith("599000000")) {
+            setFirstOfficeNif(rawNif);
+          }
         } else if (data?.error) {
           setError(data.error);
         }
@@ -92,12 +111,16 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
 
   const handleActivateFirstAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const u = username.trim();
     const p = password.trim();
     const n = firstAdminNome.trim();
     const oName = firstOfficeName.trim() || inspectedTenant?.office_name || "Escritório Principal";
-    if (!u || !p || !n) {
-      setError("Preencha o nome completo, o utilizador e a palavra-passe.");
+    const oNif = firstOfficeNif.replace(/\D/g, "");
+    if (!p || !n) {
+      setError("Preencha o nome completo e a palavra-passe.");
+      return;
+    }
+    if (oNif.length !== 9) {
+      setError("Indique o NIF válido do escritório (9 dígitos).");
       return;
     }
     const checkEmail = validateEmail(firstAdminEmail);
@@ -110,7 +133,7 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
       setError(checkPhone.error);
       return;
     }
-    if (BLOCKED_DEV_IDENTIFIERS.has(u.toLowerCase())) {
+    if (BLOCKED_DEV_IDENTIFIERS.has(checkEmail.normalized.toLowerCase())) {
       setError("Por motivos de segurança, identificadores de desenvolvimento não podem ser utilizados.");
       return;
     }
@@ -124,11 +147,12 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
         body: JSON.stringify({
           token: inviteToken,
           nome: n,
-          username: u,
+          username: checkEmail.normalized,
           password: p,
           email: checkEmail.normalized,
           telefone: checkPhone.normalized,
           officeName: oName,
+          officeNif: oNif,
           appCodigo,
         }),
       });
@@ -181,28 +205,41 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
     setLoading(true);
     setError(null);
     try {
+      const devId = obterDeviceIdPosto();
       const resp = await fetch("/api/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Evo-Device-Id": devId,
+        },
         body: JSON.stringify({
           username: u,
           password: p,
           appCodigo,
           isDevChannel,
+          deviceId: devId,
+          pairingCode: needsPairingCode ? pairingCode.trim().toUpperCase() : "",
         }),
       });
       const data = await resp.json().catch(() => null);
       if (resp.ok && data?.ok && data?.user) {
+        setNeedsPairingCode(false);
+        setPairingCode("");
         const officesArr = data.offices || data.user?.offices || [];
         const logged: AuthenticatedEvoUser = {
           ...data.user,
           token: data.token,
           client_code: data.user?.client_code || inspectedTenant?.client_code,
+          session_context: data.user?.session_context || "OFFICE",
+          telework_expires_at: data.user?.telework_expires_at || "",
           offices: officesArr,
           preferred_office_id: inspectedTenant?.office_id,
         };
         onAuthenticated(logged);
         return;
+      }
+      if (data?.code === "TELEWORK_PAIRING_REQUIRED") {
+        setNeedsPairingCode(true);
       }
       setError(data?.error || data?.detail || "Credenciais inválidas.");
     } catch {
@@ -294,18 +331,34 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
           <form onSubmit={isFirstAdminOnboarding ? handleActivateFirstAdmin : handleSubmit} className="space-y-4">
             {isFirstAdminOnboarding && (
               <>
-                <div>
-                  <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
-                    Nome deste Escritório ({inspectedTenant?.office_id || 'Principal'})
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={firstOfficeName}
-                    onChange={(e) => setFirstOfficeName(e.target.value)}
-                    placeholder="Ex.: Escritório Sede / Maia"
-                    className="w-full px-3 py-2.5 rounded-lg border border-border bg-slate-50 dark:bg-[#07121c] text-xs text-foreground focus:outline-none focus:border-primary"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="sm:col-span-2">
+                    <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
+                      Nome deste Escritório ({inspectedTenant?.office_id || 'Principal'})
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={firstOfficeName}
+                      onChange={(e) => setFirstOfficeName(e.target.value)}
+                      placeholder="Ex.: Escritório Sede / Maia"
+                      className="w-full px-3 py-2.5 rounded-lg border border-border bg-slate-50 dark:bg-[#07121c] text-xs text-foreground focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
+                      NIF Escritório *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={9}
+                      value={firstOfficeNif}
+                      onChange={(e) => setFirstOfficeNif(e.target.value.replace(/\D/g, "").slice(0, 9))}
+                      placeholder="500000000"
+                      className="w-full px-3 py-2.5 rounded-lg border border-border bg-slate-50 dark:bg-[#07121c] text-xs font-mono text-foreground focus:outline-none focus:border-primary"
+                    />
+                  </div>
                 </div>
                 <div>
                   <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
@@ -322,7 +375,7 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
                 </div>
                 <div>
                   <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
-                    E-mail Profissional *
+                    E-mail Único de Login *
                   </label>
                   <div className="relative">
                     <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -358,27 +411,49 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
               </>
             )}
 
-            <div>
-              <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
-                Utilizador ou Email
-              </label>
-              <div className="relative">
-                <User
-                  size={14}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                />
+            {!isFirstAdminOnboarding && (
+              <div>
+                <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
+                  E-mail de Acesso
+                </label>
+                <div className="relative">
+                  <User
+                    size={14}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  />
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    autoComplete="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="email@escritorio.pt"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-border bg-slate-50 dark:bg-[#07121c] text-xs font-mono text-foreground focus:outline-none focus:border-primary"
+                  />
+                </div>
+              </div>
+            )}
+
+            {!isFirstAdminOnboarding && needsPairingCode && (
+              <div className="p-3 rounded-lg bg-amber-50 dark:bg-[#241a08] border border-amber-300 dark:border-amber-700 space-y-1.5">
+                <label className="flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-amber-900 dark:text-amber-200">
+                  <Laptop size={13} />
+                  <span>Código Único do Portátil de Casa *</span>
+                </label>
                 <input
                   type="text"
                   required
-                  autoFocus
-                  autoComplete="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="utilizador ou email@empresa.pt"
-                  className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-border bg-slate-50 dark:bg-[#07121c] text-xs font-mono text-foreground focus:outline-none focus:border-primary"
+                  value={pairingCode}
+                  onChange={(e) => setPairingCode(e.target.value.toUpperCase())}
+                  placeholder="TW-XXXXXX"
+                  className="w-full px-3 py-2 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#0c1520] text-xs font-mono font-bold tracking-wider text-foreground focus:outline-none focus:border-primary"
                 />
+                <p className="font-mono text-[10px] text-amber-900 dark:text-amber-200">
+                  Este código vincula apenas este equipamento à sua rede de casa.
+                </p>
               </div>
-            </div>
+            )}
 
             <div>
               <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">

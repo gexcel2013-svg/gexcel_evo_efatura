@@ -39,6 +39,33 @@ export interface CentroDadosItem {
   updated_at?: string;
 }
 
+export interface UserTeleworkInfo {
+  mode: 'OFFICE_ONLY' | 'PENDING_PAIRING' | 'ACTIVE' | 'FROZEN';
+  rawMode?: string;
+  expiresAt?: string;
+  boundIp?: string;
+  frozen?: boolean;
+  freezeReason?: string;
+  pendingCode?: string;
+  activeExternalNow?: boolean;
+}
+
+export interface OfficeTrustedIpInfo {
+  ip: string;
+  label: string;
+  addedAt?: string;
+}
+
+export interface ClientSecurityAlertInfo {
+  id: string;
+  userId?: string;
+  username?: string;
+  alertType: string;
+  message: string;
+  ipDetected?: string;
+  createdAt?: string;
+}
+
 export interface AppUser {
   id: number;
   cloud_id?: string;
@@ -53,6 +80,9 @@ export interface AppUser {
   office_id?: string;
   office_ids?: string[];
   centros_permitidos?: string[];
+  session_context?: 'OFFICE' | 'TELEWORK';
+  telework_expires_at?: string;
+  telework?: UserTeleworkInfo;
   created_at?: string;
   ultimo_login?: string;
 }

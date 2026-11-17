@@ -16,11 +16,20 @@ import {
   FolderOpen,
   Copy,
   Plus,
-  Building2
+  Building2,
+  Laptop,
+  Wifi,
+  ShieldAlert
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { validateEmail, validatePhone, formatPhoneDisplay } from '../lib/contactValidation';
-import type { AppUser, CentroDadosItem, LicensedOfficeInfo } from '../types/auth';
+import type {
+  AppUser,
+  CentroDadosItem,
+  LicensedOfficeInfo,
+  OfficeTrustedIpInfo,
+  ClientSecurityAlertInfo,
+} from '../types/auth';
 import {
   obterLocalFsCentroConfig,
   obterLocalFsTodosCentrosMap,
@@ -34,7 +43,7 @@ import {
   type LocalFsCentroConfig,
 } from '../lib/localFsBridge';
 
-type UserSortColumn = 'nome' | 'email' | 'role' | 'centros' | 'ativo' | 'ultimo_login';
+type UserSortColumn = 'nome' | 'email' | 'role' | 'centros' | 'teletrabalho' | 'ativo' | 'ultimo_login';
 
 function isWindowsPath(p?: string): boolean {
   if (!p) return false;
@@ -128,9 +137,15 @@ export function ConfigView() {
     db_path: isWindowsPath(appConfig?.db_path) ? (appConfig?.db_path || '') : '',
   });
 
-  // Lista de utilizadores e ordenação universal
+  // Lista de utilizadores, segurança escritório/teletrabalho e ordenação universal
   const [utilizadores, setUtilizadores] = useState<AppUser[]>([]);
   const [cloudOfficesSummary, setCloudOfficesSummary] = useState<LicensedOfficeInfo[]>([]);
+  const [officeTrustedIps, setOfficeTrustedIps] = useState<OfficeTrustedIpInfo[]>([]);
+  const [securityAlerts, setSecurityAlerts] = useState<ClientSecurityAlertInfo[]>([]);
+  const [activeExternalCount, setActiveExternalCount] = useState<number>(0);
+  const [teleworkBusyId, setTeleworkBusyId] = useState<string | null>(null);
+  const [teleworkPickerUserId, setTeleworkPickerUserId] = useState<string | null>(null);
+  const [novoCodigoCasaBanner, setNovoCodigoCasaBanner] = useState<{ nome: string; code: string; expiresAt: string } | null>(null);
   const [carregandoUsers, setCarregandoUsers] = useState<boolean>(false);
   const [sortCol, setSortCol] = useState<UserSortColumn>('nome');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -328,6 +343,45 @@ export function ConfigView() {
     [isCloudClient, isAdm, isSuper, getHeaders, refreshClientCloudState]
   );
 
+  const aplicarEstadoNuvem = useCallback((data: any) => {
+    if (!data?.ok) return;
+    if (Array.isArray(data.offices)) {
+      setCloudOfficesSummary(data.offices);
+    }
+    if (Array.isArray(data.office_trusted_ips)) {
+      setOfficeTrustedIps(data.office_trusted_ips);
+    }
+    if (Array.isArray(data.security_alerts)) {
+      setSecurityAlerts(data.security_alerts);
+    }
+    if (typeof data.active_external_count === 'number') {
+      setActiveExternalCount(data.active_external_count);
+    }
+    const rawUsers = Array.isArray(data.users) ? data.users : [];
+    const mapped: AppUser[] = rawUsers.map((u: any, idx: number) => {
+      const roleUp = String(u.role || 'OPERADOR').toUpperCase();
+      const offs = Array.isArray(u.officeIds) ? u.officeIds.map(String) : [];
+      return {
+        id: idx + 1,
+        cloud_id: String(u.id),
+        username: String(u.username || ''),
+        nome: String(u.nome || u.username || ''),
+        email: String(u.email || ''),
+        telefone: String(u.telefone || ''),
+        role: roleUp === 'ADMIN' ? 'admin' : 'subutilizador',
+        ativo: Boolean(u.ativo),
+        is_system: false,
+        client_code: data.client_code,
+        office_ids: offs,
+        centros_permitidos: roleUp === 'ADMIN' ? ['*'] : offs,
+        telework: u.telework,
+        ultimo_login: u.ultimo_login || '',
+        created_at: u.created_at || '',
+      };
+    });
+    setUtilizadores(mapped);
+  }, []);
+
   const carregarListaUtilizadores = useCallback(async () => {
     setCarregandoUsers(true);
     try {
@@ -339,31 +393,7 @@ export function ConfigView() {
         if (res.ok) {
           const data = await res.json().catch(() => null);
           if (data?.ok) {
-            if (Array.isArray(data.offices)) {
-              setCloudOfficesSummary(data.offices);
-            }
-            const rawUsers = Array.isArray(data.users) ? data.users : [];
-            const mapped: AppUser[] = rawUsers.map((u: any, idx: number) => {
-              const roleUp = String(u.role || 'OPERADOR').toUpperCase();
-              const offs = Array.isArray(u.officeIds) ? u.officeIds.map(String) : [];
-              return {
-                id: idx + 1,
-                cloud_id: String(u.id),
-                username: String(u.username || ''),
-                nome: String(u.nome || u.username || ''),
-                email: String(u.email || ''),
-                telefone: String(u.telefone || ''),
-                role: roleUp === 'ADMIN' ? 'admin' : 'subutilizador',
-                ativo: Boolean(u.ativo),
-                is_system: false,
-                client_code: data.client_code,
-                office_ids: offs,
-                centros_permitidos: roleUp === 'ADMIN' ? ['*'] : offs,
-                ultimo_login: u.ultimo_login || '',
-                created_at: u.created_at || '',
-              };
-            });
-            setUtilizadores(mapped);
+            aplicarEstadoNuvem(data);
             setCarregandoUsers(false);
             return;
           }
@@ -374,7 +404,7 @@ export function ConfigView() {
     } finally {
       setCarregandoUsers(false);
     }
-  }, [isCloudClient, getHeaders, refreshUsers]);
+  }, [isCloudClient, getHeaders, refreshUsers, aplicarEstadoNuvem]);
 
   useEffect(() => {
     carregarListaUtilizadores();
@@ -447,6 +477,11 @@ export function ConfigView() {
         cmp = a.role.localeCompare(b.role, 'pt');
       } else if (sortCol === 'centros') {
         cmp = formatarCentrosUser(a).localeCompare(formatarCentrosUser(b), 'pt');
+      } else if (sortCol === 'teletrabalho') {
+        const orderMap: Record<string, number> = { ACTIVE: 1, PENDING_PAIRING: 2, FROZEN: 3, OFFICE_ONLY: 4 };
+        const ma = a.role === 'admin' ? 0 : (orderMap[a.telework?.mode || 'OFFICE_ONLY'] ?? 5);
+        const mb = b.role === 'admin' ? 0 : (orderMap[b.telework?.mode || 'OFFICE_ONLY'] ?? 5);
+        cmp = ma - mb;
       } else if (sortCol === 'ativo') {
         cmp = (a.ativo === b.ativo) ? 0 : a.ativo ? -1 : 1;
       } else if (sortCol === 'ultimo_login') {
@@ -896,13 +931,14 @@ export function ConfigView() {
           setSalvandoUser(false);
           return;
         }
+        const effectiveUname = userEmEdicao ? (formUsername.trim() || emailCheck.normalized) : emailCheck.normalized;
         const res = await fetch('/api/auth/client/users/save', {
           method: 'POST',
           headers: getHeaders(),
           body: JSON.stringify({
             id: userEmEdicao?.cloud_id,
             nome: formNome.trim(),
-            username: formUsername.trim(),
+            username: effectiveUname,
             email: emailCheck.normalized,
             telefone: phoneCheck.normalized,
             role: formRole === 'admin' ? 'ADMIN' : 'OPERADOR',
@@ -914,12 +950,12 @@ export function ConfigView() {
         const data = await res.json().catch(() => null);
         if (res.ok && data?.ok) {
           setModalUserAberto(false);
-          await carregarListaUtilizadores();
+          aplicarEstadoNuvem(data);
           await refreshClientCloudState();
           setMensagemSucesso(
             userEmEdicao
-              ? `Utilizador '${formUsername}' atualizado com sucesso.`
-              : `Utilizador '${formUsername}' criado e sincronizado na conta da empresa.`
+              ? `Utilizador '${emailCheck.normalized}' atualizado com sucesso.`
+              : `Utilizador '${emailCheck.normalized}' criado e sincronizado na conta da empresa.`
           );
         } else {
           setErroFormUser(data?.detail || data?.error || 'Falha ao guardar utilizador.');
@@ -982,12 +1018,13 @@ export function ConfigView() {
           return;
         }
 
+        const effectiveUnameLocal = formUsername.trim() || emailCheck.normalized;
         const res = await fetch('http://127.0.0.1:8015/api/app/users', {
           method: 'POST',
           headers: getHeaders(),
           body: JSON.stringify({
             nome: formNome.trim(),
-            username: formUsername.trim(),
+            username: effectiveUnameLocal,
             email: emailCheck.normalized,
             telefone: phoneCheck.normalized,
             role: formRole,
@@ -1000,7 +1037,7 @@ export function ConfigView() {
           setModalUserAberto(false);
           await carregarListaUtilizadores();
           await refreshConfig();
-          setMensagemSucesso(`Utilizador '${formUsername}' criado com sucesso.`);
+          setMensagemSucesso(`Utilizador '${effectiveUnameLocal}' criado com sucesso.`);
         } else {
           const err = await res.json();
           setErroFormUser(err.detail || 'Falha ao criar utilizador.');
@@ -1070,6 +1107,96 @@ export function ConfigView() {
     } catch (e: any) {
       alert(e.message || 'Erro de comunicação.');
     }
+  };
+
+  const handleAutorizarCasa = async (u: AppUser, durationDays: 1 | 7 | 30) => {
+    if (!u.cloud_id) return;
+    setTeleworkBusyId(u.cloud_id);
+    setMensagemErro(null);
+    setMensagemSucesso(null);
+    try {
+      const res = await fetch('/api/auth/client/users/telework/authorize', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ userId: u.cloud_id, durationDays }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok) {
+        aplicarEstadoNuvem(data);
+        setTeleworkPickerUserId(null);
+        setNovoCodigoCasaBanner({
+          nome: u.nome,
+          code: String(data.pairingCode || ''),
+          expiresAt: String(data.expiresAt || ''),
+        });
+        setMensagemSucesso(
+          `Teletrabalho autorizado para ${u.nome} (${durationDays} ${durationDays === 1 ? 'dia' : 'dias'}). Código de emparelhamento: ${data.pairingCode}`
+        );
+      } else {
+        setMensagemErro(data?.detail || data?.error || 'Não foi possível autorizar o acesso externo.');
+      }
+    } finally {
+      setTeleworkBusyId(null);
+    }
+  };
+
+  const handleCortarCasa = async (u: AppUser) => {
+    if (!u.cloud_id) return;
+    setTeleworkBusyId(u.cloud_id);
+    setMensagemErro(null);
+    setMensagemSucesso(null);
+    try {
+      const res = await fetch('/api/auth/client/users/telework/revoke', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ userId: u.cloud_id }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok) {
+        aplicarEstadoNuvem(data);
+        setTeleworkPickerUserId(null);
+        setMensagemSucesso(`Acesso externo cortado de imediato. '${u.nome}' regressou a «Só no Escritório».`);
+      } else {
+        setMensagemErro(data?.detail || data?.error || 'Falha ao cortar sessão externa.');
+      }
+    } finally {
+      setTeleworkBusyId(null);
+    }
+  };
+
+  const handleAutorizarRedeAtualEscritorio = async () => {
+    setMensagemErro(null);
+    setMensagemSucesso(null);
+    try {
+      const res = await fetch('/api/auth/client/office/trust-current-ip', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ label: activeCentroSelecionado?.nome || 'Rede do Escritório' }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok) {
+        aplicarEstadoNuvem(data);
+        setMensagemSucesso(`Rede atual (${data.registeredIp || 'IP'}) registada como rede oficial do escritório.`);
+      } else {
+        setMensagemErro(data?.detail || data?.error || 'Não foi possível autorizar esta rede.');
+      }
+    } catch {
+      setMensagemErro('Erro de comunicação ao registar a rede do escritório.');
+    }
+  };
+
+  const handleArquivarAlertaSeguranca = async (alertId: string) => {
+    try {
+      const res = await fetch('/api/auth/client/alerts/dismiss', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ alertId }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok) {
+        aplicarEstadoNuvem(data);
+      }
+    } catch {}
   };
 
   const renderSortIndicator = (col: UserSortColumn) => {
@@ -1798,12 +1925,106 @@ export function ConfigView() {
               </div>
             )}
 
+            {isCloudClient && (isAdm || isSuper) && (
+              <div className="p-3 rounded-md bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] text-slate-800 dark:text-slate-200">
+                    <Wifi className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                    <span>
+                      Rede do Escritório:{' '}
+                      <strong>
+                        {officeTrustedIps.length > 0
+                          ? officeTrustedIps.map(item => item.ip).join(', ')
+                          : 'Por registar'}
+                      </strong>
+                    </span>
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded border font-semibold ${
+                      activeExternalCount > 0
+                        ? 'bg-emerald-50 dark:bg-[#091e1a] border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200'
+                        : 'bg-white dark:bg-[#0c1520] border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <Laptop className="w-3.5 h-3.5" />
+                    <span>
+                      {activeExternalCount > 0
+                        ? `🟢 ${activeExternalCount} em Teletrabalho Ativo`
+                        : '🔒 Todos Só no Escritório'}
+                    </span>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAutorizarRedeAtualEscritorio}
+                  className="px-3 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-sky-50 dark:hover:bg-[#0a1929] border border-sky-300 dark:border-sky-700 text-[#0284c7] dark:text-sky-300 font-semibold cursor-pointer transition flex items-center gap-1.5"
+                >
+                  <Wifi className="w-3.5 h-3.5" />
+                  <span>Autorizar Rede Atual como Escritório</span>
+                </button>
+              </div>
+            )}
+
+            {isCloudClient && (isAdm || isSuper) && securityAlerts.length > 0 && (
+              <div className="p-3 rounded-md bg-rose-50 dark:bg-[#290f14] border border-rose-300 dark:border-rose-800 space-y-2 font-mono text-xs">
+                <div className="flex items-center gap-2 font-bold text-rose-800 dark:text-rose-200">
+                  <ShieldAlert className="w-4 h-4 shrink-0" />
+                  <span>Alertas de Segurança ({securityAlerts.length})</span>
+                </div>
+                <div className="space-y-1.5">
+                  {securityAlerts.map(al => (
+                    <div
+                      key={al.id}
+                      className="p-2 rounded bg-white dark:bg-[#0c1520] border border-rose-200 dark:border-rose-900 flex items-center justify-between gap-2 text-[11px]"
+                    >
+                      <span className="text-slate-800 dark:text-slate-200">{al.message}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleArquivarAlertaSeguranca(al.id)}
+                        className="px-2 py-1 rounded bg-rose-100 dark:bg-[#3b151d] text-rose-800 dark:text-rose-200 border border-rose-300 dark:border-rose-700 font-semibold shrink-0 cursor-pointer"
+                      >
+                        Arquivar
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {novoCodigoCasaBanner && (
+              <div className="p-3 rounded-md bg-emerald-50 dark:bg-[#091e1a] border border-emerald-300 dark:border-emerald-700 flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-emerald-950 dark:text-emerald-100">
+                <div>
+                  <span className="font-semibold">Código único para o portátil de {novoCodigoCasaBanner.nome}: </span>
+                  <span className="px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-emerald-400 dark:border-emerald-600 font-bold tracking-wider">
+                    {novoCodigoCasaBanner.code}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleCopiarCaminho(novoCodigoCasaBanner.code, 'Código de Teletrabalho')}
+                    className="px-2.5 py-1 rounded bg-white dark:bg-[#0c1520] border border-emerald-400 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>Copiar Código</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNovoCodigoCasaBanner(null)}
+                    className="p-1 rounded text-emerald-800 dark:text-emerald-200 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="overflow-x-auto rounded border border-slate-300 dark:border-[#222f3e]">
               <table className="w-full text-left text-xs font-mono">
                 <thead className="bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border-b border-slate-300 dark:border-[#222f3e] select-none">
                   <tr>
                     <th onClick={() => handleSortUsers('nome')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
-                      Nome / Utilizador {renderSortIndicator('nome')}
+                      Nome / E-mail {renderSortIndicator('nome')}
                     </th>
                     <th onClick={() => handleSortUsers('email')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
                       Contacto (E-mail / WhatsApp) {renderSortIndicator('email')}
@@ -1813,6 +2034,9 @@ export function ConfigView() {
                     </th>
                     <th onClick={() => handleSortUsers('centros')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
                       Centros Autorizados {renderSortIndicator('centros')}
+                    </th>
+                    <th onClick={() => handleSortUsers('teletrabalho')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
+                      Local / Teletrabalho {renderSortIndicator('teletrabalho')}
                     </th>
                     <th onClick={() => handleSortUsers('ativo')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
                       Estado {renderSortIndicator('ativo')}
@@ -1826,7 +2050,7 @@ export function ConfigView() {
                 <tbody className="divide-y divide-slate-200 dark:divide-[#1b2b3d] bg-white dark:bg-[#0c1520]">
                   {utilizadoresOrdenados.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-6 text-center text-slate-600 dark:text-slate-400">
+                      <td colSpan={8} className="py-6 text-center text-slate-600 dark:text-slate-400">
                         Nenhum operador adicional registado. Clique em &ldquo;+ Adicionar Operador&rdquo; para criar acessos para a sua equipa.
                       </td>
                     </tr>
@@ -1836,7 +2060,9 @@ export function ConfigView() {
                         <td className="py-2.5 px-3">
                           <div className="flex items-center space-x-2">
                             <span className="font-semibold text-foreground">{u.nome}</span>
-                            <span className="text-[10px] text-slate-600 dark:text-slate-400">@{u.username}</span>
+                            {u.username && u.username.toLowerCase() !== (u.email || '').toLowerCase() && (
+                              <span className="text-[10px] text-slate-600 dark:text-slate-400">@{u.username}</span>
+                            )}
                           </div>
                         </td>
                         <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">
@@ -1862,6 +2088,69 @@ export function ConfigView() {
                           </span>
                         </td>
                         <td className="py-2.5 px-3">
+                          {(() => {
+                            if (u.role === 'admin') {
+                              return (
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-sky-50 dark:bg-[#0a1929] text-sky-900 dark:text-sky-200 border border-sky-300 dark:border-sky-800">
+                                  🏢 Escritório & Gestão
+                                </span>
+                              );
+                            }
+                            const tw = u.telework;
+                            if (tw?.mode === 'FROZEN') {
+                              return (
+                                <span
+                                  title={tw.freezeReason || 'Sessão externa congelada por segurança'}
+                                  className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-50 dark:bg-[#290f14] text-rose-800 dark:text-rose-200 border border-rose-300 dark:border-rose-800"
+                                >
+                                  🚨 Congelado
+                                </span>
+                              );
+                            }
+                            if (tw?.mode === 'PENDING_PAIRING') {
+                              return (
+                                <div className="inline-flex items-center gap-1">
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-50 dark:bg-[#241a08] text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700">
+                                    🔑 {tw.pendingCode || 'A emparelhar'}
+                                  </span>
+                                  {tw.pendingCode && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopiarCaminho(tw.pendingCode || '', 'Código de Teletrabalho')}
+                                      title="Copiar código para enviar ao colaborador"
+                                      className="p-1 rounded bg-white dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300 cursor-pointer"
+                                    >
+                                      <Copy className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            }
+                            if (tw?.mode === 'ACTIVE') {
+                              const expDatePt = tw.expiresAt
+                                ? tw.expiresAt.slice(0, 10).split('-').reverse().slice(0, 2).join('/')
+                                : '';
+                              return (
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700">
+                                    🏠 Casa{expDatePt ? ` até ${expDatePt}` : ''}
+                                  </span>
+                                  {tw.activeExternalNow && (
+                                    <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">
+                                      🟢 Online fora
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            }
+                            return (
+                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-100 dark:bg-[#132233] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-[#222f3e]">
+                                🏢 Só no Escritório
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td className="py-2.5 px-3">
                           <span className={`text-[10px] font-semibold flex items-center space-x-1 ${
                             u.ativo ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
                           }`}>
@@ -1873,7 +2162,52 @@ export function ConfigView() {
                           {u.ultimo_login ? new Date(u.ultimo_login).toLocaleDateString('pt-PT') : 'Nunca'}
                         </td>
                         <td className="py-2.5 px-3 text-right">
-                          <div className="flex items-center justify-end space-x-1">
+                          <div className="flex flex-wrap items-center justify-end gap-1">
+                            {isCloudClient && (isAdm || isSuper) && u.role === 'subutilizador' && u.cloud_id && (
+                              <>
+                                {teleworkPickerUserId === u.cloud_id ? (
+                                  <div className="inline-flex items-center gap-1 p-1 rounded bg-amber-50 dark:bg-[#241a08] border border-amber-300 dark:border-amber-700">
+                                    {([1, 7, 30] as const).map(d => (
+                                      <button
+                                        key={d}
+                                        type="button"
+                                        disabled={teleworkBusyId === u.cloud_id}
+                                        onClick={() => handleAutorizarCasa(u, d)}
+                                        className="px-1.5 py-0.5 rounded bg-white dark:bg-[#0c1520] hover:bg-sky-50 border border-amber-300 dark:border-amber-700 text-[10px] font-bold text-foreground cursor-pointer"
+                                      >
+                                        {d}d
+                                      </button>
+                                    ))}
+                                    <button
+                                      type="button"
+                                      onClick={() => setTeleworkPickerUserId(null)}
+                                      className="p-0.5 text-slate-600 dark:text-slate-300 cursor-pointer"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={teleworkBusyId === u.cloud_id}
+                                    onClick={() => setTeleworkPickerUserId(u.cloud_id || null)}
+                                    className="px-2 py-1 rounded bg-sky-50 dark:bg-[#0a1929] hover:bg-sky-100 dark:hover:bg-[#132b45] border border-sky-300 dark:border-sky-700 text-[#0284c7] dark:text-sky-300 text-[10px] font-semibold cursor-pointer"
+                                  >
+                                    Autorizar Casa
+                                  </button>
+                                )}
+                                {u.telework && u.telework.mode !== 'OFFICE_ONLY' && (
+                                  <button
+                                    type="button"
+                                    disabled={teleworkBusyId === u.cloud_id}
+                                    onClick={() => handleCortarCasa(u)}
+                                    className="px-2 py-1 rounded bg-rose-50 dark:bg-[#290f14] hover:bg-rose-100 border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 text-[10px] font-semibold cursor-pointer"
+                                  >
+                                    Cortar Casa
+                                  </button>
+                                )}
+                              </>
+                            )}
                             {(() => {
                               const isSelf = currentUser && u.id === currentUser.id;
                               const podeEditar = isSuper || isAdm || (isSub && isSelf) || !currentUser;
@@ -2104,25 +2438,24 @@ export function ConfigView() {
                 />
               </div>
 
-              <div>
-                <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
-                  Nome de Utilizador (Login)
-                </label>
-                <input
-                  type="text"
-                  required
-                  disabled={!!userEmEdicao}
-                  placeholder="utilizador"
-                  value={formUsername}
-                  onChange={e => setFormUsername(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden focus:ring-1 focus:ring-[#0284c7] disabled:opacity-50"
-                />
-              </div>
+              {userEmEdicao && formUsername && formUsername.toLowerCase() !== formEmail.toLowerCase() && (
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                    Identificador Interno
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={formUsername}
+                    className="w-full h-8 px-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-foreground outline-hidden disabled:opacity-50"
+                  />
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
-                    E-mail Profissional *
+                    E-mail Único de Login *
                   </label>
                   <input
                     type="email"

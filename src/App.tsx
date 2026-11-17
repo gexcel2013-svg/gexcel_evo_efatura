@@ -34,6 +34,8 @@ function AppContent() {
     showSetupWizard,
     setShowLoginModal,
     setExternalSession,
+    isTeleworkExternal,
+    teleworkExpiresAt,
   } = useAuth();
   const [centroKey, setCentroKey] = useState<number>(0);
   const [localFsRev, setLocalFsRev] = useState<number>(0);
@@ -318,6 +320,8 @@ function AppContent() {
             ativo: true,
             is_system: rawRole === 'DEV' || rawRole === 'SUPERADMIN',
             client_code: u.client_code,
+            session_context: u.session_context || 'OFFICE',
+            telework_expires_at: u.telework_expires_at || '',
             created_at: new Date().toISOString(),
           };
           setExternalSession(mappedUser, u.token, {
@@ -368,6 +372,16 @@ function AppContent() {
 
       {/* Área Principal de Trabalho Delimitada (z-10) */}
       <main className="flex-1 flex flex-col p-2 sm:p-3.5 min-h-0 overflow-hidden relative z-10">
+        {isTeleworkExternal && (
+          <div className="mb-2 px-3 py-1.5 rounded-md bg-amber-50 dark:bg-[#241a08] border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 font-mono text-[11px] flex items-center justify-between gap-2 shrink-0">
+            <span className="font-semibold">
+              🏠 Teletrabalho Blindado · Sessão externa protegida{teleworkExpiresAt ? ` (válida até ${teleworkExpiresAt.slice(0, 10).split('-').reverse().join('-')})` : ''}
+            </span>
+            <span className="text-[10px] font-medium">
+              Senhas AT e exportações em lote desativadas fora do escritório
+            </span>
+          </div>
+        )}
         <div key={centroKey} className="flex-1 flex flex-col min-h-0 overflow-y-auto md:overflow-hidden">
           {activeTab === 'inicio' ? (
             <InicioHubView

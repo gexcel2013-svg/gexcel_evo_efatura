@@ -4892,6 +4892,7 @@ def api_limpar_base_dados(
 
 @app.get("/api/faturas/consultar")
 def api_consultar_faturas(
+    request: Request,
     tipo: str = "compras",
     nif: str = "",
     data_inicio: str = "",
@@ -4904,6 +4905,9 @@ def api_consultar_faturas(
     ordem: str = "desc"
 ):
     """Endpoint oficial para consulta e drilldown de faturas e linhas individuais."""
+    block_resp = _enforcar_politica_teletrabalho(request, nif_acedido=nif)
+    if block_resp is not None:
+        return block_resp
     try:
         dados = pb_client.consultar_faturas_linhas(
             tipo=tipo,
@@ -4959,11 +4963,14 @@ def api_consultar_inconformidades(
 # ENDPOINTS OFICIAIS DE WEB SCRAPING E COFRE DE ESTADOS (LEDGER)
 # -------------------------------------------------------------------------
 @app.post("/api/efatura/login-browser")
-def api_efatura_login_browser(req: LoginBrowserRequest, lic = Depends(verificar_licenca_ativa)):
+def api_efatura_login_browser(req: LoginBrowserRequest, request: Request, lic = Depends(verificar_licenca_ativa)):
     """
     Inicia o navegador (Edge ou Chrome) visível com sessão autenticada no e-Fatura para a entidade indicada.
     Verifica previamente na base central (Dados Gexcel Apps) se a senha já está marcada como inválida.
     """
+    block_resp = _enforcar_politica_teletrabalho(request, bloquear_lote=True)
+    if block_resp is not None:
+        return block_resp
     nif_raw = str(req.nif or "").strip()
     nif_clean = re.sub(r'[^0-9]', '', nif_raw)[:9]
     if not nif_clean:
@@ -5714,12 +5721,15 @@ def api_importar_tcredenciais_direto(req: ImportarTCredenciaisRequest):
 
 
 @app.get("/api/efatura/exportar-sqlite/{nif}")
-def api_exportar_sqlite_nif(nif: str):
+def api_exportar_sqlite_nif(nif: str, request: Request):
     """
     Devolve os ficheiros SQLite (.db) de uma empresa (compras, vendas, controlo_geral.db e pendentes_efatura.db)
     em Base64 para que o browser os grave diretamente na pasta Dados_evoGex\\BdsefaturaV4 do cliente.
     """
     import base64
+    block_resp = _enforcar_politica_teletrabalho(request, bloquear_lote=True)
+    if block_resp is not None:
+        return block_resp
     nif_clean = re.sub(r"[^0-9]", "", str(nif or "")).strip()[:9]
     pasta_v4 = Path(pb_client.obter_pasta_v4())
     ficheiros = []
@@ -5754,12 +5764,15 @@ def api_exportar_sqlite_nif(nif: str):
 
 
 @app.get("/api/efatura/exportar-todos-sqlites")
-def api_exportar_todos_sqlites():
+def api_exportar_todos_sqlites(request: Request):
     """
     Devolve todos os ficheiros SQLite (.db) presentes em BdsefaturaV4 (controlo_geral.db, pendentes_efatura.db + pastas NIF)
     para sincronização direta e automática na pasta Dados_evoGex\\BdsefaturaV4 escolhida no browser.
     """
     import base64
+    block_resp = _enforcar_politica_teletrabalho(request, bloquear_lote=True)
+    if block_resp is not None:
+        return block_resp
     pasta_v4 = Path(pb_client.obter_pasta_v4())
     ficheiros = []
     if pasta_v4.exists():
@@ -5992,27 +6005,44 @@ class UnifiedEvoLoginRequest(BaseModel):
     username: str
     password: str
     appCodigo: Optional[str] = "EVO-06"
+    isDevChannel: Optional[bool] = False
+    deviceId: Optional[str] = ""
+    pairingCode: Optional[str] = ""
 
 
 class UnifiedEvoActivateRequest(BaseModel):
     token: str
     nome: str
-    username: str
+    username: Optional[str] = ""
     password: str
     email: Optional[str] = ""
     telefone: Optional[str] = ""
     officeName: Optional[str] = ""
+    officeNif: Optional[str] = ""
     appCodigo: Optional[str] = "EVO-06"
 
 
 def _forward_evo11_headers(request: Request) -> Dict[str, str]:
     headers: Dict[str, str] = {}
-    auth_h = request.headers.get("authorization")
-    x_tok = request.headers.get("x-auth-token")
-    if auth_h:
-        headers["Authorization"] = auth_h
-    if x_tok:
-        headers["X-Auth-Token"] = x_tok
+    for h_in, h_out in (
+        ("authorization", "Authorization"),
+        ("x-auth-token", "X-Auth-Token"),
+        ("x-evo-device-id", "X-Evo-Device-Id"),
+        ("x-evo-workspace-id", "X-Evo-Workspace-Id"),
+        ("x-forwarded-host", "X-Forwarded-Host"),
+        ("user-agent", "User-Agent"),
+    ):
+        val = request.headers.get(h_in)
+        if val:
+            headers[h_out] = val
+    xff = request.headers.get("x-forwarded-for") or ""
+    if xff.strip():
+        headers["X-Forwarded-For"] = xff.strip()
+    elif request.client and request.client.host and request.client.host not in ("127.0.0.1", "::1"):
+        headers["X-Forwarded-For"] = request.client.host
+    xri = request.headers.get("x-real-ip") or ""
+    if xri.strip():
+        headers["X-Real-IP"] = xri.strip()
     return headers
 
 
@@ -6027,6 +6057,70 @@ def _extract_token_from_request(request: Request, query_token: str = "") -> str:
     return raw
 
 
+def _decodificar_claims_gxtk(raw_tok: str) -> Optional[Dict[str, Any]]:
+    import base64
+    import hashlib
+    import hmac
+    tok = str(raw_tok or "").strip()
+    if not tok.startswith("gxtk."):
+        return None
+    partes = tok.split(".")
+    if len(partes) != 3:
+        return None
+    _, b64_payload, sig_given = partes
+    sig_calc = hmac.new(auth_manager._MASTER_SECRET, b64_payload.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig_given, sig_calc):
+        return None
+    try:
+        padded = b64_payload + "=" * ((4 - (len(b64_payload) % 4)) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        if not isinstance(payload, dict) or int(payload.get("exp") or 0) < int(time.time()):
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _enforcar_politica_teletrabalho(
+    request: Request,
+    nif_acedido: str = "",
+    bloquear_lote: bool = False,
+) -> Optional[Any]:
+    from fastapi.responses import JSONResponse
+    raw_tok = _extract_token_from_request(request)
+    if not raw_tok.startswith("gxtk."):
+        return None
+    claims = _decodificar_claims_gxtk(raw_tok)
+    if not claims:
+        return None
+    if str(claims.get("ctx") or "OFFICE").upper() != "TELEWORK":
+        return None
+    if bloquear_lote:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "ok": False,
+                "code": "TELEWORK_RESTRICTED",
+                "detail": "Operação bloqueada em modo Teletrabalho por política anti-exfiltração do escritório.",
+                "error": "Operação bloqueada em modo Teletrabalho por política anti-exfiltração do escritório.",
+            },
+        )
+    nif_clean = re.sub(r"[^0-9]", "", str(nif_acedido or ""))[:9]
+    if len(nif_clean) == 9:
+        try:
+            r = requests.post(
+                "http://127.0.0.1:8010/api/auth/telemetry/entity-access",
+                json={"nif": nif_clean},
+                headers=_forward_evo11_headers(request),
+                timeout=1.5,
+            )
+            if r.status_code == 403:
+                return JSONResponse(status_code=403, content=r.json())
+        except Exception:
+            pass
+    return None
+
+
 @app.post("/api/auth/login")
 def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
     """Ponte de autenticação unificada SSO (EVO-11 + Canal Dev + DB Local)."""
@@ -6034,12 +6128,13 @@ def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
     u_clean = (req.username or "").strip()
     p_clean = (req.password or "").strip()
     if not u_clean or not p_clean:
-        return JSONResponse(status_code=400, content={"ok": False, "error": "Introduza o utilizador e a palavra-passe."})
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Introduza o e-mail de acesso e a palavra-passe."})
 
     host_hdr = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").lower()
     origin_hdr = (request.headers.get("origin") or request.headers.get("referer") or "").lower()
     is_dev_channel = (
-        host_hdr.startswith("dev.")
+        bool(req.isDevChannel)
+        or host_hdr.startswith("dev.")
         or "://dev." in origin_hdr
         or "localhost" in host_hdr
         or "127.0.0.1" in host_hdr
@@ -6090,6 +6185,7 @@ def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
                     "nome": "Victor Gamboa · SuperAdmin (@Gexcel)",
                     "role": "DEV",
                     "email": "gexcel2013@gmail.com",
+                    "session_context": "OFFICE",
                 },
             }
         return JSONResponse(status_code=401, content={"ok": False, "error": "Credenciais mestras inválidas."})
@@ -6098,7 +6194,15 @@ def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
     try:
         r_evo11 = requests.post(
             "http://127.0.0.1:8010/api/auth/login",
-            json={"username": u_clean, "password": p_clean, "appCodigo": req.appCodigo or "EVO-06"},
+            json={
+                "username": u_clean,
+                "password": p_clean,
+                "appCodigo": req.appCodigo or "EVO-06",
+                "isDevChannel": is_dev_channel,
+                "deviceId": str(req.deviceId or request.headers.get("x-evo-device-id") or "").strip(),
+                "pairingCode": str(req.pairingCode or "").strip(),
+            },
+            headers=_forward_evo11_headers(request),
             timeout=3,
         )
         data_11 = r_evo11.json()
@@ -6125,8 +6229,9 @@ def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
                 "offices": offices_11,
             }
         err_11 = str(data_11.get("error") or data_11.get("detail") or "")
-        if r_evo11.status_code == 403 or "escritório" in err_11.lower() or "desativada" in err_11.lower():
-            return JSONResponse(status_code=r_evo11.status_code, content={"ok": False, "error": err_11})
+        code_11 = str(data_11.get("code") or "")
+        if r_evo11.status_code == 403 or code_11 or any(k in err_11.lower() for k in ("escritório", "desativada", "congelad", "teletrabalho", "código", "equipamento")):
+            return JSONResponse(status_code=r_evo11.status_code, content=data_11)
     except Exception:
         pass
 
@@ -6146,6 +6251,7 @@ def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
                     "nome": str(ul.get("nome") or u_clean),
                     "role": mapped_role,
                     "email": str(ul.get("email") or ""),
+                    "session_context": "OFFICE",
                 },
             }
     except PermissionError as pe:
@@ -6168,13 +6274,14 @@ def api_unified_evo_token_inspect(token: str = ""):
 
 
 @app.post("/api/auth/token/activate")
-def api_unified_evo_token_activate(req: UnifiedEvoActivateRequest):
+def api_unified_evo_token_activate(req: UnifiedEvoActivateRequest, request: Request):
     """Encaminha a ativação do 1.º Administrador para o Gexcel Auth Online (:8010)."""
     from fastapi.responses import JSONResponse
     try:
         r = requests.post(
             "http://127.0.0.1:8010/api/auth/token/activate",
             json=req.model_dump() if hasattr(req, "model_dump") else req.dict(),
+            headers=_forward_evo11_headers(request),
             timeout=4,
         )
         data = r.json()
@@ -6189,7 +6296,7 @@ def api_unified_evo_token_activate(req: UnifiedEvoActivateRequest):
                     pass
             tok = auth_manager._criar_sessao({
                 "id": 1,
-                "username": str(u11.get("username") or req.username),
+                "username": str(u11.get("username") or req.username or req.email),
                 "role": "admin",
             }, token_override=tok_11 or None)
             data["token"] = tok
@@ -6322,6 +6429,86 @@ def api_unified_evo_client_users_delete(body: Dict[str, Any], request: Request):
         return JSONResponse(status_code=r.status_code, content=r.json())
     except Exception:
         return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível remover o utilizador no servidor central."})
+
+
+@app.post("/api/auth/client/users/telework/authorize")
+def api_unified_evo_telework_authorize(body: Dict[str, Any], request: Request):
+    """Autoriza teletrabalho temporário com código único de emparelhamento via EVO-11 (:8010)."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.post(
+            "http://127.0.0.1:8010/api/auth/client/users/telework/authorize",
+            json=body,
+            headers=_forward_evo11_headers(request),
+            timeout=4,
+        )
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível autorizar o teletrabalho no servidor central."})
+
+
+@app.post("/api/auth/client/users/telework/revoke")
+def api_unified_evo_telework_revoke(body: Dict[str, Any], request: Request):
+    """Revoga imediatamente o acesso externo de um colaborador em 1 clique via EVO-11 (:8010)."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.post(
+            "http://127.0.0.1:8010/api/auth/client/users/telework/revoke",
+            json=body,
+            headers=_forward_evo11_headers(request),
+            timeout=4,
+        )
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível cortar a sessão externa no servidor central."})
+
+
+@app.post("/api/auth/client/office/trust-current-ip")
+def api_unified_evo_trust_current_ip(body: Dict[str, Any], request: Request):
+    """Autoriza a rede/IP atual como rede oficial do escritório no EVO-11 (:8010)."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.post(
+            "http://127.0.0.1:8010/api/auth/client/office/trust-current-ip",
+            json=body,
+            headers=_forward_evo11_headers(request),
+            timeout=4,
+        )
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível registar a rede do escritório no servidor central."})
+
+
+@app.post("/api/auth/client/alerts/dismiss")
+def api_unified_evo_dismiss_alert(body: Dict[str, Any], request: Request):
+    """Arquiva um alerta de segurança de teletrabalho no EVO-11 (:8010)."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.post(
+            "http://127.0.0.1:8010/api/auth/client/alerts/dismiss",
+            json=body,
+            headers=_forward_evo11_headers(request),
+            timeout=4,
+        )
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível arquivar o alerta no servidor central."})
+
+
+@app.post("/api/auth/telemetry/entity-access")
+def api_unified_evo_entity_access_telemetry(body: Dict[str, Any], request: Request):
+    """Encaminha telemetria de consulta de NIF para o disjuntor anti-exfiltração do EVO-11 (:8010)."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.post(
+            "http://127.0.0.1:8010/api/auth/telemetry/entity-access",
+            json=body,
+            headers=_forward_evo11_headers(request),
+            timeout=2,
+        )
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return {"ok": True, "monitored": False}
 
 
 @app.post("/api/app/auth/login")
@@ -7020,6 +7207,7 @@ def api_pendentes_recolher_lote(req: PendentesRecolherLoteRequest, lic = Depends
 
 @app.get("/api/pendentes/documentos")
 def api_pendentes_documentos(
+    request: Request,
     ano: int = Query(default_factory=lambda: date.today().year),
     nifs: str = "",
     filtro_rapido: str = "todos",
@@ -7030,6 +7218,10 @@ def api_pendentes_documentos(
     """Consulta a tabela única corrida multi-cliente de documentos pendentes e KPIs."""
     try:
         lista_nifs = [x.strip() for x in (nifs or "").split(",") if x.strip()]
+        if len(lista_nifs) == 1:
+            block_resp = _enforcar_politica_teletrabalho(request, nif_acedido=lista_nifs[0])
+            if block_resp is not None:
+                return block_resp
         dados = pendentes_service.consultar_pendentes(
             ano=int(ano),
             nifs=lista_nifs or None,

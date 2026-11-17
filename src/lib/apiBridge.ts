@@ -14,6 +14,7 @@ import {
   sincronizarSqlitesParaPastaLocal,
   obterWorkspaceIdIsolado,
   hidratarSessaoIsoladaLocal,
+  obterDeviceIdPosto,
 } from './localFsBridge';
 
 export type MotorSourceType = 'local' | 'cloud';
@@ -57,16 +58,67 @@ function shouldBypassHydrationWait(urlStr: string): boolean {
   );
 }
 
+function obterTokenSessaoAtiva(): string {
+  try {
+    const raw = sessionStorage.getItem('gexcel_evo06_auth_session') || localStorage.getItem('gexcel_evo06_auth_session');
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p?.token && typeof p.token === 'string') {
+        return p.token.trim();
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
 function withWorkspaceHeader(init?: RequestInit, stripSignal = false): RequestInit {
   const headers = new Headers(init?.headers || undefined);
   if (!headers.has('X-Evo-Workspace-Id')) {
     headers.set('X-Evo-Workspace-Id', obterWorkspaceIdIsolado());
+  }
+  if (!headers.has('X-Evo-Device-Id')) {
+    headers.set('X-Evo-Device-Id', obterDeviceIdPosto());
+  }
+  if (!headers.has('Authorization')) {
+    const tok = obterTokenSessaoAtiva();
+    if (tok) {
+      headers.set('Authorization', `Bearer ${tok}`);
+    }
   }
   const next: RequestInit = { ...(init || {}), headers };
   if (stripSignal) {
     next.signal = undefined;
   }
   return next;
+}
+
+function inspecionarSegurancaTeletrabalho(pathPart: string, res: Response) {
+  if (res.status !== 403) return;
+  if (
+    pathPart.startsWith('/api/auth/login') ||
+    pathPart.startsWith('/api/auth/token/activate') ||
+    pathPart.startsWith('/api/auth/verify')
+  ) {
+    return;
+  }
+  res
+    .clone()
+    .json()
+    .then((data) => {
+      const code = String(data?.code || '');
+      if (code.startsWith('TELEWORK_') && code !== 'TELEWORK_RESTRICTED') {
+        try {
+          sessionStorage.setItem(
+            'gexcel_evo06_security_kick',
+            String(data?.error || data?.detail || 'Sessão externa terminada por segurança.')
+          );
+        } catch {}
+        window.dispatchEvent(new Event('gexcel-evo06-logout'));
+      }
+    })
+    .catch(() => {});
 }
 
 function setMotorSource(source: MotorSourceType) {
@@ -219,6 +271,7 @@ if (typeof window !== 'undefined') {
           rehydratingNow = false;
         }
       }
+      inspecionarSegurancaTeletrabalho(pathPart, cloudRes);
       inspecionarRespostaESincronizarSqlite(pathPart, cloudRes);
       return cloudRes;
     }
@@ -241,6 +294,7 @@ if (typeof window !== 'undefined') {
         await hydrationPromise;
       }
       const relRes = await origFetch(input, withWorkspaceHeader(init, false));
+      inspecionarSegurancaTeletrabalho(rawUrl, relRes);
       inspecionarRespostaESincronizarSqlite(rawUrl, relRes);
       return relRes;
     }

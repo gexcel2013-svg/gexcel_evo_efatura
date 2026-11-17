@@ -32,6 +32,8 @@ interface AuthContextType {
   isSuperadmin: boolean;
   isAdmin: boolean;
   isSubutilizador: boolean;
+  isTeleworkExternal: boolean;
+  teleworkExpiresAt: string;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -48,6 +50,8 @@ interface StoredEvoSession {
   email?: string;
   telefone?: string;
   client_code?: string;
+  session_context?: 'OFFICE' | 'TELEWORK';
+  telework_expires_at?: string;
   offices?: LicensedOfficeInfo[];
   token: string;
 }
@@ -81,6 +85,8 @@ function decodeGxtkSsoToken(rawToken: string): StoredEvoSession | null {
       email: String(payload.email || ''),
       telefone: String(payload.telefone || ''),
       client_code: String(payload.client_code || '').trim().toUpperCase() || undefined,
+      session_context: payload.ctx === 'TELEWORK' ? 'TELEWORK' : 'OFFICE',
+      telework_expires_at: String(payload.telework_expires_at || ''),
       offices: Array.isArray(payload.offices) ? (payload.offices as LicensedOfficeInfo[]) : undefined,
       token: clean,
     };
@@ -162,6 +168,8 @@ function mapEvoSessionToAppUser(u: StoredEvoSession): AppUser {
     ativo: true,
     is_system: mappedRole === 'superadmin',
     client_code: u.client_code || undefined,
+    session_context: u.session_context || 'OFFICE',
+    telework_expires_at: u.telework_expires_at || '',
     centros_permitidos: u.offices?.length ? u.offices.map(o => o.officeId) : undefined,
     created_at: new Date().toISOString(),
   };
@@ -311,6 +319,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           cache: 'no-store',
         });
         if (res.status === 401 || res.status === 403) {
+          const errData = await res.json().catch(() => null);
+          if (errData?.error || errData?.detail) {
+            try {
+              sessionStorage.setItem('gexcel_evo06_security_kick', String(errData.error || errData.detail));
+            } catch {}
+          }
           if (!cancel) {
             clearSessionState();
             setLoading(false);
@@ -341,6 +355,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               email: String(data.user.email ?? savedEvo.email ?? ''),
               telefone: String(data.user.telefone ?? savedEvo.telefone ?? ''),
               client_code: cc || undefined,
+              session_context: data.user.session_context === 'TELEWORK' ? 'TELEWORK' : (savedEvo.session_context || 'OFFICE'),
+              telework_expires_at: String(data.user.telework_expires_at ?? savedEvo.telework_expires_at ?? ''),
               offices: offs.length > 0 ? offs : undefined,
               token: savedEvo.token,
             };
@@ -398,6 +414,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: String(data.user.email || ''),
           telefone: String(data.user.telefone || ''),
           client_code: cc || undefined,
+          session_context: data.user.session_context === 'TELEWORK' ? 'TELEWORK' : 'OFFICE',
+          telework_expires_at: String(data.user.telework_expires_at || ''),
           offices: offs.length > 0 ? offs : undefined,
           token: String(data.token).trim(),
         };
@@ -442,6 +460,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email: usr.email || '',
         telefone: usr.telefone || existing?.telefone || '',
         client_code: cc || undefined,
+        session_context: usr.session_context || existing?.session_context || 'OFFICE',
+        telework_expires_at: usr.telework_expires_at ?? existing?.telework_expires_at ?? '',
         offices: offs.length > 0 ? offs : undefined,
         token: cleanTok,
       };
@@ -472,9 +492,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return [];
   };
 
+  useEffect(() => {
+    if (!token || !token.startsWith('gxtk.')) return;
+    let cancel = false;
+    const verificarHeartbeat = async () => {
+      try {
+        const res = await fetch(`/api/auth/verify?token=${encodeURIComponent(token)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+        if (cancel) return;
+        if (res.status === 401 || res.status === 403) {
+          const d = await res.json().catch(() => null);
+          if (d?.error || d?.detail) {
+            try {
+              sessionStorage.setItem('gexcel_evo06_security_kick', String(d.error || d.detail));
+            } catch {}
+          }
+          clearSessionState();
+        }
+      } catch {
+        // tolerar quebra transitória de rede
+      }
+    };
+    const interval = window.setInterval(() => {
+      void verificarHeartbeat();
+    }, 30000);
+    const onFocus = () => {
+      if (document.visibilityState !== 'hidden') {
+        void verificarHeartbeat();
+      }
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancel = true;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [token, clearSessionState]);
+
   const isSuperadmin = currentUser?.role === 'superadmin';
   const isAdmin = isSuperadmin || currentUser?.role === 'admin';
   const isSubutilizador = currentUser?.role === 'subutilizador';
+  const isTeleworkExternal = currentUser?.session_context === 'TELEWORK';
+  const teleworkExpiresAt = currentUser?.telework_expires_at || '';
 
   return (
     <AuthContext.Provider
@@ -499,7 +560,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setShowSetupWizard,
         isSuperadmin,
         isAdmin,
-        isSubutilizador
+        isSubutilizador,
+        isTeleworkExternal,
+        teleworkExpiresAt,
       }}
     >
       {children}

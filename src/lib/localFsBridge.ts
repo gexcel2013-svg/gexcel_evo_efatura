@@ -48,6 +48,7 @@ const STORAGE_KEY = 'gexcel_local_fs_centro_v1';
 const MAP_STORAGE_KEY = 'gexcel_local_fs_centros_map_v2';
 const ACTIVE_ID_STORAGE_KEY = 'gexcel_local_fs_active_id_v2';
 const WS_STORAGE_PREFIX = 'gexcel_evo_ws_id_v1::';
+const DEVICE_ID_STORAGE_KEY = 'gexcel_evo_device_id_v1';
 const IDB_NAME = 'gexcel_evogex_fs_db';
 const IDB_STORE = 'dir_handles';
 
@@ -55,6 +56,24 @@ let activeEvogexHandle: any = null;
 let activeEvogexHandleId: string | null = null;
 let activeAntigaHandle: any = null;
 let activeAntigaHandleId: string | null = null;
+
+export function obterDeviceIdPosto(): string {
+  try {
+    const existing = (localStorage.getItem(DEVICE_ID_STORAGE_KEY) || '').trim();
+    if (existing.length >= 12) {
+      return existing;
+    }
+    const rand =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().replace(/-/g, '')
+        : `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`.replace(/[^a-zA-Z0-9]/g, '');
+    const novo = `dev_${rand}`;
+    localStorage.setItem(DEVICE_ID_STORAGE_KEY, novo);
+    return novo;
+  } catch {
+    return 'dev_ephemeral_fallback';
+  }
+}
 
 export function obterWorkspaceIdIsolado(): string {
   try {
