@@ -29,6 +29,7 @@ import type {
   LicensedOfficeInfo,
   OfficeTrustedIpInfo,
   ClientSecurityAlertInfo,
+  PendingTransferInfo,
 } from '../types/auth';
 import {
   obterLocalFsCentroConfig,
@@ -142,6 +143,7 @@ export function ConfigView() {
   const [cloudOfficesSummary, setCloudOfficesSummary] = useState<LicensedOfficeInfo[]>([]);
   const [officeTrustedIps, setOfficeTrustedIps] = useState<OfficeTrustedIpInfo[]>([]);
   const [securityAlerts, setSecurityAlerts] = useState<ClientSecurityAlertInfo[]>([]);
+  const [pendingTransfers, setPendingTransfers] = useState<PendingTransferInfo[]>([]);
   const [activeExternalCount, setActiveExternalCount] = useState<number>(0);
   const [teleworkBusyId, setTeleworkBusyId] = useState<string | null>(null);
   const [teleworkPickerUserId, setTeleworkPickerUserId] = useState<string | null>(null);
@@ -353,6 +355,11 @@ export function ConfigView() {
     }
     if (Array.isArray(data.security_alerts)) {
       setSecurityAlerts(data.security_alerts);
+    }
+    if (Array.isArray(data.pending_transfers)) {
+      setPendingTransfers(data.pending_transfers);
+    } else if (Array.isArray(data.users)) {
+      setPendingTransfers([]);
     }
     if (typeof data.active_external_count === 'number') {
       setActiveExternalCount(data.active_external_count);
@@ -952,11 +959,23 @@ export function ConfigView() {
           setModalUserAberto(false);
           aplicarEstadoNuvem(data);
           await refreshClientCloudState();
-          setMensagemSucesso(
-            userEmEdicao
-              ? `Utilizador '${emailCheck.normalized}' atualizado com sucesso.`
-              : `Utilizador '${emailCheck.normalized}' criado e sincronizado na conta da empresa.`
-          );
+          if (data.transferPending) {
+            setMensagemSucesso(
+              data.message ||
+                `Pedido de transferência criado para '${emailCheck.normalized}'. O colaborador deve confirmar no login com a palavra-passe anterior.`
+            );
+          } else if (data.transferredImmediate) {
+            setMensagemSucesso(
+              data.message ||
+                `Utilizador '${emailCheck.normalized}' transferido de imediato e ativado neste escritório.`
+            );
+          } else {
+            setMensagemSucesso(
+              userEmEdicao
+                ? `Utilizador '${emailCheck.normalized}' atualizado com sucesso.`
+                : `Utilizador '${emailCheck.normalized}' criado e sincronizado na conta da empresa.`
+            );
+          }
         } else {
           setErroFormUser(data?.detail || data?.error || 'Falha ao guardar utilizador.');
         }
@@ -1106,6 +1125,27 @@ export function ConfigView() {
       }
     } catch (e: any) {
       alert(e.message || 'Erro de comunicação.');
+    }
+  };
+
+  const handleCancelarTransferencia = async (transferId: string, email: string) => {
+    setMensagemErro(null);
+    setMensagemSucesso(null);
+    try {
+      const res = await fetch('/api/auth/client/users/transfer/cancel', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ transferId }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok) {
+        aplicarEstadoNuvem(data);
+        setMensagemSucesso(`Pedido de transferência para '${email}' cancelado.`);
+      } else {
+        setMensagemErro(data?.detail || data?.error || 'Não foi possível cancelar o pedido de transferência.');
+      }
+    } catch {
+      setMensagemErro('Erro de comunicação ao cancelar o pedido de transferência.');
     }
   };
 
@@ -2015,6 +2055,43 @@ export function ConfigView() {
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
+                </div>
+              </div>
+            )}
+
+            {isCloudClient && (isAdm || isSuper) && pendingTransfers.length > 0 && (
+              <div className="p-3 rounded-md bg-amber-50 dark:bg-[#241a08] border border-amber-300 dark:border-amber-700 space-y-2 font-mono text-xs">
+                <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-200">
+                  <RefreshCw className="w-4 h-4 shrink-0" />
+                  <span>Transferências de Conta Pendentes ({pendingTransfers.length})</span>
+                </div>
+                <p className="text-[11px] text-amber-900 dark:text-amber-200">
+                  Aguardam confirmação do colaborador no login com a palavra-passe da empresa antiga (ou código por e-mail) para cortar o vínculo anterior.
+                </p>
+                <div className="space-y-1.5">
+                  {pendingTransfers.map(tr => (
+                    <div
+                      key={tr.id}
+                      className="p-2 rounded bg-white dark:bg-[#0c1520] border border-amber-300 dark:border-amber-800 flex flex-wrap items-center justify-between gap-2 text-[11px]"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-foreground">{tr.nome}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#132233] text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-[#222f3e]">
+                          {tr.email}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-sky-50 dark:bg-[#0a1929] text-sky-900 dark:text-sky-200 border border-sky-300 dark:border-sky-700">
+                          {tr.role === 'ADMIN' ? 'Administrador' : 'Operador'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCancelarTransferencia(tr.id, tr.email)}
+                        className="px-2.5 py-1 rounded bg-white dark:bg-[#0c1520] hover:bg-rose-50 dark:hover:bg-[#2a1218] text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700 font-semibold cursor-pointer transition"
+                      >
+                        Cancelar Pedido
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

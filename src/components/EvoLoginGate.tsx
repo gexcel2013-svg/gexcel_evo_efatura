@@ -84,6 +84,15 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
   const [firstOfficeNif, setFirstOfficeNif] = useState("");
   const [needsPairingCode, setNeedsPairingCode] = useState(false);
   const [pairingCode, setPairingCode] = useState("");
+  const [onboardingTransferNeeded, setOnboardingTransferNeeded] = useState(false);
+  const [onboardingTransferProof, setOnboardingTransferProof] = useState("");
+  const [pendingTransferConfirm, setPendingTransferConfirm] = useState<{
+    email: string;
+    targetCompanyName: string;
+  } | null>(null);
+  const [transferProof, setTransferProof] = useState("");
+  const [transferNewPassword, setTransferNewPassword] = useState("");
+  const [transferSuccessMsg, setTransferSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -140,10 +149,15 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
 
     setLoading(true);
     setError(null);
+    setTransferSuccessMsg(null);
     try {
+      const onbProof = onboardingTransferProof.trim();
       const resp = await fetch("/api/auth/token/activate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Evo-Device-Id": obterDeviceIdPosto(),
+        },
         body: JSON.stringify({
           token: inviteToken,
           nome: n,
@@ -154,10 +168,14 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
           officeName: oName,
           officeNif: oNif,
           appCodigo,
+          previousPassword: onbProof && !onbProof.toUpperCase().startsWith("TR-") ? onbProof : "",
+          transferCode: onbProof.toUpperCase().startsWith("TR-") ? onbProof.toUpperCase() : "",
         }),
       });
       const data = await resp.json().catch(() => null);
       if (resp.ok && data?.ok && data?.user) {
+        setOnboardingTransferNeeded(false);
+        setOnboardingTransferProof("");
         const officesArr = data.offices || data.user?.offices || [];
         try {
           const clean = new URL(window.location.href);
@@ -172,6 +190,9 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
           preferred_office_id: inspectedTenant?.office_id || officesArr?.[0]?.officeId,
         });
         return;
+      }
+      if (data?.code === "ACCOUNT_TRANSFER_ONBOARDING_REQUIRED") {
+        setOnboardingTransferNeeded(true);
       }
       setError(data?.error || data?.detail || "Não foi possível ativar o convite.");
     } catch {
@@ -204,6 +225,7 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
 
     setLoading(true);
     setError(null);
+    setTransferSuccessMsg(null);
     try {
       const devId = obterDeviceIdPosto();
       const resp = await fetch("/api/auth/login", {
@@ -238,12 +260,84 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
         onAuthenticated(logged);
         return;
       }
+      if (data?.code === "ACCOUNT_TRANSFER_CONFIRM_REQUIRED") {
+        setPendingTransferConfirm({
+          email: String(data.transferEmail || u).trim(),
+          targetCompanyName: String(data.targetCompanyName || "Nova Empresa").trim(),
+        });
+        setTransferProof("");
+        setTransferNewPassword("");
+        setError(null);
+        return;
+      }
       if (data?.code === "TELEWORK_PAIRING_REQUIRED") {
         setNeedsPairingCode(true);
       }
       setError(data?.error || data?.detail || "Credenciais inválidas.");
     } catch {
       setError("Não foi possível validar as credenciais no servidor central.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirmTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingTransferConfirm) return;
+    const proof = transferProof.trim();
+    if (!proof) {
+      setError("Introduza a palavra-passe da empresa anterior ou o código de confirmação.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const devId = obterDeviceIdPosto();
+      const isCode = proof.toUpperCase().startsWith("TR-");
+      const resp = await fetch("/api/auth/transfer/confirm", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Evo-Device-Id": devId,
+        },
+        body: JSON.stringify({
+          email: pendingTransferConfirm.email,
+          previousPassword: isCode ? "" : proof,
+          transferCode: isCode ? proof.toUpperCase() : "",
+          newPassword: transferNewPassword.trim(),
+          appCodigo,
+          deviceId: devId,
+        }),
+      });
+      const data = await resp.json().catch(() => null);
+      if (resp.ok && data?.ok && data?.user) {
+        const officesArr = data.offices || data.user?.offices || [];
+        onAuthenticated({
+          ...data.user,
+          token: data.token,
+          client_code: data.user?.client_code || inspectedTenant?.client_code,
+          session_context: data.user?.session_context || "OFFICE",
+          telework_expires_at: data.user?.telework_expires_at || "",
+          offices: officesArr,
+          preferred_office_id: inspectedTenant?.office_id || officesArr?.[0]?.officeId,
+        });
+        return;
+      }
+      if (resp.ok && data?.ok && data?.transferredOnly) {
+        setPendingTransferConfirm(null);
+        setTransferProof("");
+        setTransferNewPassword("");
+        setPassword("");
+        setTransferSuccessMsg(
+          data.warning
+            ? `${data.message} ${data.warning}`
+            : data.message || "Transferência concluída! Inicie sessão no escritório autorizado."
+        );
+        return;
+      }
+      setError(data?.error || data?.detail || "Não foi possível confirmar a transferência.");
+    } catch {
+      setError("Não foi possível comunicar com o servidor central.");
     } finally {
       setLoading(false);
     }
@@ -321,6 +415,13 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
             </div>
           )}
 
+          {transferSuccessMsg && (
+            <div className="mb-4 p-3 rounded-lg bg-emerald-50 dark:bg-[#091e1a] border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 text-xs flex items-start gap-2">
+              <ShieldCheck size={15} className="shrink-0 mt-0.5" />
+              <span>{transferSuccessMsg}</span>
+            </div>
+          )}
+
           {error && (
             <div className="mb-4 p-3 rounded-lg bg-rose-50 dark:bg-[#2a1218] border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
               <ShieldAlert size={15} className="shrink-0" />
@@ -328,7 +429,77 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
             </div>
           )}
 
-          <form onSubmit={isFirstAdminOnboarding ? handleActivateFirstAdmin : handleSubmit} className="space-y-4">
+          {pendingTransferConfirm ? (
+            <form onSubmit={handleConfirmTransfer} className="space-y-4">
+              <div className="p-3 rounded-lg bg-amber-50 dark:bg-[#241a08] border border-amber-300 dark:border-amber-700 space-y-1.5 text-xs">
+                <div className="font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                  <KeyRound size={14} className="shrink-0" />
+                  <span>Confirmar Mudança para {pendingTransferConfirm.targetCompanyName}</span>
+                </div>
+                <p className="text-[11px] text-amber-900 dark:text-amber-200">
+                  Ao confirmar, a ligação e sessões na empresa antiga são encerradas de imediato e este e-mail passa para a nova empresa (modo «Só no Escritório»).
+                </p>
+                <div className="pt-1">
+                  <span className="inline-block px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-amber-300 dark:border-amber-700 font-mono text-[11px] text-foreground">
+                    {pendingTransferConfirm.email}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
+                  Palavra-passe da Empresa Anterior (ou Código TR-XXXXXX) *
+                </label>
+                <input
+                  type="password"
+                  required
+                  autoFocus
+                  value={transferProof}
+                  onChange={(e) => setTransferProof(e.target.value)}
+                  placeholder="Palavra-passe anterior ou código TR-..."
+                  className="w-full px-3 py-2.5 rounded-lg border border-border bg-slate-50 dark:bg-[#07121c] text-xs font-mono text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <div>
+                <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
+                  Definir Nova Palavra-passe (Opcional)
+                </label>
+                <input
+                  type="password"
+                  value={transferNewPassword}
+                  onChange={(e) => setTransferNewPassword(e.target.value)}
+                  placeholder="Manter a definida pelo Administrador se vazio"
+                  className="w-full px-3 py-2.5 rounded-lg border border-border bg-slate-50 dark:bg-[#07121c] text-xs font-mono text-foreground focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-2.5 px-4 rounded-lg bg-[#0284c7] hover:bg-[#0369a1] text-white font-medium text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <KeyRound size={14} />
+                  <span>{loading ? "A transferir conta..." : "Confirmar Transferência e Entrar"}</span>
+                  <ArrowRight size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingTransferConfirm(null);
+                    setTransferProof("");
+                    setTransferNewPassword("");
+                    setError(null);
+                  }}
+                  className="w-full py-2 px-4 rounded-lg border border-border bg-white dark:bg-[#0c1520] hover:bg-slate-50 dark:hover:bg-[#132233] text-slate-700 dark:text-slate-300 font-medium text-xs cursor-pointer transition-colors"
+                >
+                  Voltar ao Login
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={isFirstAdminOnboarding ? handleActivateFirstAdmin : handleSubmit} className="space-y-4">
             {isFirstAdminOnboarding && (
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
@@ -408,6 +579,25 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
                     Contacto rápido para apoio técnico e avisos importantes via WhatsApp/E-mail.
                   </p>
                 </div>
+                {onboardingTransferNeeded && (
+                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-[#241a08] border border-amber-300 dark:border-amber-700 space-y-1.5">
+                    <label className="flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-amber-900 dark:text-amber-200">
+                      <KeyRound size={13} />
+                      <span>Palavra-passe da Empresa Anterior (ou Código) *</span>
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={onboardingTransferProof}
+                      onChange={(e) => setOnboardingTransferProof(e.target.value)}
+                      placeholder="Palavra-passe anterior para desligar vínculo antigo"
+                      className="w-full px-3 py-2 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#0c1520] text-xs font-mono text-foreground focus:outline-none focus:border-primary"
+                    />
+                    <p className="font-mono text-[10px] text-amber-900 dark:text-amber-200">
+                      Confirma a titularidade do e-mail e encerra imediatamente a ligação à empresa anterior.
+                    </p>
+                  </div>
+                )}
               </>
             )}
 
@@ -492,6 +682,7 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
               <ArrowRight size={14} />
             </button>
           </form>
+          )}
         </div>
       </main>
 

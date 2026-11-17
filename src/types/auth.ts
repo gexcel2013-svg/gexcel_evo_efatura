@@ -66,6 +66,15 @@ export interface ClientSecurityAlertInfo {
   createdAt?: string;
 }
 
+export interface PendingTransferInfo {
+  id: string;
+  email: string;
+  nome: string;
+  role: string;
+  createdAt?: string;
+  expiresAt?: string;
+}
+
 export interface AppUser {
   id: number;
   cloud_id?: string;

@@ -6020,6 +6020,8 @@ class UnifiedEvoActivateRequest(BaseModel):
     officeName: Optional[str] = ""
     officeNif: Optional[str] = ""
     appCodigo: Optional[str] = "EVO-06"
+    previousPassword: Optional[str] = ""
+    transferCode: Optional[str] = ""
 
 
 def _forward_evo11_headers(request: Request) -> Dict[str, str]:
@@ -6509,6 +6511,57 @@ def api_unified_evo_entity_access_telemetry(body: Dict[str, Any], request: Reque
         return JSONResponse(status_code=r.status_code, content=r.json())
     except Exception:
         return {"ok": True, "monitored": False}
+
+
+@app.post("/api/auth/client/users/transfer/cancel")
+def api_unified_evo_client_users_transfer_cancel(body: Dict[str, Any], request: Request):
+    """Cancela um pedido de transferência pendente de colaborador no EVO-11 (:8010)."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.post(
+            "http://127.0.0.1:8010/api/auth/client/users/transfer/cancel",
+            json=body,
+            headers=_forward_evo11_headers(request),
+            timeout=4,
+        )
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível cancelar o pedido de transferência."})
+
+
+@app.post("/api/auth/transfer/confirm")
+def api_unified_evo_transfer_confirm(body: Dict[str, Any], request: Request):
+    """Confirma transferência automática de e-mail para nova empresa com corte imediato do vínculo antigo."""
+    from fastapi.responses import JSONResponse
+    try:
+        r = requests.post(
+            "http://127.0.0.1:8010/api/auth/transfer/confirm",
+            json=body,
+            headers=_forward_evo11_headers(request),
+            timeout=5,
+        )
+        data = r.json()
+        if r.status_code == 200 and data.get("ok") and data.get("user"):
+            u11 = data["user"]
+            role_raw = str(u11.get("role") or "OPERADOR").upper()
+            local_role = "superadmin" if role_raw == "DEV" else "admin" if role_raw == "ADMIN" else "subutilizador"
+            tok_11 = str(data.get("token") or "").strip()
+            offices_11 = data.get("offices") or u11.get("offices") or []
+            if offices_11:
+                try:
+                    auth_manager.sincronizar_escritorios_licenciados(offices_11)
+                except Exception:
+                    pass
+            tok = auth_manager._criar_sessao({
+                "id": 1,
+                "username": str(u11.get("username") or u11.get("email") or ""),
+                "role": local_role,
+            }, token_override=tok_11 or None)
+            data["token"] = tok
+            data["offices"] = offices_11
+        return JSONResponse(status_code=r.status_code, content=data)
+    except Exception:
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível confirmar a transferência no servidor central."})
 
 
 @app.post("/api/app/auth/login")
