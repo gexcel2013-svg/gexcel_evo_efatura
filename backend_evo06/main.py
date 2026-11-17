@@ -6819,6 +6819,7 @@ class PendentesSubmeterRequest(BaseModel):
     utilizador: str = ""
     email_utilizador: str = ""
     modo_simulacao: bool = False
+    modo_ensaio_visivel: bool = False
 
 class PendentesPalavraChaveRequest(BaseModel):
     palavra: str
@@ -7023,10 +7024,74 @@ def api_pendentes_validar(req: PendentesValidarRequest):
 
 @app.post("/api/pendentes/submeter")
 def api_pendentes_submeter(req: PendentesSubmeterRequest, request: Request, lic = Depends(verificar_licenca_ativa)):
-    """Regista o Termo de Responsabilidade legal e dispara a submissão dos documentos validados na AT."""
+    """Regista o Termo de Responsabilidade legal e dispara a submissão dos documentos validados na AT (ou Ensaio Visual DEV sem submeter)."""
     _limpar_jobs_antigos()
     if iniciar_sessao_efatura is None:
         _tentar_importar_scraper()
+
+    if req.modo_ensaio_visivel:
+        if not req.termo_aceite:
+            raise HTTPException(status_code=400, detail="É obrigatório confirmar o formulário antes de iniciar o ensaio visual.")
+
+        docs_prontos = pendentes_service.obter_documentos_prontos_submissao(
+            ano=int(req.ano),
+            nifs=req.nifs,
+        )
+        if not docs_prontos:
+            raise HTTPException(status_code=400, detail="Não existem documentos validados pendentes para simular na AT.")
+
+        nifs_ensaio = sorted({d["nif_cliente"] for d in docs_prontos})
+        job_id = str(uuid.uuid4())
+        JOBS[job_id] = {
+            "status": "em_progresso",
+            "nif": nifs_ensaio[0] if nifs_ensaio else "",
+            "nome_empresa": f"{len(nifs_ensaio)} contribuinte(s)",
+            "mensagem": f"A iniciar ensaio visual na AT ({len(docs_prontos)} documento(s) — submissão bloqueada)...",
+            "volume_estimado": len(docs_prontos),
+            "docs_atuais": 0,
+            "total_esperado": len(docs_prontos),
+            "percentagem": 2,
+            "fase": "pendentes_ensaio_visivel",
+            "parcial": False,
+            "cancelar": False,
+            "total_documentos": 0,
+            "dados_legacy_horizontal": None,
+            "dados_novos_vertical": None,
+            "erro": None,
+            "tipo_erro": None,
+            "badge_label": None,
+            "criado_em": time.time(),
+            "modo_ensaio_visivel": True,
+            "ensaio_url": "https://faturas.portaldasfinancas.gov.pt/resolverListaPendenciasAdquirenteForm.action",
+            "ensaio_passo_atual": "A preparar sessão de ensaio visual...",
+            "ensaio_frame_b64": "",
+            "ensaio_paginas_b64": [],
+            "ensaio_itens": [],
+            "janela_nativa_aberta": bool(sys.platform == "win32"),
+        }
+
+        t = threading.Thread(
+            target=pendentes_service.executar_job_ensaio_visivel_pendentes,
+            kwargs={
+                "job_id": job_id,
+                "jobs_dict": JOBS,
+                "ano": int(req.ano),
+                "nifs": req.nifs,
+                "iniciar_sessao_fn": iniciar_sessao_efatura,
+                "browser_semaphore": _BROWSER_SESSION_SEMAPHORE,
+            },
+            daemon=True,
+        )
+        t.start()
+
+        return {
+            "status": "iniciado",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "job_id": job_id,
+            "modo_ensaio_visivel": True,
+            "total_documentos": len(docs_prontos),
+            "mensagem": f"Ensaio visual iniciado ({len(docs_prontos)} documento(s) — submissão bloqueada).",
+        }
 
     ip_cli = ""
     try:
@@ -7094,6 +7159,29 @@ def api_pendentes_submeter(req: PendentesSubmeterRequest, request: Request, lic 
         "resumo_sha256": reg_termo["resumo_sha256"],
         "total_documentos": reg_termo["total_documentos"],
         "mensagem": f"Termo registado e submissão iniciada ({reg_termo['total_documentos']} documento(s)).",
+    }
+
+
+@app.get("/api/pendentes/ensaio-status/{job_id}")
+def api_pendentes_ensaio_status(job_id: str):
+    """Devolve estado, transmissao visual e capturas completas do Ensaio Visual DEV na AT."""
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Sessão de ensaio visual não encontrada ou expirada.")
+    return {
+        "status": job.get("status", "em_progresso"),
+        "assinatura": "API Importador e-Fatura Gexcel",
+        "percentagem": int(job.get("percentagem") or 0),
+        "mensagem": job.get("mensagem") or "",
+        "erro": job.get("erro"),
+        "docs_atuais": int(job.get("docs_atuais") or 0),
+        "total_esperado": int(job.get("total_esperado") or 0),
+        "ensaio_url": job.get("ensaio_url") or "",
+        "ensaio_passo_atual": job.get("ensaio_passo_atual") or "",
+        "ensaio_frame_b64": job.get("ensaio_frame_b64") or "",
+        "ensaio_paginas_b64": job.get("ensaio_paginas_b64") or [],
+        "ensaio_itens": job.get("ensaio_itens") or [],
+        "janela_nativa_aberta": bool(job.get("janela_nativa_aberta")),
     }
 
 

@@ -254,9 +254,157 @@ def test_4_crud_palavras_chave_e_tudo_fora():
     assert ps.eliminar_palavra_chave(kw["id"], db_path=TMP_DB) is True
 
 
+def test_5_ensaio_visivel_nao_destrutivo():
+    cli1 = "299000101"
+
+    class _FakeRouteReq:
+        def __init__(self, url):
+            self.url = url
+
+    class _FakeRoute:
+        def __init__(self, url):
+            self.request = _FakeRouteReq(url)
+            self.action = None
+
+        def continue_(self):
+            self.action = "continue"
+
+        def abort(self):
+            self.action = "abort"
+
+    class _FakeLocator:
+        def __init__(self, count_val=0, visible_val=False):
+            self._count = count_val
+            self._visible = visible_val
+
+        def count(self):
+            return self._count
+
+        def is_visible(self, timeout=0):
+            return self._visible
+
+        def click(self, timeout=0):
+            return None
+
+    class _FakePage:
+        def __init__(self):
+            self.url = "https://faturas.portaldasfinancas.gov.pt/resolverListaPendenciasAdquirenteForm.action"
+            self.route_handler = None
+            self.evals = []
+            self.gotos = []
+            self.context = type("Ctx", (), {"pages": [self]})()
+
+        def set_viewport_size(self, vp):
+            self.viewport = vp
+
+        def bring_to_front(self):
+            pass
+
+        def route(self, pattern, handler):
+            self.route_handler = handler
+
+        def goto(self, url, wait_until="domcontentloaded", timeout=30000):
+            self.gotos.append(url)
+            self.url = url
+
+        def wait_for_timeout(self, ms):
+            pass
+
+        def locator(self, selector):
+            if selector == "select[name='listaPendencias_length']":
+                return _FakeLocator(count_val=1)
+            return _FakeLocator(count_val=0, visible_val=False)
+
+        def select_option(self, selector, value):
+            pass
+
+        def evaluate(self, script, arg=None):
+            self.evals.append((script, arg))
+            if "document.querySelectorAll('#listaPendencias tbody tr" in script:
+                return ["1001", "1002"]
+            if script == ps._JS_PREENCHER_LINHA_AT:
+                return {
+                    "encontrou": True,
+                    "setor_clicado": True,
+                    "ambito_clicado": True,
+                    "setor_ativo": True,
+                    "ambito_ativo": True,
+                    "tem_ambito": True,
+                }
+            if "#listaPendencias_next" in script:
+                return False
+            return None
+
+        def screenshot(self, type="jpeg", quality=78, full_page=False):
+            return b"\xff\xd8\xff\xe0FAKEJPEGDATA"
+
+    fake_page = _FakePage()
+    fake_browser = type("Br", (), {"is_connected": lambda self: True})()
+
+    class _FakeSessao:
+        def __init__(self):
+            self.page = fake_page
+            self.browser = fake_browser
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    orig_creds = ps._obter_credenciais_entidade
+    orig_platform = ps.sys.platform
+    termos_antes = len(ps.listar_termos_responsabilidade(db_path=TMP_DB))
+    jobs_ensaio = {"j_ensaio": {"status": "em_progresso", "cancelar": False}}
+
+    try:
+        ps._obter_credenciais_entidade = lambda nif: (nif, "senha_teste_demo")
+        ps.sys.platform = "linux"
+        ps.executar_job_ensaio_visivel_pendentes(
+            job_id="j_ensaio",
+            jobs_dict=jobs_ensaio,
+            ano=2026,
+            nifs=[cli1],
+            iniciar_sessao_fn=lambda **kw: _FakeSessao(),
+            db_path=TMP_DB,
+        )
+    finally:
+        ps._obter_credenciais_entidade = orig_creds
+        ps.sys.platform = orig_platform
+
+    st = jobs_ensaio["j_ensaio"]
+    assert st["status"] == "concluido"
+    assert st["docs_atuais"] == 2
+    assert len(st["ensaio_paginas_b64"]) == 1
+    assert len(st["ensaio_itens"]) == 2
+    assert all(it["preenchido_ecra"] is True for it in st["ensaio_itens"])
+    assert st["ensaio_frame_b64"] != ""
+
+    # Confirmar bloqueio de submissao na AT mas permissao da pagina Form
+    assert fake_page.route_handler is not None
+    r_form = _FakeRoute("https://faturas.portaldasfinancas.gov.pt/resolverListaPendenciasAdquirenteForm.action")
+    r_post = _FakeRoute("https://faturas.portaldasfinancas.gov.pt/resolverListaPendenciasAdquirente.action")
+    r_ind = _FakeRoute("https://faturas.portaldasfinancas.gov.pt/resolverPendenciaAdquirente.action")
+    fake_page.route_handler(r_form)
+    fake_page.route_handler(r_post)
+    fake_page.route_handler(r_ind)
+    assert r_form.action == "continue"
+    assert r_post.action == "abort"
+    assert r_ind.action == "abort"
+
+    # Confirmar nao-destrutividade na BD (zero alteracoes nos documentos nem novos termos)
+    consulta = ps.consultar_pendentes(ano=2026, nifs=[cli1], db_path=TMP_DB)
+    docs_map = {d["id_documento"]: d for d in consulta["documentos"]}
+    assert docs_map["1001"]["estado_submissao"] == "pendente"
+    assert docs_map["1001"]["validado"] is True
+    assert docs_map["1002"]["estado_submissao"] == "pendente"
+    assert docs_map["1002"]["validado"] is True
+    termos_depois = len(ps.listar_termos_responsabilidade(db_path=TMP_DB))
+    assert termos_depois == termos_antes
+
+
 if __name__ == "__main__":
     test_1_nifs_singulares_e_catalogo_16_setores()
     test_2_cascata_preclassificacao_e_historico_dividido()
     test_3_bloco_fornecedor_validacao_cliente_e_travao_termo()
     test_4_crud_palavras_chave_e_tudo_fora()
+    test_5_ensaio_visivel_nao_destrutivo()
     print("OK: Todos os testes do motor pendentes_service passaram a 100%!")

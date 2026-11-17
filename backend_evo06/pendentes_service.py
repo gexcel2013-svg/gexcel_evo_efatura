@@ -18,12 +18,14 @@ Responsabilidades:
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
 import os
 import re
 import sqlite3
+import sys
 import threading
 import time
 import unicodedata
@@ -2257,3 +2259,521 @@ def _marcar_erro_submissao(nif_cliente: str, id_documento: str, erro: str, db_pa
                 conn.commit()
 
     _executar_com_retry(_op)
+
+
+# =============================================================================
+# 8. ENSAIO VISUAL NO BROWSER AT (EXCLUSIVO PROGRAMADOR - NUNCA SUBMETE NA AT)
+# =============================================================================
+
+_JS_PREPARAR_PAGINA_ENSAIO = """() => {
+    try {
+        if (!document.getElementById('gexcel-ensaio-banner')) {
+            const bar = document.createElement('div');
+            bar.id = 'gexcel-ensaio-banner';
+            bar.style.cssText = 'position:sticky;top:0;z-index:999999;background:#07121c;color:#f8fafc;border-bottom:3px solid #0284c7;padding:10px 18px;font-family:monospace;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:space-between;box-shadow:0 4px 14px rgba(0,0,0,0.35);';
+            bar.innerHTML = '<span>MODO ENSAIO VISUAL (PROGRAMADOR) · PREENCHIMENTO EM DIRETO NA AT</span><span style="background:#0284c7;color:#ffffff;padding:3px 10px;border-radius:4px;font-size:11px;">SUBMISSAO BLOQUEADA · ZERO ALTERACOES FISCAIS</span>';
+            document.body.insertBefore(bar, document.body.firstChild);
+        }
+        const btnGuardar = document.querySelector('#guardarResolverListaPendenciasBtn');
+        if (btnGuardar) {
+            btnGuardar.disabled = true;
+            btnGuardar.style.opacity = '0.45';
+            btnGuardar.style.pointerEvents = 'none';
+            if ('value' in btnGuardar && btnGuardar.tagName === 'INPUT') {
+                btnGuardar.value = 'Guardar (Bloqueado em Modo Ensaio)';
+            } else {
+                btnGuardar.textContent = 'Guardar (Bloqueado em Modo Ensaio)';
+            }
+        }
+        const form = document.querySelector('#resolverListaPendencias');
+        if (form && !form.dataset.gexcelEnsaioLocked) {
+            form.dataset.gexcelEnsaioLocked = '1';
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }, true);
+        }
+    } catch (e) {}
+}"""
+
+_JS_PREENCHER_LINHA_AT = """async ({idDoc, setorCod, ambitoCod, ambitoLabel}) => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const row = document.getElementById('documento_' + idDoc);
+    if (!row) {
+        return { encontrou: false, motivo: 'Linha nao visivel na pagina atual' };
+    }
+    row.scrollIntoView({ behavior: 'instant', block: 'center' });
+    row.style.outline = '3px solid #0284c7';
+    row.style.backgroundColor = '#f0f9ff';
+
+    const fecharModalSeAberto = async () => {
+        for (let i = 0; i < 4; i++) {
+            const modal = document.getElementById('modalPendencias');
+            if (modal) {
+                const btnUm = modal.querySelector('#oneBtn');
+                const disp = window.getComputedStyle(modal).display;
+                const visivel = modal.classList.contains('in') || modal.classList.contains('show') || disp === 'block';
+                if (btnUm && visivel) {
+                    btnUm.click();
+                    await sleep(90);
+                    document.querySelectorAll('.modal-backdrop').forEach((bd) => bd.remove());
+                    document.body.classList.remove('modal-open');
+                    return;
+                }
+            }
+            await sleep(55);
+        }
+        document.querySelectorAll('.modal-backdrop').forEach((bd) => bd.remove());
+        document.body.classList.remove('modal-open');
+    };
+
+    let setorClicado = false;
+    const setorBtns = Array.from(row.querySelectorAll('.selecaoSector button'));
+    for (const b of setorBtns) {
+        const val = (b.getAttribute('value') || '').trim().toUpperCase();
+        if (val === String(setorCod || '').trim().toUpperCase()) {
+            b.click();
+            setorClicado = true;
+            break;
+        }
+    }
+    await sleep(70);
+    await fecharModalSeAberto();
+
+    let ambitoClicado = false;
+    const temAmbito = row.querySelectorAll('.selecaoActividadeProf button').length > 0;
+    if (temAmbito) {
+        const ambBtns = Array.from(row.querySelectorAll('.selecaoActividadeProf button'));
+        for (const b of ambBtns) {
+            const val = (b.getAttribute('value') || '').trim();
+            if (val === String(ambitoCod || '').trim()) {
+                b.click();
+                ambitoClicado = true;
+                break;
+            }
+        }
+        await sleep(70);
+        await fecharModalSeAberto();
+    } else {
+        ambitoClicado = true;
+    }
+
+    const setorAtivo = Array.from(row.querySelectorAll('.selecaoSector button')).some(
+        (b) => (b.classList.contains('active') || b.getAttribute('aria-pressed') === 'true') &&
+               (b.getAttribute('value') || '').trim().toUpperCase() === String(setorCod || '').trim().toUpperCase()
+    );
+    const ambitoAtivo = !temAmbito || Array.from(row.querySelectorAll('.selecaoActividadeProf button')).some(
+        (b) => (b.classList.contains('active') || b.getAttribute('aria-pressed') === 'true') &&
+               (b.getAttribute('value') || '').trim() === String(ambitoCod || '').trim()
+    );
+
+    let selTag = row.querySelector('.gexcel-ensaio-tag');
+    if (!selTag) {
+        selTag = document.createElement('div');
+        selTag.className = 'gexcel-ensaio-tag';
+        selTag.style.cssText = 'margin-top:4px;padding:2px 6px;border-radius:4px;background:#0c1520;color:#38bdf8;font-family:monospace;font-size:11px;font-weight:700;display:inline-block;border:1px solid #0284c7;';
+        const alvoCel = row.querySelector('td') || row;
+        alvoCel.appendChild(selTag);
+    }
+    selTag.textContent = 'Ensaio Preenchido: ' + setorCod + (temAmbito ? ' · ' + ambitoLabel : '');
+
+    return {
+        encontrou: true,
+        setor_clicado: setorClicado,
+        ambito_clicado: ambitoClicado,
+        setor_ativo: setorAtivo,
+        ambito_ativo: ambitoAtivo,
+        tem_ambito: temAmbito
+    };
+}"""
+
+
+def _capturar_frame_ensaio(page: Any, job: Dict[str, Any], passo_txt: str, full_page: bool = False) -> str:
+    try:
+        job["ensaio_url"] = str(getattr(page, "url", "") or job.get("ensaio_url") or "")
+        job["ensaio_passo_atual"] = passo_txt
+        raw = page.screenshot(type="jpeg", quality=78, full_page=full_page)
+        if isinstance(raw, (bytes, bytearray)) and raw:
+            b64 = base64.b64encode(bytes(raw)).decode("ascii")
+            job["ensaio_frame_b64"] = b64
+            return b64
+    except Exception as exc:
+        LOGGER.debug(f"[ENSAIO VISUAL] Falha ao capturar screenshot: {exc}")
+    return ""
+
+
+def _manter_sessoes_abertas_dev(sessoes: List[Any], tempo_max_seg: int = 600):
+    """Mantem janelas nativas abertas no ambiente de trabalho ate o programador as fechar."""
+    inicio = time.time()
+    try:
+        while time.time() - inicio < tempo_max_seg:
+            ativas = []
+            for s in sessoes:
+                try:
+                    br = getattr(s, "browser", None)
+                    ctx = getattr(getattr(s, "page", None), "context", None)
+                    if br is not None and br.is_connected() and (ctx is None or len(ctx.pages) > 0):
+                        ativas.append(s)
+                except Exception:
+                    pass
+            if not ativas:
+                break
+            time.sleep(1.0)
+    finally:
+        for s in sessoes:
+            try:
+                s.close()
+            except Exception:
+                pass
+
+
+def executar_job_ensaio_visivel_pendentes(
+    job_id: str,
+    jobs_dict: Dict[str, Any],
+    ano: int,
+    nifs: Optional[List[str]] = None,
+    iniciar_sessao_fn: Optional[Callable[..., Any]] = None,
+    browser_semaphore: Optional[threading.Semaphore] = None,
+    db_path: Optional[str] = None,
+):
+    """
+    Executa simulacao visual em direto no Portal das Financas para o programador:
+    - Abre a sessao AT e navega ate `resolverListaPendenciasAdquirenteForm.action`.
+    - Bloqueia por completo todas as rotas de submissao/gravacao na AT (Travão Fiscal absoluto).
+    - Seleciona visualmente o setor e ambito de cada documento validado e transmite frames em direto.
+    - NUNCA altera o estado dos documentos nem regista termo legal definitivo na base de dados.
+    """
+    init_pendentes_db(db_path)
+    job = jobs_dict[job_id]
+    is_win = sys.platform == "win32"
+
+    job["modo_ensaio_visivel"] = True
+    job.setdefault("docs_atuais", 0)
+    job.setdefault("total_esperado", 0)
+    job["ensaio_url"] = "https://faturas.portaldasfinancas.gov.pt/resolverListaPendenciasAdquirenteForm.action"
+    job["ensaio_passo_atual"] = "A preparar sessao de ensaio visual no Portal das Financas..."
+    job["ensaio_frame_b64"] = ""
+    job["ensaio_paginas_b64"] = []
+    job["ensaio_itens"] = []
+    job["janela_nativa_aberta"] = is_win
+
+    docs = obter_documentos_prontos_submissao(ano=ano, nifs=nifs, db_path=db_path)
+    if not docs:
+        job["status"] = "concluido"
+        job["percentagem"] = 100
+        job["ensaio_passo_atual"] = "Sem documentos validados prontos para simular na AT."
+        job["mensagem"] = "Sem documentos validados para ensaio visual."
+        return
+
+    if iniciar_sessao_fn is None:
+        try:
+            from efatura_scraper import iniciar_sessao_efatura as _ise
+            iniciar_sessao_fn = _ise
+        except Exception as e_imp:
+            job["status"] = "erro"
+            job["erro"] = f"Motor de navegacao AT indisponivel: {e_imp}"
+            job["ensaio_passo_atual"] = job["erro"]
+            job["mensagem"] = job["erro"]
+            return
+
+    por_cliente: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for d in docs:
+        por_cliente[d["nif_cliente"]].append(d)
+
+    total_docs = len(docs)
+    preenchidos_ok = 0
+    processados = 0
+    sessoes_nativas: List[Any] = []
+    avisos: List[str] = []
+
+    for idx_cli, (nif_clean, docs_cli) in enumerate(por_cliente.items(), start=1):
+        if job.get("cancelar"):
+            job["status"] = "interrompido"
+            job["ensaio_passo_atual"] = f"Ensaio visual interrompido ({preenchidos_ok}/{total_docs} preenchidos)."
+            job["mensagem"] = job["ensaio_passo_atual"]
+            break
+
+        nome_cli = docs_cli[0].get("nome_cliente") or pb_client.get_entidade_nome(nif_clean)
+        job["nif"] = nif_clean
+        job["nome_empresa"] = nome_cli
+        job["ensaio_passo_atual"] = f"[{idx_cli}/{len(por_cliente)}] A autenticar {nome_cli} no e-Fatura..."
+        job["mensagem"] = job["ensaio_passo_atual"]
+
+        login_user, pwd = _obter_credenciais_entidade(nif_clean)
+        if not pwd:
+            for d in docs_cli:
+                job["ensaio_itens"].append({
+                    "nif_cliente": nif_clean,
+                    "nome_cliente": nome_cli,
+                    "id_documento": d["id_documento"],
+                    "numero_documento": d.get("numero_documento") or d["id_documento"],
+                    "nome_emitente": d.get("nome_emitente") or d.get("nif_emitente") or "",
+                    "valor_total": float(d.get("valor_total") or 0.0),
+                    "setor_codigo": d["setor_codigo"],
+                    "ambito_codigo": d["ambito_codigo"],
+                    "preenchido_ecra": False,
+                    "detalhe": "Senha AT nao configurada.",
+                })
+                processados += 1
+            avisos.append(f"{nif_clean}: sem senha configurada")
+            continue
+
+        sessao = None
+        sem_acquired = False
+        manter_sessao_aberta = False
+        try:
+            if browser_semaphore is not None:
+                browser_semaphore.acquire()
+                sem_acquired = True
+
+            sessao = iniciar_sessao_fn(nif=login_user, password=pwd, headless=(not is_win), canal="auto")
+            page = sessao.page
+
+            try:
+                page.set_viewport_size({"width": 1440, "height": 900})
+            except Exception:
+                pass
+
+            if is_win:
+                try:
+                    page.bring_to_front()
+                    from abrir_browser_sessao import focar_janela_navegador
+                    focar_janela_navegador()
+                except Exception:
+                    pass
+
+            # Bloqueio estrito de rede contra qualquer submissao fiscal na AT durante o ensaio
+            def _bloquear_submissao_route(route):
+                try:
+                    url_low = str(getattr(route.request, "url", "") or "").lower()
+                    if "resolverlistapendenciasadquirenteform.action" in url_low:
+                        route.continue_()
+                        return
+                    if any(
+                        pat in url_low
+                        for pat in (
+                            "resolverlistapendenciasadquirente.action",
+                            "resolverpendenciaadquirente.action",
+                            "resolverpendencia.action",
+                            "alterardocumentoadquirente.action",
+                        )
+                    ):
+                        LOGGER.warning(f"[ENSAIO VISUAL] Bloqueio de submissao acionado em: {url_low}")
+                        route.abort()
+                        return
+                    route.continue_()
+                except Exception:
+                    try:
+                        route.continue_()
+                    except Exception:
+                        pass
+
+            try:
+                page.route("**/*.action*", _bloquear_submissao_route)
+            except Exception:
+                pass
+
+            url_pend = "https://faturas.portaldasfinancas.gov.pt/resolverListaPendenciasAdquirenteForm.action"
+            page.goto(url_pend, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(900)
+            try:
+                page.evaluate(_JS_PREPARAR_PAGINA_ENSAIO)
+            except Exception:
+                pass
+
+            try:
+                if page.locator("select[name='listaPendencias_length']").count() > 0:
+                    page.select_option("select[name='listaPendencias_length']", "50")
+                    page.wait_for_timeout(500)
+            except Exception:
+                pass
+
+            _capturar_frame_ensaio(
+                page,
+                job,
+                f"[{idx_cli}/{len(por_cliente)}] {nome_cli}: grelha de pendentes aberta na AT...",
+                full_page=False,
+            )
+
+            docs_pendentes_mapa = {str(d["id_documento"]): d for d in docs_cli}
+            preenchidos_cli: set[str] = set()
+
+            for num_pag in range(1, 11):
+                if job.get("cancelar") or len(preenchidos_cli) >= len(docs_cli):
+                    break
+
+                try:
+                    ids_visiveis = page.evaluate("""() => {
+                        return Array.from(document.querySelectorAll('#listaPendencias tbody tr[id^="documento_"]'))
+                            .map(tr => tr.id.replace('documento_', ''));
+                    }""") or []
+                except Exception:
+                    ids_visiveis = []
+
+                ids_alvo_pag = [id_v for id_v in ids_visiveis if id_v in docs_pendentes_mapa and id_v not in preenchidos_cli]
+                preenchidos_pagina = 0
+
+                for id_doc in ids_alvo_pag:
+                    if job.get("cancelar"):
+                        break
+                    d = docs_pendentes_mapa[id_doc]
+                    amb_cod = d.get("ambito_codigo") or "1"
+                    amb_label = AMBITOS_MAP.get(amb_cod, {}).get("nome_curto") or amb_cod
+                    res_fill = page.evaluate(
+                        _JS_PREENCHER_LINHA_AT,
+                        {
+                            "idDoc": id_doc,
+                            "setorCod": d["setor_codigo"],
+                            "ambitoCod": amb_cod,
+                            "ambitoLabel": amb_label,
+                        },
+                    )
+                    # Fechar eventual popup "Aplicar a todos deste fornecedor?" mantendo apenas a linha/ensaio
+                    try:
+                        one_btn = page.locator("#modalPendencias #oneBtn")
+                        if one_btn.is_visible(timeout=180):
+                            one_btn.click(timeout=1000)
+                            page.wait_for_timeout(160)
+                    except Exception:
+                        pass
+
+                    ok_ecra = bool(isinstance(res_fill, dict) and res_fill.get("encontrou") and res_fill.get("setor_clicado"))
+                    preenchidos_cli.add(id_doc)
+                    if ok_ecra:
+                        preenchidos_ok += 1
+                        preenchidos_pagina += 1
+                    processados += 1
+
+                    job["ensaio_itens"].append({
+                        "nif_cliente": nif_clean,
+                        "nome_cliente": nome_cli,
+                        "id_documento": id_doc,
+                        "numero_documento": d.get("numero_documento") or id_doc,
+                        "nome_emitente": d.get("nome_emitente") or d.get("nif_emitente") or "",
+                        "valor_total": float(d.get("valor_total") or 0.0),
+                        "setor_codigo": d["setor_codigo"],
+                        "ambito_codigo": amb_cod,
+                        "preenchido_ecra": ok_ecra,
+                        "detalhe": "Selecionado visualmente na AT (sem submeter)" if ok_ecra else "Linha localizada mas botao nao respondeu",
+                    })
+                    job["docs_atuais"] = preenchidos_ok
+                    job["percentagem"] = min(98, int((processados / max(1, total_docs)) * 100))
+
+                    _capturar_frame_ensaio(
+                        page,
+                        job,
+                        f"A preencher na AT: {d.get('nome_emitente') or d['nif_emitente']} ({d.get('numero_documento') or id_doc}) -> {d['setor_codigo']} / {amb_label}",
+                        full_page=False,
+                    )
+
+                if preenchidos_pagina > 0 or num_pag == 1:
+                    try:
+                        page.evaluate("() => window.scrollTo(0, 0)")
+                    except Exception:
+                        pass
+                    snap_b64 = _capturar_frame_ensaio(
+                        page,
+                        job,
+                        f"{nome_cli} · Pagina {num_pag} preenchida visualmente na AT (sem submeter)",
+                        full_page=True,
+                    )
+                    if snap_b64:
+                        job["ensaio_paginas_b64"].append({
+                            "nif_cliente": nif_clean,
+                            "cliente": nome_cli,
+                            "pagina": num_pag,
+                            "preenchidos": preenchidos_pagina,
+                            "img_b64": snap_b64,
+                        })
+
+                if len(preenchidos_cli) >= len(docs_cli):
+                    break
+
+                # Avancar para a pagina seguinte da grelha AT se existir
+                try:
+                    tem_proxima = page.evaluate("""() => {
+                        const nxt = document.querySelector('#listaPendencias_next');
+                        if (!nxt || nxt.classList.contains('disabled')) return false;
+                        const a = nxt.querySelector('a') || nxt;
+                        a.click();
+                        return true;
+                    }""")
+                    if not tem_proxima:
+                        break
+                    page.wait_for_timeout(500)
+                except Exception:
+                    break
+
+            for d in docs_cli:
+                id_str = str(d["id_documento"])
+                if id_str not in preenchidos_cli:
+                    processados += 1
+                    job["ensaio_itens"].append({
+                        "nif_cliente": nif_clean,
+                        "nome_cliente": nome_cli,
+                        "id_documento": id_str,
+                        "numero_documento": d.get("numero_documento") or id_str,
+                        "nome_emitente": d.get("nome_emitente") or d.get("nif_emitente") or "",
+                        "valor_total": float(d.get("valor_total") or 0.0),
+                        "setor_codigo": d["setor_codigo"],
+                        "ambito_codigo": d.get("ambito_codigo") or "1",
+                        "preenchido_ecra": False,
+                        "detalhe": "Documento nao encontrado na grelha de pendentes atual da AT.",
+                    })
+
+            if is_win:
+                manter_sessao_aberta = True
+                sessoes_nativas.append(sessao)
+
+        except Exception as exc_cli:
+            err_txt = str(exc_cli)
+            LOGGER.error(f"[ENSAIO VISUAL] Erro em {nif_clean}: {err_txt}")
+            avisos.append(f"{nif_clean}: {err_txt}")
+            for d in docs_cli:
+                if not any(it["id_documento"] == str(d["id_documento"]) and it["nif_cliente"] == nif_clean for it in job["ensaio_itens"]):
+                    processados += 1
+                    job["ensaio_itens"].append({
+                        "nif_cliente": nif_clean,
+                        "nome_cliente": nome_cli,
+                        "id_documento": str(d["id_documento"]),
+                        "numero_documento": d.get("numero_documento") or str(d["id_documento"]),
+                        "nome_emitente": d.get("nome_emitente") or d.get("nif_emitente") or "",
+                        "valor_total": float(d.get("valor_total") or 0.0),
+                        "setor_codigo": d["setor_codigo"],
+                        "ambito_codigo": d.get("ambito_codigo") or "1",
+                        "preenchido_ecra": False,
+                        "detalhe": err_txt[:220],
+                    })
+        finally:
+            if sessao is not None and not manter_sessao_aberta:
+                try:
+                    sessao.close()
+                except Exception:
+                    pass
+            if sem_acquired and browser_semaphore is not None:
+                browser_semaphore.release()
+
+    if job.get("cancelar"):
+        return
+
+    msg_fim = (
+        f"Ensaio visual concluido: {preenchidos_ok}/{total_docs} documento(s) preenchido(s) no ecra da AT (submissao bloqueada)."
+    )
+    if avisos:
+        msg_fim += f" Avisos: {' | '.join(avisos[:2])}"
+
+    job["percentagem"] = 100
+    job["docs_atuais"] = preenchidos_ok
+    job["total_esperado"] = total_docs
+    job["total_documentos"] = preenchidos_ok
+    job["ensaio_passo_atual"] = msg_fim
+    job["mensagem"] = msg_fim
+    job["status"] = "concluido"
+
+    if sessoes_nativas:
+        threading.Thread(
+            target=_manter_sessoes_abertas_dev,
+            args=(sessoes_nativas,),
+            daemon=True,
+        ).start()

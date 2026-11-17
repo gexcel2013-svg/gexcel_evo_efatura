@@ -26,8 +26,22 @@ import {
   SkipForward,
   Layers,
   History,
+  Sparkles,
+  Copy,
+  FolderOpen,
+  Monitor,
+  Lock,
+  ZoomIn,
+  ZoomOut,
+  Eye,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
+import {
+  isWindowsPath,
+  obterResumoDestinosConfigurados,
+  abrirPastaNoExploradorNativo,
+} from '../lib/localFsBridge';
 
 interface SetorCatalogItem {
   codigo: string;
@@ -147,6 +161,43 @@ type FiltroRapidoType =
   | 'submetidos'
   | 'erros';
 
+interface EnsaioPaginaSnapshot {
+  nif_cliente: string;
+  cliente: string;
+  pagina: number;
+  preenchidos: number;
+  img_b64: string;
+}
+
+interface EnsaioItemResultado {
+  nif_cliente: string;
+  nome_cliente: string;
+  id_documento: string;
+  numero_documento: string;
+  nome_emitente: string;
+  valor_total: number;
+  setor_codigo: string;
+  ambito_codigo: string;
+  preenchido_ecra: boolean;
+  detalhe: string;
+}
+
+interface EnsaioStatusState {
+  jobId: string;
+  status: string;
+  percentagem: number;
+  mensagem: string;
+  erro: string | null;
+  docsAtuais: number;
+  totalEsperado: number;
+  ensaioUrl: string;
+  ensaioPassoAtual: string;
+  ensaioFrameB64: string;
+  ensaioPaginasB64: EnsaioPaginaSnapshot[];
+  ensaioItens: EnsaioItemResultado[];
+  janelaNativaAberta: boolean;
+}
+
 interface PendentesViewProps {
   ano?: number;
   onAnoChange?: (ano: number) => void;
@@ -194,7 +245,17 @@ export function PendentesView({
   onApiStatusChange,
   modoPrivacidade = false,
 }: PendentesViewProps) {
-  const { currentUser } = useAuth();
+  const { currentUser, isSuperadmin, clientNif } = useAuth();
+  const isDeveloperUser = useMemo(() => {
+    if (isSuperadmin || currentUser?.role === 'superadmin' || currentUser?.is_system) return true;
+    const uname = (currentUser?.username || '').trim().toLowerCase();
+    const email = (currentUser?.email || '').trim().toLowerCase();
+    if (['@gexcel', 'gexcel', '@evogex', 'evogex', 'dev', 'superadmin'].includes(uname)) return true;
+    if (email === 'gexcel2013@gmail.com') return true;
+    if (clientNif === '200685341' || clientNif === '510766524') return true;
+    return false;
+  }, [isSuperadmin, currentUser, clientNif]);
+
   const anoAtual = new Date().getFullYear();
   const [anoLocal, setAnoLocal] = useState<number>(anoProp ?? anoAtual);
   const anoAtivo = anoProp ?? anoLocal;
@@ -210,6 +271,69 @@ export function PendentesView({
     onAnoChange?.(novoAno);
   };
 
+  // Assistente Passo a Passo & Destino Local
+  const [assistenteAberto, setAssistenteAberto] = useState<boolean>(
+    () => localStorage.getItem('gexcel_pend_assistente_fechado') !== 'true'
+  );
+  const [passoAssistente, setPassoAssistente] = useState<1 | 2 | 3 | 4>(1);
+  const [caminhoDestinoLocal, setCaminhoDestinoLocal] = useState<string>(
+    () => obterResumoDestinosConfigurados().pastaV4
+  );
+  const [copiadoPasta, setCopiadoPasta] = useState<boolean>(false);
+  const [apiOnlineLocal, setApiOnlineLocal] = useState<boolean | null>(null);
+
+  const abrirAssistente = () => {
+    setAssistenteAberto(true);
+    localStorage.setItem('gexcel_pend_assistente_fechado', 'false');
+  };
+
+  const fecharAssistente = () => {
+    setAssistenteAberto(false);
+    localStorage.setItem('gexcel_pend_assistente_fechado', 'true');
+  };
+
+  useEffect(() => {
+    const onFsUpdated = () => {
+      setCaminhoDestinoLocal(obterResumoDestinosConfigurados().pastaV4);
+    };
+    window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
+    return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
+  }, []);
+
+  useEffect(() => {
+    fetch('http://127.0.0.1:8015/api/recibos-verdes/config')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (isWindowsPath(d?.pasta_v4) && !obterResumoDestinosConfigurados().evogexConfirmado) {
+          setCaminhoDestinoLocal(d.pasta_v4);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const copiarCaminhoDados = async () => {
+    try {
+      await navigator.clipboard.writeText(caminhoDestinoLocal);
+      setCopiadoPasta(true);
+      setTimeout(() => setCopiadoPasta(false), 1800);
+    } catch {}
+  };
+
+  const abrirPastaDadosWindows = async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:8015/api/sistema/abrir-explorador', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caminho: caminhoDestinoLocal }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.status === 'ok' && d.origem !== 'cloud') return;
+      }
+    } catch {}
+    await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
+  };
+
   // Catálogo oficial (16 setores + 3 âmbitos + palavras-chave)
   const [setores, setSetores] = useState<SetorCatalogItem[]>([]);
   const [ambitos, setAmbitos] = useState<AmbitoCatalogItem[]>([]);
@@ -218,6 +342,7 @@ export function PendentesView({
   // Entidades singulares e seleção multi-cliente
   const [entidades, setEntidades] = useState<EntidadePendente[]>([]);
   const [nifsSelecionados, setNifsSelecionados] = useState<Set<string>>(new Set());
+  const [nenhumSelecionadoManual, setNenhumSelecionadoManual] = useState<boolean>(false);
   const [seletorClientesAberto, setSeletorClientesAberto] = useState<boolean>(false);
   const [pesquisaClienteModal, setPesquisaClienteModal] = useState<string>('');
   const [forcarHistoricoAnt, setForcarHistoricoAnt] = useState<boolean>(false);
@@ -263,7 +388,7 @@ export function PendentesView({
     totalEsperado: number;
   } | null>(null);
 
-  // Modais: Palavras-Chave e Termo de Responsabilidade
+  // Modais: Palavras-Chave e Termo de Responsabilidade + Ensaio Visual DEV
   const [modalPalavrasAberto, setModalPalavrasAberto] = useState<boolean>(false);
   const [novaPalavra, setNovaPalavra] = useState<string>('');
   const [novoSetorKw, setNovoSetorKw] = useState<string>('C99');
@@ -275,6 +400,11 @@ export function PendentesView({
   const [termoAceite, setTermoAceite] = useState<boolean>(false);
   const [historicoTermos, setHistoricoTermos] = useState<TermoHistoricoItem[]>([]);
   const [carregandoTermos, setCarregandoTermos] = useState<boolean>(false);
+  const [modoEnsaioVisivel, setModoEnsaioVisivel] = useState<boolean>(true);
+  const [modalEnsaioAberto, setModalEnsaioAberto] = useState<boolean>(false);
+  const [ensaioState, setEnsaioState] = useState<EnsaioStatusState | null>(null);
+  const [paginaEnsaioAtiva, setPaginaEnsaioAtiva] = useState<number>(-1);
+  const [zoomRealEnsaio, setZoomRealEnsaio] = useState<boolean>(false);
 
   const ofuscarNif = useCallback(
     (nif: string) => {
@@ -335,9 +465,11 @@ export function PendentesView({
         const d = await res.json();
         const lista: EntidadePendente[] = d.entidades || [];
         setEntidades(lista);
+        setApiOnlineLocal(true);
         onApiStatusChange?.(true);
       }
     } catch {
+      setApiOnlineLocal(false);
       onApiStatusChange?.(false);
     }
   }, [anoAtivo, onApiStatusChange]);
@@ -368,10 +500,12 @@ export function PendentesView({
         setResumosClientes(d.resumos_clientes || []);
         if (d.kpis) setKpis(d.kpis);
         setChaveAtiva(prev => (prev && docs.some(x => x.chave_linha === prev) ? prev : docs[0]?.chave_linha || ''));
+        setApiOnlineLocal(true);
         onApiStatusChange?.(true);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Sem ligação ao motor local.';
         setErroGeral(msg);
+        setApiOnlineLocal(false);
         onApiStatusChange?.(false);
       } finally {
         if (!silencioso) setCarregando(false);
@@ -629,7 +763,80 @@ export function PendentesView({
     }
   };
 
+  // Polling do Ensaio Visual DEV em direto
+  useEffect(() => {
+    if (!modalEnsaioAberto || !ensaioState?.jobId) return;
+    if (!['em_progresso', 'iniciado'].includes(ensaioState.status)) return;
+    let cancelado = false;
+    const interval = window.setInterval(async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:8015/api/pendentes/ensaio-status/${ensaioState.jobId}`);
+        if (!res.ok) return;
+        const d = await res.json();
+        if (cancelado) return;
+        const novasPaginas: EnsaioPaginaSnapshot[] = d.ensaio_paginas_b64 || [];
+        setEnsaioState(prev =>
+          prev
+            ? {
+                ...prev,
+                status: d.status,
+                percentagem: typeof d.percentagem === 'number' ? d.percentagem : prev.percentagem,
+                mensagem: d.mensagem || prev.mensagem,
+                erro: d.erro ?? null,
+                docsAtuais: d.docs_atuais ?? prev.docsAtuais,
+                totalEsperado: d.total_esperado ?? prev.totalEsperado,
+                ensaioUrl: d.ensaio_url || prev.ensaioUrl,
+                ensaioPassoAtual: d.ensaio_passo_atual || prev.ensaioPassoAtual,
+                ensaioFrameB64: d.ensaio_frame_b64 || prev.ensaioFrameB64,
+                ensaioPaginasB64: novasPaginas,
+                ensaioItens: d.ensaio_itens || prev.ensaioItens,
+                janelaNativaAberta: Boolean(d.janela_nativa_aberta),
+              }
+            : null
+        );
+        if (['concluido', 'interrompido', 'erro', 'cancelado'].includes(d.status)) {
+          window.clearInterval(interval);
+          if (novasPaginas.length > 0) {
+            setPaginaEnsaioAtiva(0);
+          }
+          setBannerInfo({
+            tipo: d.status === 'erro' ? 'erro' : 'ok',
+            texto: d.erro || d.mensagem || 'Ensaio visual concluído (nenhum documento foi submetido na AT).',
+          });
+        }
+      } catch {}
+    }, 650);
+    return () => {
+      cancelado = true;
+      window.clearInterval(interval);
+    };
+  }, [modalEnsaioAberto, ensaioState?.jobId, ensaioState?.status]);
+
+  const idsSelecionadosEfetivos = useMemo(() => {
+    if (nenhumSelecionadoManual) return new Set<string>();
+    if (nifsSelecionados.size > 0) return nifsSelecionados;
+    return new Set(entidades.map(e => e.nif));
+  }, [nenhumSelecionadoManual, nifsSelecionados, entidades]);
+
+  const selecionarTodasEntidades = () => {
+    setNenhumSelecionadoManual(false);
+    setNifsSelecionados(new Set());
+  };
+
+  const limparSelecaoEntidades = () => {
+    setNenhumSelecionadoManual(true);
+    setNifsSelecionados(new Set());
+  };
+
   const iniciarRecolhaEmBloco = async () => {
+    if (nenhumSelecionadoManual) {
+      setBannerInfo({
+        tipo: 'erro',
+        texto: 'Selecione pelo menos um contribuinte singular com credenciais AT.',
+      });
+      return;
+    }
+
     const nifsAlvo =
       nifsSelecionados.size > 0
         ? Array.from(nifsSelecionados)
@@ -682,9 +889,21 @@ export function PendentesView({
     } catch {}
   };
 
+  const pararEnsaioVisual = async () => {
+    if (!ensaioState?.jobId) return;
+    try {
+      await fetch(`http://127.0.0.1:8015/api/extracao/parar/${ensaioState.jobId}`, { method: 'POST' });
+    } catch {}
+  };
+
   const abrirModalTermo = async () => {
     setTermoAceite(false);
     setAbaModalTermo('confirmar');
+    if (isDeveloperUser) {
+      setModoEnsaioVisivel(true);
+    } else {
+      setModoEnsaioVisivel(false);
+    }
     setModalTermoAberto(true);
     setCarregandoTermos(true);
     try {
@@ -699,6 +918,7 @@ export function PendentesView({
 
   const confirmarESubmeterNaAT = async () => {
     if (!termoAceite) return;
+    const usarEnsaioVisual = Boolean(isDeveloperUser && modoEnsaioVisivel);
     try {
       const nifsFiltro =
         nifsSelecionados.size > 0 && nifsSelecionados.size < entidades.length
@@ -715,6 +935,7 @@ export function PendentesView({
           utilizador: currentUser?.nome || currentUser?.username || 'Utilizador',
           email_utilizador: currentUser?.email || '',
           modo_simulacao: false,
+          modo_ensaio_visivel: usarEnsaioVisual,
         }),
       });
       const d = await res.json().catch(() => ({}));
@@ -722,6 +943,29 @@ export function PendentesView({
         throw new Error(d.detail?.mensagem || d.detail || 'Erro ao iniciar submissão na AT.');
       }
       setModalTermoAberto(false);
+
+      if (usarEnsaioVisual) {
+        setPaginaEnsaioAtiva(-1);
+        setZoomRealEnsaio(false);
+        setEnsaioState({
+          jobId: d.job_id,
+          status: 'em_progresso',
+          percentagem: 4,
+          mensagem: d.mensagem || 'A abrir Portal das Finanças em modo ensaio visual...',
+          erro: null,
+          docsAtuais: 0,
+          totalEsperado: d.total_documentos || kpis.validados_por_submeter,
+          ensaioUrl: 'https://faturas.portaldasfinancas.gov.pt/resolverListaPendenciasAdquirenteForm.action',
+          ensaioPassoAtual: 'A autenticar sessão na AT (submissão bloqueada)...',
+          ensaioFrameB64: '',
+          ensaioPaginasB64: [],
+          ensaioItens: [],
+          janelaNativaAberta: false,
+        });
+        setModalEnsaioAberto(true);
+        return;
+      }
+
       setJobAtivo({
         jobId: d.job_id,
         tipo: 'submissao',
@@ -773,12 +1017,24 @@ export function PendentesView({
   };
 
   const toggleClienteSelecionado = (nif: string) => {
-    setNifsSelecionados(prev => {
-      const next = new Set(prev);
-      if (next.has(nif)) next.delete(nif);
-      else next.add(nif);
-      return next;
-    });
+    const base = nenhumSelecionadoManual
+      ? new Set<string>()
+      : nifsSelecionados.size > 0
+        ? new Set(nifsSelecionados)
+        : new Set(entidades.map(e => e.nif));
+    if (base.has(nif)) base.delete(nif);
+    else base.add(nif);
+
+    if (base.size === 0) {
+      setNenhumSelecionadoManual(true);
+      setNifsSelecionados(new Set());
+    } else if (entidades.length > 0 && base.size >= entidades.length) {
+      setNenhumSelecionadoManual(false);
+      setNifsSelecionados(new Set());
+    } else {
+      setNenhumSelecionadoManual(false);
+      setNifsSelecionados(base);
+    }
   };
 
   const toggleLinhaMarcada = (chave: string) => {
@@ -816,7 +1072,7 @@ export function PendentesView({
 
   return (
     <div className="h-full flex flex-col space-y-2.5 min-h-0 select-none overflow-y-auto md:overflow-hidden">
-      {/* 1. Cabeçalho Executivo e Ações Principais */}
+      {/* 1. Cabeçalho Executivo e Ações Globais */}
       <header className="flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div>
           <div className="flex items-center space-x-2">
@@ -830,194 +1086,25 @@ export function PendentesView({
             <span>Classificação de Documentos Pendentes</span>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-white dark:bg-[#0c1520] text-[#0284c7] dark:text-sky-300 border border-[#0284c7] dark:border-sky-700">
               <Calendar className="w-3.5 h-3.5" />
-              {anoAtivo}
+              Exercício {anoAtivo}
             </span>
           </h1>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Seletor de Exercício */}
-          <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#0284c7] dark:border-sky-600 rounded-md px-2 py-1">
-            <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
-            <button
-              type="button"
-              onClick={() => atualizarAno(anoAtivo - 1)}
-              className="p-0.5 hover:bg-sky-100 dark:hover:bg-[#14304d] rounded text-foreground cursor-pointer"
-              title="Exercício Anterior"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <span className="font-mono font-bold text-xs text-foreground px-1 min-w-[38px] text-center">
-              {anoAtivo}
-            </span>
-            <button
-              type="button"
-              onClick={() => atualizarAno(anoAtivo < anoAtual ? anoAtivo + 1 : anoAtivo)}
-              disabled={anoAtivo >= anoAtual}
-              className={`p-0.5 rounded ${
-                anoAtivo >= anoAtual
-                  ? 'opacity-25 cursor-not-allowed text-slate-400'
-                  : 'hover:bg-sky-100 dark:hover:bg-[#14304d] text-foreground cursor-pointer'
-              }`}
-              title="Exercício Seguinte"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {/* Seletor Multi-Cliente (Singulares) */}
-          <div ref={seletorRef} className="relative">
-            <button
-              type="button"
-              onClick={() => setSeletorClientesAberto(prev => !prev)}
-              className="px-3 py-1.5 rounded-md bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] hover:border-[#0284c7] text-xs font-mono font-semibold text-foreground flex items-center space-x-2 cursor-pointer"
-            >
-              <Users className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
-              <span>
-                {nifsSelecionados.size === 0
-                  ? `Todos Singulares (${entidades.length})`
-                  : `Selecionados: ${nifsSelecionados.size}/${entidades.length}`}
-              </span>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
-            </button>
-
-            {seletorClientesAberto && (
-              <div className="absolute right-0 mt-1.5 w-[390px] sm:w-[460px] max-w-[95vw] bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded-lg shadow-2xl z-50 flex flex-col overflow-hidden">
-                <div className="p-2.5 border-b border-[#d7e0ea] dark:border-[#222f3e] bg-slate-50 dark:bg-[#101c2b] space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
-                      Contribuintes Singulares ({entidades.length})
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setNifsSelecionados(
-                            new Set(entidades.filter(e => e.tem_credenciais_at).map(e => e.nif))
-                          )
-                        }
-                        className="px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] text-[10px] font-mono font-semibold text-[#0284c7] dark:text-sky-400 cursor-pointer"
-                      >
-                        Todos c/ Senha
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNifsSelecionados(new Set())}
-                        className="px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] text-[10px] font-mono font-semibold text-slate-700 dark:text-slate-300 cursor-pointer"
-                      >
-                        Limpar
-                      </button>
-                    </div>
-                  </div>
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
-                    <input
-                      type="text"
-                      value={pesquisaClienteModal}
-                      onChange={e => setPesquisaClienteModal(e.target.value)}
-                      placeholder="Pesquisar nome ou NIF..."
-                      className="w-full pl-8 pr-3 py-1.5 text-xs font-mono bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded text-foreground"
-                    />
-                  </div>
-                  <label className="flex items-center space-x-2 text-[11px] font-mono text-slate-700 dark:text-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={forcarHistoricoAnt}
-                      onChange={e => setForcarHistoricoAnt(e.target.checked)}
-                      className="rounded border-slate-400"
-                    />
-                    <span>Forçar atualização do histórico de {anoAtivo - 1}</span>
-                  </label>
-                </div>
-
-                <div className="max-h-72 overflow-y-auto divide-y divide-[#d7e0ea] dark:divide-[#222f3e]">
-                  {entidadesFiltradasSeletor.length === 0 ? (
-                    <div className="p-4 text-center text-xs font-mono text-slate-600 dark:text-slate-400">
-                      Nenhum contribuinte singular encontrado.
-                    </div>
-                  ) : (
-                    entidadesFiltradasSeletor.map(ent => {
-                      const marcado = nifsSelecionados.has(ent.nif);
-                      return (
-                        <div
-                          key={ent.nif}
-                          className="flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-[#13202e]"
-                        >
-                          <label className="flex items-center space-x-2.5 min-w-0 flex-1 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={marcado}
-                              onChange={() => toggleClienteSelecionado(ent.nif)}
-                              className="rounded border-slate-400 shrink-0"
-                            />
-                            <div className="min-w-0">
-                              <div className="text-xs font-sans font-medium text-foreground truncate">
-                                {ofuscarNome(ent.nomecli, ent.nif)}
-                              </div>
-                              <div className="flex items-center space-x-2 text-[10px] font-mono text-slate-600 dark:text-slate-400">
-                                <span className="text-[#0284c7] dark:text-sky-400 font-semibold">
-                                  {ofuscarNif(ent.nif)}
-                                </span>
-                                {!ent.tem_credenciais_at && (
-                                  <span className="text-rose-600 dark:text-rose-400">Sem senha</span>
-                                )}
-                                {ent.total_pendentes > 0 && (
-                                  <span>· {ent.total_pendentes} pend.</span>
-                                )}
-                              </div>
-                            </div>
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => toggleModoTudoFora([ent.nif], !ent.modo_tudo_fora)}
-                            title="Alternar modo Tudo Fora para este contribuinte"
-                            className={`px-2 py-0.5 rounded border text-[10px] font-mono font-semibold shrink-0 cursor-pointer ${
-                              ent.modo_tudo_fora
-                                ? 'bg-amber-100 dark:bg-[#241a08] border-amber-500 text-amber-900 dark:text-amber-300'
-                                : 'bg-white dark:bg-[#0c1520] border-[#d7e0ea] dark:border-[#222f3e] text-slate-600 dark:text-slate-300'
-                            }`}
-                          >
-                            {ent.modo_tudo_fora ? 'Tudo Fora ON' : 'Tudo Fora'}
-                          </button>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Palavras-Chave */}
           <button
             type="button"
-            onClick={() => setModalPalavrasAberto(true)}
-            className="px-2.5 py-1.5 rounded-md bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] hover:border-[#0284c7] text-xs font-mono font-semibold text-foreground flex items-center space-x-1.5 cursor-pointer"
+            onClick={() => (assistenteAberto ? fecharAssistente() : abrirAssistente())}
+            className={`px-3 py-1.5 rounded-md border font-mono text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer shadow-xs ${
+              assistenteAberto
+                ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] text-[#0284c7] dark:text-sky-300'
+                : 'bg-[#0284c7] hover:bg-[#0369a1] border-[#0284c7] text-white'
+            }`}
+            title="Abrir ou ocultar o Assistente Passo a Passo sincronizado com a interface"
           >
-            <Tags className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
-            <span>Palavras-Chave ({palavrasChave.length})</span>
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+            <span>{assistenteAberto ? 'Assistente Aberto' : 'Assistente Passo a Passo'}</span>
           </button>
-
-          {/* Recolher & Pré-Classificar em Bloco */}
-          {jobEmExecucao ? (
-            <button
-              type="button"
-              onClick={pararJobAtivo}
-              className="px-3.5 py-1.5 rounded-md bg-rose-600 hover:bg-rose-700 text-white font-mono text-xs font-bold flex items-center space-x-1.5 cursor-pointer"
-            >
-              <Square className="w-3.5 h-3.5 fill-current" />
-              <span>Parar</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={iniciarRecolhaEmBloco}
-              className="px-3.5 py-1.5 rounded-md bg-[#0284c7] hover:bg-[#0369a1] text-white font-mono text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-xs"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Recolher e Pré-Classificar</span>
-            </button>
-          )}
 
           {/* Submeter Validados na AT */}
           <button
@@ -1034,15 +1121,324 @@ export function PendentesView({
           <button
             type="button"
             onClick={() => Promise.all([carregarEntidades(), carregarDocumentos()])}
-            className="px-2.5 py-1.5 rounded-md bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] hover:bg-slate-100 dark:hover:bg-[#13202e] text-xs font-mono font-semibold text-foreground flex items-center space-x-1 cursor-pointer"
+            className="px-2.5 py-1.5 rounded-md bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] hover:bg-slate-100 dark:hover:bg-[#13202e] text-xs font-mono font-semibold text-foreground flex items-center space-x-1.5 cursor-pointer"
             title="Recarregar dados"
           >
             <RotateCcw className={`w-3.5 h-3.5 ${carregando ? 'animate-spin text-[#0284c7]' : ''}`} />
+            <span className="hidden sm:inline">Atualizar</span>
           </button>
         </div>
       </header>
 
-      {/* Barra de Progresso de Job em Curso ou Banner de Aviso */}
+      {/* Área Principal + Assistente Passo a Passo Lateral */}
+      <div className="flex flex-col lg:flex-row gap-3 flex-1 min-h-0">
+        <div className="flex-1 flex flex-col gap-2 min-w-0 min-h-0">
+          {/* Barra Operacional Sincronizada em 4 Zonas */}
+          <div className="bg-white dark:bg-[#0c1520] rounded-md border border-[#d7e0ea] dark:border-[#222f3e] p-2 shadow-2xs flex flex-wrap items-center justify-between gap-2 shrink-0">
+            {/* Zona 1: Destino dos Dados */}
+            <div
+              data-evo-guide-target="zona-1"
+              onClick={() => assistenteAberto && setPassoAssistente(1)}
+              className={`flex items-center space-x-2 px-2.5 py-1.5 rounded border text-xs font-mono transition ${
+                assistenteAberto && passoAssistente === 1
+                  ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold shrink-0 ${
+                    passoAssistente === 1 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  ① Destino
+                </span>
+              )}
+              <span className="text-slate-600 dark:text-slate-300 font-semibold shrink-0 hidden sm:inline">Dados:</span>
+              <span title={caminhoDestinoLocal} className="text-foreground font-semibold break-all max-w-[230px]">
+                {caminhoDestinoLocal}
+              </span>
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  void copiarCaminhoDados();
+                }}
+                title="Copiar endereço completo"
+                className="p-0.5 text-slate-600 dark:text-slate-300 hover:text-[#0284c7] cursor-pointer shrink-0"
+              >
+                {copiadoPasta ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                type="button"
+                data-evo-guide-target="btn-abrir-pasta"
+                onClick={e => {
+                  e.stopPropagation();
+                  void abrirPastaDadosWindows();
+                }}
+                title="Abrir pasta no Explorador do Windows"
+                className="p-0.5 text-[#0284c7] dark:text-sky-400 hover:opacity-80 cursor-pointer shrink-0"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Zona 2: Seleção Multi-Cliente de Contribuintes Singulares */}
+            <div
+              data-evo-guide-target="zona-2"
+              onClick={() => assistenteAberto && setPassoAssistente(2)}
+              className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition ${
+                assistenteAberto && passoAssistente === 2
+                  ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                    passoAssistente === 2 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  ② Empresas
+                </span>
+              )}
+
+              <div ref={seletorRef} data-evo-guide-target="empresa-selector" className="relative">
+                <button
+                  type="button"
+                  onClick={() => setSeletorClientesAberto(prev => !prev)}
+                  className="px-3 py-1 rounded-md bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] hover:border-[#0284c7] text-xs font-mono font-semibold text-foreground flex items-center space-x-2 cursor-pointer"
+                >
+                  <Users className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+                  <span>
+                    {nenhumSelecionadoManual
+                      ? `Selecionados: 0/${entidades.length}`
+                      : nifsSelecionados.size === 0
+                        ? `Todos Singulares (${entidades.length})`
+                        : `Selecionados: ${nifsSelecionados.size}/${entidades.length}`}
+                  </span>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+
+                {seletorClientesAberto && (
+                  <div className="absolute left-0 sm:right-0 sm:left-auto mt-1.5 w-[390px] sm:w-[460px] max-w-[95vw] bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded-lg shadow-2xl z-50 flex flex-col overflow-hidden">
+                    <div className="p-2.5 border-b border-[#d7e0ea] dark:border-[#222f3e] bg-slate-50 dark:bg-[#101c2b] space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                          Contribuintes Singulares ({entidades.length})
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNenhumSelecionadoManual(false);
+                              setNifsSelecionados(
+                                new Set(entidades.filter(e => e.tem_credenciais_at).map(e => e.nif))
+                              );
+                            }}
+                            className="px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] text-[10px] font-mono font-semibold text-[#0284c7] dark:text-sky-400 cursor-pointer"
+                          >
+                            Todos c/ Senha
+                          </button>
+                          <button
+                            type="button"
+                            onClick={selecionarTodasEntidades}
+                            className="px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] text-[10px] font-mono font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+                          >
+                            Todas
+                          </button>
+                          <button
+                            type="button"
+                            onClick={limparSelecaoEntidades}
+                            className="px-2 py-0.5 rounded bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] text-[10px] font-mono font-semibold text-slate-700 dark:text-slate-300 cursor-pointer"
+                          >
+                            Limpar
+                          </button>
+                        </div>
+                      </div>
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
+                        <input
+                          type="text"
+                          value={pesquisaClienteModal}
+                          onChange={e => setPesquisaClienteModal(e.target.value)}
+                          placeholder="Pesquisar nome ou NIF..."
+                          className="w-full pl-8 pr-3 py-1.5 text-xs font-mono bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded text-foreground"
+                        />
+                      </div>
+                      <label className="flex items-center space-x-2 text-[11px] font-mono text-slate-700 dark:text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={forcarHistoricoAnt}
+                          onChange={e => setForcarHistoricoAnt(e.target.checked)}
+                          className="rounded border-slate-400"
+                        />
+                        <span>Forçar atualização do histórico de {anoAtivo - 1}</span>
+                      </label>
+                    </div>
+
+                    <div className="max-h-72 overflow-y-auto divide-y divide-[#d7e0ea] dark:divide-[#222f3e]">
+                      {entidadesFiltradasSeletor.length === 0 ? (
+                        <div className="p-4 text-center text-xs font-mono text-slate-600 dark:text-slate-400">
+                          Nenhum contribuinte singular encontrado.
+                        </div>
+                      ) : (
+                        entidadesFiltradasSeletor.map(ent => {
+                          const marcado = idsSelecionadosEfetivos.has(ent.nif);
+                          return (
+                            <div
+                              key={ent.nif}
+                              className="flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-[#13202e]"
+                            >
+                              <label className="flex items-center space-x-2.5 min-w-0 flex-1 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={marcado}
+                                  onChange={() => toggleClienteSelecionado(ent.nif)}
+                                  className="rounded border-slate-400 shrink-0"
+                                />
+                                <div className="min-w-0">
+                                  <div className="text-xs font-sans font-medium text-foreground truncate">
+                                    {ofuscarNome(ent.nomecli, ent.nif)}
+                                  </div>
+                                  <div className="flex items-center space-x-2 text-[10px] font-mono text-slate-600 dark:text-slate-400">
+                                    <span className="text-[#0284c7] dark:text-sky-400 font-semibold">
+                                      {ofuscarNif(ent.nif)}
+                                    </span>
+                                    {!ent.tem_credenciais_at && (
+                                      <span className="text-rose-600 dark:text-rose-400">Sem senha</span>
+                                    )}
+                                    {ent.total_pendentes > 0 && (
+                                      <span>· {ent.total_pendentes} pend.</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => toggleModoTudoFora([ent.nif], !ent.modo_tudo_fora)}
+                                title="Alternar modo Tudo Fora para este contribuinte"
+                                className={`px-2 py-0.5 rounded border text-[10px] font-mono font-semibold shrink-0 cursor-pointer ${
+                                  ent.modo_tudo_fora
+                                    ? 'bg-amber-100 dark:bg-[#241a08] border-amber-500 text-amber-900 dark:text-amber-300'
+                                    : 'bg-white dark:bg-[#0c1520] border-[#d7e0ea] dark:border-[#222f3e] text-slate-600 dark:text-slate-300'
+                                }`}
+                              >
+                                {ent.modo_tudo_fora ? 'Tudo Fora ON' : 'Tudo Fora'}
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Zona 3: Período (Exercício) */}
+            <div
+              data-evo-guide-target="zona-3"
+              onClick={() => assistenteAberto && setPassoAssistente(3)}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded border transition ${
+                assistenteAberto && passoAssistente === 3
+                  ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                    passoAssistente === 3 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  ③ Período
+                </span>
+              )}
+              <div data-evo-guide-target="ano-selector" className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#0284c7] dark:border-sky-600 rounded px-1.5 py-0.5">
+                <Calendar className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => atualizarAno(anoAtivo - 1)}
+                  className="p-0.5 hover:bg-sky-100 dark:hover:bg-[#14304d] rounded text-foreground cursor-pointer"
+                  title="Exercício Anterior"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span className="font-mono font-bold text-xs text-foreground px-1 min-w-[38px] text-center">
+                  {anoAtivo}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => atualizarAno(anoAtivo < anoAtual ? anoAtivo + 1 : anoAtivo)}
+                  disabled={anoAtivo >= anoAtual}
+                  className={`p-0.5 rounded ${
+                    anoAtivo >= anoAtual
+                      ? 'opacity-25 cursor-not-allowed text-slate-400'
+                      : 'hover:bg-sky-100 dark:hover:bg-[#14304d] text-foreground cursor-pointer'
+                  }`}
+                  title="Exercício Seguinte"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Zona 4: Opções & Recolha em Bloco */}
+            <div
+              data-evo-guide-target="zona-4"
+              onClick={() => assistenteAberto && setPassoAssistente(4)}
+              className={`flex flex-wrap items-center gap-2 px-2 py-1 rounded border transition ${
+                assistenteAberto && passoAssistente === 4
+                  ? 'ring-2 ring-[#4f46e5] bg-[#eef2ff] dark:bg-[#161f33] border-[#4f46e5] shadow-md'
+                  : 'bg-slate-50 dark:bg-[#101c2b] border-slate-200 dark:border-[#1e344f]'
+              }`}
+            >
+              {assistenteAberto && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold shrink-0 ${
+                    passoAssistente === 4 ? 'bg-[#4f46e5] text-white' : 'bg-slate-200 dark:bg-[#1a2c40] text-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  ④ Iniciar
+                </span>
+              )}
+
+              <button
+                type="button"
+                data-evo-guide-target="btn-opcoes"
+                onClick={() => setModalPalavrasAberto(true)}
+                className="px-2.5 py-1 rounded-md bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] hover:border-[#0284c7] text-xs font-mono font-semibold text-foreground flex items-center space-x-1.5 cursor-pointer"
+              >
+                <Tags className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
+                <span>Palavras-Chave ({palavrasChave.length})</span>
+              </button>
+
+              {jobEmExecucao ? (
+                <button
+                  type="button"
+                  data-evo-guide-target="btn-iniciar"
+                  onClick={pararJobAtivo}
+                  className="px-3.5 py-1 rounded-md bg-rose-600 hover:bg-rose-700 text-white font-mono text-xs font-bold flex items-center space-x-1.5 cursor-pointer"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                  <span>Parar</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-evo-guide-target="btn-iniciar"
+                  onClick={iniciarRecolhaEmBloco}
+                  className="px-3.5 py-1 rounded-md bg-[#0284c7] hover:bg-[#0369a1] text-white font-mono text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-xs"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>Recolher e Pré-Classificar</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Barra de Progresso de Job em Curso ou Banner de Aviso */}
       {jobAtivo && ['em_progresso', 'iniciado'].includes(jobAtivo.status) && (
         <div className="bg-sky-50 dark:bg-[#0a1929] border border-[#0284c7] dark:border-sky-700 rounded-md px-3.5 py-2 shrink-0 space-y-1.5">
           <div className="flex items-center justify-between text-xs font-mono">
@@ -1774,6 +2170,52 @@ export function PendentesView({
             </table>
           </div>
         )}
+          </div>
+        </div>
+
+        {/* Assistente Passo a Passo Lateral Sincronizado */}
+        <AssistenteImportacaoPanel
+          aberto={assistenteAberto}
+          onClose={fecharAssistente}
+          moduloTitulo="Documentos Pendentes"
+          apiOnline={apiOnlineLocal}
+          caminhoDados={caminhoDestinoLocal}
+          onCaminhoDadosChange={setCaminhoDestinoLocal}
+          tipoOperacao="compras"
+          permitirAmbos={false}
+          onTipoOperacaoChange={() => {}}
+          empresas={entidades.map(e => ({
+            id: e.nif,
+            cod: e.cod,
+            nif: e.nif,
+            nome: e.nomecli,
+          }))}
+          selecionadasIds={idsSelecionadosEfetivos}
+          onToggleEmpresa={toggleClienteSelecionado}
+          onSelecionarTodasEmpresas={selecionarTodasEntidades}
+          onLimparEmpresas={limparSelecaoEntidades}
+          modoPrivacidade={modoPrivacidade}
+          ano={anoAtivo}
+          anoAtual={anoAtual}
+          onAnoChange={atualizarAno}
+          apenasAnoCompleto
+          opcoesExtras={
+            <label className="flex items-center space-x-2 text-[11px] font-mono text-slate-800 dark:text-slate-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={forcarHistoricoAnt}
+                onChange={e => setForcarHistoricoAnt(e.target.checked)}
+                className="rounded border-slate-400 cursor-pointer"
+              />
+              <span>Forçar atualização do histórico de {anoAtivo - 1}</span>
+            </label>
+          }
+          isSyncing={jobEmExecucao}
+          labelBotaoIniciar="Recolher e Pré-Classificar"
+          onIniciarImportacao={() => void iniciarRecolhaEmBloco()}
+          passoAtivo={passoAssistente}
+          onPassoAtivoChange={setPassoAssistente}
+        />
       </div>
 
       {/* Modal 1: Termo de Responsabilidade Legal + Auditoria */}
@@ -1878,6 +2320,29 @@ export function PendentesView({
                   </label>
                 </div>
 
+                {/* Bloco Exclusivo do Programador: Simulação Visual no Browser sem Submeter */}
+                {isDeveloperUser && (
+                  <div className="rounded-lg border-2 border-[#0284c7] dark:border-sky-600 bg-sky-50 dark:bg-[#0a1929] p-3.5 space-y-2">
+                    <label className="flex items-start space-x-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={modoEnsaioVisivel}
+                        onChange={e => setModoEnsaioVisivel(e.target.checked)}
+                        className="mt-0.5 rounded border-[#0284c7] cursor-pointer"
+                      />
+                      <div className="space-y-1">
+                        <div className="text-xs font-mono font-bold text-[#0369a1] dark:text-sky-300 flex items-center space-x-1.5">
+                          <Eye className="w-3.5 h-3.5 shrink-0" />
+                          <span>Modo Ensaio Visual (Só Programador): preencher no browser visível sem submeter</span>
+                        </div>
+                        <p className="text-[11px] font-sans text-slate-800 dark:text-slate-200 leading-snug">
+                          Abre o Portal das Finanças em direto, preenche os setores e âmbitos linha a linha para inspeção visual e bloqueia a gravação final na AT (preserva os seus documentos de teste intactos).
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-end space-x-2 pt-2">
                   <button
                     type="button"
@@ -1890,10 +2355,23 @@ export function PendentesView({
                     type="button"
                     disabled={!termoAceite || kpis.validados_por_submeter === 0}
                     onClick={confirmarESubmeterNaAT}
-                    className="px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-mono font-bold flex items-center space-x-1.5 cursor-pointer"
+                    className={`px-4 py-2 rounded-md disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-mono font-bold flex items-center space-x-1.5 cursor-pointer ${
+                      isDeveloperUser && modoEnsaioVisivel
+                        ? 'bg-[#0284c7] hover:bg-[#0369a1]'
+                        : 'bg-emerald-600 hover:bg-emerald-700'
+                    }`}
                   >
-                    <ShieldCheck className="w-4 h-4" />
-                    <span>Confirmar e Submeter na AT</span>
+                    {isDeveloperUser && modoEnsaioVisivel ? (
+                      <>
+                        <Monitor className="w-4 h-4" />
+                        <span>Confirmar Simulação no Browser (Sem Submeter)</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-4 h-4" />
+                        <span>Confirmar e Submeter na AT</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -2019,6 +2497,191 @@ export function PendentesView({
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 3: Janela do Browser AT em Direto (Ensaio Visual - Só Programador) */}
+      {modalEnsaioAberto && ensaioState && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-3">
+          <div className="w-full max-w-6xl h-[92vh] bg-white dark:bg-[#0c1520] border-2 border-[#0284c7] dark:border-sky-600 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+            {/* Barra de Título do Browser Simulado */}
+            <div className="relative evo-card-signature px-4 py-2.5 border-b border-[#d7e0ea] dark:border-[#222f3e] bg-slate-50 dark:bg-[#101c2b] flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center space-x-2.5 min-w-0">
+                <Monitor className="w-4 h-4 text-[#0284c7] dark:text-sky-400 shrink-0" />
+                <span className="font-display font-semibold text-sm text-foreground truncate">
+                  Simulação Visual no Portal das Finanças (Modo Programador)
+                </span>
+                <span className="px-2 py-0.5 rounded bg-[#0284c7] text-white text-[10px] font-mono font-bold shrink-0 flex items-center space-x-1">
+                  <Lock className="w-3 h-3" />
+                  <span>SUBMISSÃO BLOQUEADA · ZERO ALTERAÇÕES NA AT</span>
+                </span>
+              </div>
+
+              <div className="flex items-center space-x-2 shrink-0">
+                {ensaioState.ensaioPaginasB64.length > 0 && (
+                  <div className="flex items-center space-x-1 bg-white dark:bg-[#0c1520] border border-[#d7e0ea] dark:border-[#222f3e] rounded px-1.5 py-0.5 text-[11px] font-mono">
+                    {ensaioState.ensaioPaginasB64.map((pg, idx) => (
+                      <button
+                        key={`${pg.nif_cliente}_${pg.pagina}_${idx}`}
+                        type="button"
+                        onClick={() => setPaginaEnsaioAtiva(idx)}
+                        className={`px-2 py-0.5 rounded font-bold cursor-pointer ${
+                          paginaEnsaioAtiva === idx
+                            ? 'bg-[#0284c7] text-white'
+                            : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#132233]'
+                        }`}
+                      >
+                        Pág. {pg.pagina} ({pg.preenchidos})
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setPaginaEnsaioAtiva(-1)}
+                      className={`px-2 py-0.5 rounded font-bold cursor-pointer ${
+                        paginaEnsaioAtiva === -1
+                          ? 'bg-[#0284c7] text-white'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#132233]'
+                      }`}
+                    >
+                      Em Direto
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setZoomRealEnsaio(prev => !prev)}
+                  className="px-2.5 py-1 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] text-[11px] font-mono font-semibold text-foreground flex items-center space-x-1 cursor-pointer"
+                >
+                  {zoomRealEnsaio ? <ZoomOut className="w-3.5 h-3.5" /> : <ZoomIn className="w-3.5 h-3.5" />}
+                  <span>{zoomRealEnsaio ? 'Ajustar' : 'Zoom 100%'}</span>
+                </button>
+
+                {['em_progresso', 'iniciado'].includes(ensaioState.status) && (
+                  <button
+                    type="button"
+                    onClick={pararEnsaioVisual}
+                    className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-mono font-bold flex items-center space-x-1 cursor-pointer"
+                  >
+                    <Square className="w-3 h-3 fill-current" />
+                    <span>Parar</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setModalEnsaioAberto(false)}
+                  className="px-2.5 py-1 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] text-[11px] font-mono font-bold text-foreground cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+
+            {/* Barra de Endereço e Estado do Ensaio */}
+            <div className="px-4 py-2 border-b border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] flex flex-wrap items-center justify-between gap-2 text-xs font-mono shrink-0">
+              <div className="flex items-center space-x-2 min-w-0 flex-1">
+                <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-[#132233] border border-[#d7e0ea] dark:border-[#222f3e] text-[#0284c7] dark:text-sky-400 font-bold truncate max-w-full">
+                  {ensaioState.ensaioUrl}
+                </span>
+                <span className="text-slate-700 dark:text-slate-200 truncate">
+                  {ensaioState.ensaioPassoAtual}
+                </span>
+              </div>
+              <div className="flex items-center space-x-2 shrink-0 tabular-nums">
+                {['em_progresso', 'iniciado'].includes(ensaioState.status) && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0284c7]" />
+                )}
+                <span className="font-bold text-[#0284c7] dark:text-sky-300">
+                  {ensaioState.docsAtuais}/{ensaioState.totalEsperado} ({ensaioState.percentagem}%)
+                </span>
+              </div>
+            </div>
+
+            {ensaioState.janelaNativaAberta && (
+              <div className="px-4 py-1.5 bg-[#f0fdf4] dark:bg-[#091e1a] border-b border-emerald-300 dark:border-emerald-800 text-[11px] font-mono font-semibold text-emerald-900 dark:text-emerald-200 shrink-0">
+                Janela real do Chrome/Edge aberta em primeiro plano no computador. Pode confirmar visualmente lá e fechar o navegador quando terminar.
+              </div>
+            )}
+
+            {/* Visor do Ecrã Real do Portal das Finanças */}
+            <div className="flex-1 min-h-0 overflow-auto bg-[#07121c] p-3 flex justify-center items-start">
+              {(() => {
+                const imgAtiva =
+                  paginaEnsaioAtiva >= 0 && ensaioState.ensaioPaginasB64[paginaEnsaioAtiva]
+                    ? ensaioState.ensaioPaginasB64[paginaEnsaioAtiva].img_b64
+                    : ensaioState.ensaioFrameB64;
+
+                if (!imgAtiva) {
+                  return (
+                    <div className="h-full min-h-[260px] flex flex-col items-center justify-center text-slate-200 font-mono text-xs space-y-2">
+                      {ensaioState.status === 'erro' ? (
+                        <>
+                          <AlertTriangle className="w-7 h-7 text-rose-400" />
+                          <span className="text-rose-300 font-bold">{ensaioState.erro || ensaioState.mensagem}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Loader2 className="w-7 h-7 animate-spin text-sky-400" />
+                          <span>A iniciar sessão no Portal das Finanças e a carregar lista de pendentes...</span>
+                        </>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <img
+                    src={`data:image/jpeg;base64,${imgAtiva}`}
+                    alt="Ecrã simulado no Portal das Finanças"
+                    className={`rounded border border-[#222f3e] shadow-2xl ${
+                      zoomRealEnsaio ? 'max-w-none w-auto' : 'max-w-full h-auto'
+                    }`}
+                  />
+                );
+              })()}
+            </div>
+
+            {/* Resumo Inferior das Linhas Testadas */}
+            {ensaioState.ensaioItens.length > 0 && (
+              <div className="max-h-40 overflow-auto border-t border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] shrink-0">
+                <table className="w-full text-left border-collapse text-[11px] font-mono">
+                  <thead className="sticky top-0 bg-slate-100 dark:bg-[#101c2b] border-b border-[#d7e0ea] dark:border-[#222f3e] text-slate-700 dark:text-slate-200">
+                    <tr>
+                      <th className="px-3 py-1.5">Cliente</th>
+                      <th className="px-3 py-1.5">Fornecedor</th>
+                      <th className="px-3 py-1.5">Documento</th>
+                      <th className="px-3 py-1.5">Setor Aplicado</th>
+                      <th className="px-3 py-1.5">Âmbito</th>
+                      <th className="px-3 py-1.5">Resultado Visual AT</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#d7e0ea] dark:divide-[#222f3e]">
+                    {ensaioState.ensaioItens.map((it, i) => (
+                      <tr key={`${it.nif_cliente}_${it.id_documento}_${i}`} className="bg-white dark:bg-[#0c1520]">
+                        <td className="px-3 py-1">{ofuscarNif(it.nif_cliente)}</td>
+                        <td className="px-3 py-1 truncate max-w-[200px] font-sans">{ofuscarNome(it.nome_emitente, it.nif_cliente)}</td>
+                        <td className="px-3 py-1">{it.numero_documento}</td>
+                        <td className="px-3 py-1 font-bold text-[#0284c7] dark:text-sky-300">{it.setor_codigo}</td>
+                        <td className="px-3 py-1">{ambitos.find(a => a.codigo === it.ambito_codigo)?.nome_curto || it.ambito_codigo}</td>
+                        <td className="px-3 py-1">
+                          <span
+                            className={`px-2 py-0.5 rounded border text-[10px] font-bold ${
+                              it.preenchido_ecra
+                                ? 'bg-[#f0fdf4] dark:bg-[#091e1a] border-emerald-400 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300'
+                                : 'bg-[#fffbeb] dark:bg-[#241a08] border-amber-400 dark:border-amber-700 text-amber-900 dark:text-amber-200'
+                            }`}
+                          >
+                            {it.detalhe}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
