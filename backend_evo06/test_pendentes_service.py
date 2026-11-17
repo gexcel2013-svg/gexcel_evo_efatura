@@ -401,10 +401,87 @@ def test_5_ensaio_visivel_nao_destrutivo():
     assert termos_depois == termos_antes
 
 
+def test_6_isolamento_zero_storage_por_workspace():
+    import base64
+    import legado_bridge
+    import pb_client
+    import workspace_context
+
+    xml_demo = """<?xml version="1.0" encoding="utf-8"?>
+<Credenciais>
+  <Linha><Nif>000000001</Nif><Nome>CABECALHO_1</Nome></Linha>
+  <Linha><Nif>000000002</Nif><Nome>CABECALHO_2</Nome></Linha>
+  <Linha><Nif>000000003</Nif><Nome>CABECALHO_3</Nome></Linha>
+  <Linha>
+    <Cod>DEMO1</Cod>
+    <Nif>299000888</Nif>
+    <Nome>Contribuinte Singular Demo Isolado</Nome>
+    <P_efatura>{pwd_b64}</P_efatura>
+    <U_efatura>299000888/1</U_efatura>
+  </Linha>
+  <Linha>
+    <Cod>DEMO2</Cod>
+    <Nif>599000889</Nif>
+    <Nome>Empresa Demo Isolada, Lda</Nome>
+    <P_AT>{pwd_b64}</P_AT>
+    <U_AT>599000889</U_AT>
+  </Linha>
+</Credenciais>
+""".format(pwd_b64=base64.b64encode(b"SenhaDemo123").decode("ascii"))
+
+    orig_ws_plat = workspace_context.sys.platform
+    orig_dados_dir = os.environ.pop("GEXCEL_DADOS_DIR", None)
+    orig_disable = os.environ.pop("GEXCEL_DISABLE_ZERO_STORAGE", None)
+    ws_victor = "ws_posto_victor_11111111"
+    ws_cliente = "ws_cliente_novo_00000001"
+
+    try:
+        workspace_context.sys.platform = "linux"
+
+        # 1. Posto novo / sem vinculacao nao pode ver qualquer entidade
+        tok_vazio = workspace_context.set_current_ws_id("")
+        try:
+            assert pb_client.get_lista_entidades_ui() == []
+            assert ps.listar_entidades_pendentes(ano=2026, db_path=TMP_DB) == []
+        finally:
+            workspace_context.reset_current_ws_id(tok_vazio)
+
+        # 2. Posto A hidrata tCredenciais apenas na sua RAM isolada
+        ents_parseadas = legado_bridge.parse_tcredenciais_xml_string(xml_demo)
+        assert len(ents_parseadas) == 2
+
+        tok_a = workspace_context.set_current_ws_id(ws_victor)
+        try:
+            workspace_context.set_entidades_ram(ents_parseadas, ws_victor)
+            lista_a = pb_client.get_lista_entidades_ui()
+            assert len(lista_a) == 2
+            pend_a = ps.listar_entidades_pendentes(ano=2026, db_path=TMP_DB)
+            assert [e["nif"] for e in pend_a] == ["299000888"]
+        finally:
+            workspace_context.reset_current_ws_id(tok_a)
+
+        # 3. Posto B (cliente noutra maquina) continua a ver 0 entidades
+        tok_b = workspace_context.set_current_ws_id(ws_cliente)
+        try:
+            assert pb_client.get_lista_entidades_ui() == []
+            assert ps.listar_entidades_pendentes(ano=2026, db_path=TMP_DB) == []
+        finally:
+            workspace_context.reset_current_ws_id(tok_b)
+    finally:
+        workspace_context.clear_workspace(ws_victor, keep_entidades=False)
+        workspace_context.clear_workspace(ws_cliente, keep_entidades=False)
+        workspace_context.sys.platform = orig_ws_plat
+        if orig_dados_dir is not None:
+            os.environ["GEXCEL_DADOS_DIR"] = orig_dados_dir
+        if orig_disable is not None:
+            os.environ["GEXCEL_DISABLE_ZERO_STORAGE"] = orig_disable
+
+
 if __name__ == "__main__":
     test_1_nifs_singulares_e_catalogo_16_setores()
     test_2_cascata_preclassificacao_e_historico_dividido()
     test_3_bloco_fornecedor_validacao_cliente_e_travao_termo()
     test_4_crud_palavras_chave_e_tudo_fora()
     test_5_ensaio_visivel_nao_destrutivo()
+    test_6_isolamento_zero_storage_por_workspace()
     print("OK: Todos os testes do motor pendentes_service passaram a 100%!")

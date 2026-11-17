@@ -39,6 +39,7 @@ import {
   obterResumoDestinosConfigurados,
   abrirPastaNoExploradorNativo,
   garantirAcessoPastaLocalNoClique,
+  hidratarSessaoIsoladaLocal,
   lerEstadoRealPastaLocalV4,
   purgarNifsAusentesNoServidor,
   sincronizarSqlitesParaPastaLocal,
@@ -349,9 +350,12 @@ export default function CommandCenter({
     localStorage.setItem('gexcel_efatura_assistente_fechado', 'true');
   };
 
+  const refreshFsCmdRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     const onFsUpdated = () => {
       setCaminhoDadosLocal(obterResumoDestinosConfigurados().pastaV4);
+      refreshFsCmdRef.current();
     };
     window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
     return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
@@ -754,6 +758,27 @@ export default function CommandCenter({
     }
   };
 
+  const recarregarEntidadesApi = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8015/api/entidades");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.entidades) {
+          setEntidades(data.entidades as Entidade[]);
+        }
+      }
+    } catch (e) {
+      console.error("Erro a carregar entidades:", e);
+    }
+  };
+
+  useEffect(() => {
+    refreshFsCmdRef.current = () => {
+      void recarregarEntidadesApi();
+      void carregarMatriz(anoRef.current, tipoOperacaoRef.current);
+    };
+  });
+
   // Carregar entidades a partir da API (lidas via tCredenciais.xml / legado_bridge)
   useEffect(() => {
     let cancel = false;
@@ -786,8 +811,10 @@ export default function CommandCenter({
       void carregarMatriz(anoRef.current, tipoOperacaoRef.current);
     };
     const onFirstPointerDown = () => {
-      void tentarRestaurarPermissaoSilenciosaNoClique().then((restaurado) => {
+      void tentarRestaurarPermissaoSilenciosaNoClique().then(async (restaurado) => {
         if (restaurado) {
+          await hidratarSessaoIsoladaLocal(true).catch(() => false);
+          await recarregarEntidadesApi();
           void carregarMatriz(anoRef.current, tipoOperacaoRef.current);
         }
       });

@@ -23,8 +23,17 @@ _COFRE_SCHEMA_READY = set()
 def resolver_pasta_vault() -> Path:
     """
     Localiza ou cria a pasta oficial do Cofre permanente do Ecossistema Gexcel:
-    %LOCALAPPDATA%\\GexcelApps\\.vault
+    %LOCALAPPDATA%\\GexcelApps\\.vault (ou buffer efêmero isolado por workspace na Cloud).
     """
+    try:
+        import workspace_context
+        if workspace_context.is_cloud_zero_storage() and not (os.environ.get("GEXCEL_DADOS_DIR") or "").strip():
+            vault_ws = Path(workspace_context.get_ephemeral_root_dir()) / ".vault"
+            vault_ws.mkdir(parents=True, exist_ok=True)
+            return vault_ws.resolve()
+    except Exception:
+        pass
+
     localapp = os.environ.get("LOCALAPPDATA")
     vault = (Path(localapp) if localapp else Path.home() / "AppData" / "Local") / "GexcelApps" / ".vault"
     try:

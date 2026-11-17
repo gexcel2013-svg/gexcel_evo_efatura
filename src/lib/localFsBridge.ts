@@ -47,6 +47,7 @@ export function isWindowsPath(p?: string | null): boolean {
 const STORAGE_KEY = 'gexcel_local_fs_centro_v1';
 const MAP_STORAGE_KEY = 'gexcel_local_fs_centros_map_v2';
 const ACTIVE_ID_STORAGE_KEY = 'gexcel_local_fs_active_id_v2';
+const WS_STORAGE_PREFIX = 'gexcel_evo_ws_id_v1::';
 const IDB_NAME = 'gexcel_evogex_fs_db';
 const IDB_STORE = 'dir_handles';
 
@@ -54,6 +55,26 @@ let activeEvogexHandle: any = null;
 let activeEvogexHandleId: string | null = null;
 let activeAntigaHandle: any = null;
 let activeAntigaHandleId: string | null = null;
+
+export function obterWorkspaceIdIsolado(): string {
+  try {
+    const centroId = (localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || 'escritorio-principal').trim() || 'escritorio-principal';
+    const key = `${WS_STORAGE_PREFIX}${centroId}`;
+    const existing = (localStorage.getItem(key) || '').trim();
+    if (existing.length >= 16) {
+      return existing;
+    }
+    const rand =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().replace(/-/g, '')
+        : `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`.replace(/[^a-zA-Z0-9]/g, '');
+    const novo = `ws_${rand}`;
+    localStorage.setItem(key, novo);
+    return novo;
+  } catch {
+    return 'ws_ephemeral_fallback';
+  }
+}
 
 export function sugerirPastaEvogexPorEscritorio(officeId?: string, officeSeq?: number): string {
   const oid = (officeId || '').trim();
@@ -256,6 +277,11 @@ export function selecionarLocalFsCentroAtivo(
   localStorage.setItem(ACTIVE_ID_STORAGE_KEY, oid);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: updated }));
+  if (prevId !== oid) {
+    window.setTimeout(() => {
+      void hidratarSessaoIsoladaLocal();
+    }, 50);
+  }
   return updated;
 }
 
@@ -1089,9 +1115,13 @@ export async function escolherPastaDadosGexcelAntigos(
     let totalEntidades = 0;
 
     if (xmlContent) {
+      await saveHandleIdb(`tcred_xml_text::${targetId}`, xmlContent);
       const res = await fetch('/api/entidades/importar-tcredenciais', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Evo-Workspace-Id': obterWorkspaceIdIsolado(),
+        },
         body: JSON.stringify({ xml_content: xmlContent, nome_pasta: displayAntiga }),
       });
       if (res.ok) {
@@ -1144,4 +1174,129 @@ export async function escolherPastaDadosGexcelAntigos(
     }
     return { ok: false, erro: err?.message || 'Falha ao ler a pasta antiga do Excel.' };
   }
+}
+
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  const chunkSize = 0x8000;
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const slice = bytes.subarray(i, i + chunkSize);
+    bin += String.fromCharCode(...slice);
+  }
+  return window.btoa(bin);
+}
+
+/**
+ * Hidrata em RAM na Cloud Hetzner apenas as entidades (tCredenciais.xml) e bases
+ * SQLite (controlo_geral.db / pendentes_efatura.db) pertencentes a este posto local.
+ */
+export async function hidratarSessaoIsoladaLocal(silentEvent = false): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  const curCfg = obterLocalFsCentroConfig();
+  const curId = (curCfg?.id || 'escritorio-principal').trim() || 'escritorio-principal';
+  const wsId = obterWorkspaceIdIsolado();
+  let algoHidratado = false;
+
+  // A. Hidratar entidades (tCredenciais.xml) do posto ativo
+  try {
+    let antHandle = activeAntigaHandle && activeAntigaHandleId === curId ? activeAntigaHandle : null;
+    if (!antHandle) {
+      antHandle = await loadHandleIdb(`gexcel_antiga_root::${curId}`);
+      if (!antHandle && (curId === 'escritorio-principal' || /-E01$/i.test(curId))) {
+        antHandle = await loadHandleIdb('gexcel_antiga_root');
+      }
+    }
+
+    let xmlContent: string | null = null;
+    if (antHandle && typeof antHandle.queryPermission === 'function') {
+      try {
+        const perm = await antHandle.queryPermission({ mode: 'read' });
+        if (perm === 'granted') {
+          xmlContent = await tentarLerTCredenciaisDeHandle(antHandle);
+          if (xmlContent) {
+            await saveHandleIdb(`tcred_xml_text::${curId}`, xmlContent);
+          }
+        }
+      } catch {
+        // fallback para cache local IndexedDB
+      }
+    }
+
+    if (!xmlContent) {
+      const cached = await loadHandleIdb(`tcred_xml_text::${curId}`);
+      if (typeof cached === 'string' && cached.trim()) {
+        xmlContent = cached;
+      }
+    }
+
+    if (xmlContent && xmlContent.trim()) {
+      const resXml = await fetch('/api/entidades/importar-tcredenciais', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Evo-Workspace-Id': wsId,
+        },
+        body: JSON.stringify({
+          xml_content: xmlContent,
+          nome_pasta: curCfg?.pasta_gexcel_antiga_display || '',
+        }),
+      });
+      if (resXml.ok) {
+        algoHidratado = true;
+      }
+    }
+  } catch (err) {
+    console.warn('[LOCAL FS] Aviso ao hidratar tCredenciais local:', err);
+  }
+
+  // B. Hidratar controlo_geral.db e pendentes_efatura.db da pasta BdsefaturaV4 local (se já autorizada)
+  try {
+    const evoHandle = await obterHandleEvogexAtivo(false);
+    if (evoHandle) {
+      let readOk = true;
+      if (typeof evoHandle.queryPermission === 'function') {
+        const perm = await evoHandle.queryPermission({ mode: 'read' });
+        readOk = perm === 'granted';
+      }
+      if (readOk) {
+        const v4Handle = await evoHandle.getDirectoryHandle('BdsefaturaV4', { create: false }).catch(() => null);
+        if (v4Handle) {
+          const ficheiros: Array<{ rel_path: string; base64: string }> = [];
+          for (const dbName of ['controlo_geral.db', 'pendentes_efatura.db']) {
+            try {
+              const fh = await v4Handle.getFileHandle(dbName, { create: false });
+              const file = await fh.getFile();
+              if (file.size > 0 && file.size <= 35 * 1024 * 1024) {
+                const buf = await file.arrayBuffer();
+                ficheiros.push({ rel_path: dbName, base64: arrayBufferToBase64(buf) });
+              }
+            } catch {
+              // ficheiro ainda não existe localmente
+            }
+          }
+          if (ficheiros.length > 0) {
+            const resSql = await fetch('/api/efatura/hidratar-sqlites-locais', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Evo-Workspace-Id': wsId,
+              },
+              body: JSON.stringify({ ficheiros }),
+            });
+            if (resSql.ok) {
+              algoHidratado = true;
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[LOCAL FS] Aviso ao hidratar SQLites locais:', err);
+  }
+
+  if (algoHidratado && !silentEvent) {
+    window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: obterLocalFsCentroConfig() }));
+  }
+  return algoHidratado;
 }

@@ -62,6 +62,14 @@ def obter_pasta_dados_raiz(override_path: str = None) -> str:
     if override_path and os.path.exists(override_path):
         return os.path.abspath(override_path)
 
+    if not override_path and not (os.environ.get("GEXCEL_DADOS_DIR") or "").strip():
+        try:
+            import workspace_context
+            if workspace_context.is_cloud_zero_storage():
+                return workspace_context.get_ephemeral_root_dir()
+        except Exception:
+            pass
+
     try:
         import auth_manager
         centro = auth_manager.obter_centro_dados_ativo()
@@ -102,6 +110,15 @@ def obter_pasta_v4(override_path: str = None) -> str:
             v4_env = os.path.join(env_dir, "BdsefaturaV4")
             os.makedirs(v4_env, exist_ok=True)
             return os.path.abspath(v4_env)
+
+        try:
+            import workspace_context
+            if workspace_context.is_cloud_zero_storage():
+                v4_ws = os.path.join(workspace_context.get_ephemeral_root_dir(), "BdsefaturaV4")
+                os.makedirs(v4_ws, exist_ok=True)
+                return os.path.abspath(v4_ws)
+        except Exception:
+            pass
 
         try:
             import auth_manager
@@ -859,8 +876,10 @@ class _ClosingSQLiteConnection(sqlite3.Connection):
                 pass
 
 
-def db_connect(path=DB_PATH, timeout=30):
+def db_connect(path=None, timeout=30):
     """Cria uma conexão SQLite resiliente com timeout estendido e PRAGMAs otimizados para rede/local."""
+    if not path:
+        path = obter_db_controlo_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = sqlite3.connect(path, timeout=timeout, factory=_ClosingSQLiteConnection)
     aplicar_pragmas_conexao(conn, path, timeout)
@@ -1151,6 +1170,35 @@ def carregar_entidades_gestor_evo12() -> List[Dict[str, Any]]:
     2. Fonte Complementar: `tCredenciais.xml` via `legado_bridge` (para enriquecer ou cobrir postos legados).
     3. Fallback Local: `controlo_geral.db` (`DB_PATH`).
     """
+    if not (os.environ.get("GEXCEL_DADOS_DIR") or "").strip():
+        try:
+            import workspace_context
+            if workspace_context.is_cloud_zero_storage():
+                ents_ram = workspace_context.get_entidades_ram()
+                out_ws: List[Dict[str, Any]] = []
+                for e in ents_ram:
+                    nif_clean = re.sub(r"[^0-9]", "", str(e.get("nif") or "")).strip()[:9]
+                    if len(nif_clean) != 9:
+                        continue
+                    out_ws.append({
+                        "id": nif_clean,
+                        "pb_id": nif_clean,
+                        "cod": str(e.get("cod") or e.get("id_contab") or "").strip(),
+                        "nif": nif_clean,
+                        "nif_cc": str(e.get("nif_cc") or nif_clean).strip(),
+                        "nomecli": str(e.get("nomecli") or f"Entidade {nif_clean}").strip(),
+                        "ativo": True,
+                        "subutilizador": str(e.get("subutilizador") or nif_clean).strip(),
+                        "password": str(e.get("password") or "").strip(),
+                        "senha_invalida_at": str(e.get("senha_invalida_at") or "").strip(),
+                        "erro_at_detalhe": str(e.get("erro_at_detalhe") or "").strip(),
+                        "origem": "local_browser_session",
+                    })
+                out_ws.sort(key=lambda x: (x.get("nomecli") or "").upper())
+                return out_ws
+        except Exception as e_ws:
+            LOGGER.debug(f"Aviso no isolamento workspace RAM em carregar_entidades_gestor_evo12: {e_ws}")
+
     por_nif: Dict[str, Dict[str, Any]] = {}
 
     # 1. Ler do Gestor de Entidades (EVO-12 SQLite data.db)
@@ -3401,7 +3449,8 @@ def consultar_inconformidades(
 ) -> dict:
     """Consulta registos de auditoria forense de inconformidades / anulações tardias no data.db."""
     init_inconformidades_db()
-    if not os.path.exists(DB_PATH):
+    ctrl_db = obter_db_controlo_path()
+    if not os.path.exists(ctrl_db):
         return {"total": 0, "inconformidades": []}
 
     where_clauses = ["1=1"]
@@ -3426,7 +3475,7 @@ def consultar_inconformidades(
     where_sql = " AND ".join(where_clauses)
 
     try:
-        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+        with sqlite3.connect(ctrl_db, timeout=30) as conn:
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
             c.execute(f"SELECT COUNT(*) as total FROM efatura_inconformidades WHERE {where_sql}", params)
@@ -3518,9 +3567,10 @@ def consultar_anuladas(
     # 1. Obter conjunto de chaves que são inconformidades forenses (N -> A)
     inconf_por_id = {}
     inconf_por_fatura = {}
+    ctrl_db_anul = obter_db_controlo_path()
     try:
-        if os.path.exists(DB_PATH):
-            with sqlite3.connect(DB_PATH, timeout=15) as conn:
+        if os.path.exists(ctrl_db_anul):
+            with sqlite3.connect(ctrl_db_anul, timeout=15) as conn:
                 conn.row_factory = sqlite3.Row
                 c = conn.cursor()
                 c.execute("SELECT * FROM efatura_inconformidades")

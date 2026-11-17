@@ -292,9 +292,12 @@ export function PendentesView({
     localStorage.setItem('gexcel_pend_assistente_fechado', 'true');
   };
 
+  const refreshOnFsRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     const onFsUpdated = () => {
       setCaminhoDestinoLocal(obterResumoDestinosConfigurados().pastaV4);
+      refreshOnFsRef.current();
     };
     window.addEventListener('gexcel-local-fs-updated', onFsUpdated);
     return () => window.removeEventListener('gexcel-local-fs-updated', onFsUpdated);
@@ -513,6 +516,13 @@ export function PendentesView({
     },
     [anoAtivo, nifsSelecionados, entidades.length, filtroRapido, pesquisa, sortCol, sortDir, onApiStatusChange]
   );
+
+  useEffect(() => {
+    refreshOnFsRef.current = () => {
+      void carregarEntidades();
+      void carregarDocumentos(true);
+    };
+  });
 
   useEffect(() => {
     carregarCatalogo();

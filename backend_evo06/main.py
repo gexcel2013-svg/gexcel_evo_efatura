@@ -42,6 +42,7 @@ import auth_manager
 import start_hub_evo06
 import pipeline_worker
 import pendentes_service
+import workspace_context
 
 # -------------------------------------------------------------------------
 # INTEGRAÇÃO COM A BIBLIOTECA DE WEB SCRAPING E COFRE DE ESTADOS
@@ -430,9 +431,20 @@ async def add_pna_headers(request: Request, call_next):
         resp.headers["Access-Control-Allow-Headers"] = "*"
         resp.headers["Access-Control-Allow-Private-Network"] = "true"
         return resp
-    response = await call_next(request)
+    raw_ws = request.headers.get("x-evo-workspace-id") or request.query_params.get("ws_id") or ""
+    tok_ws = workspace_context.set_current_ws_id(raw_ws)
+    ws_empty_hdr = "0"
+    try:
+        response = await call_next(request)
+        if workspace_context.is_cloud_zero_storage() and not workspace_context.get_entidades_ram():
+            ws_empty_hdr = "1"
+    finally:
+        workspace_context.reset_current_ws_id(tok_ws)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Private-Network"] = "true"
+    response.headers["Access-Control-Expose-Headers"] = "X-Evo-Zero-Storage, X-Evo-Ws-Empty"
+    response.headers["X-Evo-Zero-Storage"] = "1" if workspace_context.is_cloud_zero_storage() else "0"
+    response.headers["X-Evo-Ws-Empty"] = ws_empty_hdr
     return response
 
 # -------------------------------------------------------------------------
@@ -1165,7 +1177,7 @@ def api_sondagem_totais_lote(req: SondagemTotaisLoteRequest, lic = Depends(verif
 
     workers = max(1, min(req.max_concorrencia, 5))
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        resultados = list(executor.map(_processar_uma, entidades_db))
+        resultados = list(executor.map(workspace_context.wrap_thread_target(_processar_uma), entidades_db))
 
     sucessos = sum(1 for r in resultados if r.get("status") == "ok")
     total_docs_geral = sum(r.get("total_documentos", 0) for r in resultados)
@@ -2545,7 +2557,10 @@ def resolver_e_completar_nomes_vendas(
                 orcamento_part = 12.0 if modo_sincrono else 45.0
                 executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_workers)
                 try:
-                    futures = {executor.submit(_extrair_detalhe_direto, it): it[0] for it in nifs_com_id.items()}
+                    futures = {
+                        executor.submit(workspace_context.wrap_thread_target(_extrair_detalhe_direto), it): it[0]
+                        for it in nifs_com_id.items()
+                    }
                     try:
                         for fut in concurrent.futures.as_completed(futures, timeout=orcamento_part):
                             concluidos_part += 1
@@ -2719,7 +2734,7 @@ def extrair_faturas(req: ExtracaoRequest, lic = Depends(verificar_licenca_ativa)
             try:
                 executor_scraper = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="ScraperAnuladasSync")
                 scraper_future = executor_scraper.submit(
-                    executar_scraping_anuladas_paralelo,
+                    workspace_context.wrap_thread_target(executar_scraping_anuladas_paralelo),
                     nif=req.nif,
                     password=pwd,
                     data_inicio=str(req.data_inicio),
@@ -3806,7 +3821,7 @@ def _run_extracao_worker(
             try:
                 executor_scraper = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"ScraperAnuladasJob_{job_id[:6]}")
                 scraper_future = executor_scraper.submit(
-                    executar_scraping_anuladas_paralelo,
+                    workspace_context.wrap_thread_target(executar_scraping_anuladas_paralelo),
                     nif=nif,
                     password=password,
                     data_inicio=str(data_inicio),
@@ -3984,7 +3999,7 @@ def _run_extracao_worker(
                 LOGGER.info(f"🌐 [ROTA SCRAPER] A extrair intervalo {scrap_ini} a {scrap_fim} ({len(meses_a_extrair)} meses a processar)...")
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"ScraperWorker_{job_id[:6]}") as pool_scraper:
                     scraper_future_run = pool_scraper.submit(
-                        executar_scraping_completo,
+                        workspace_context.wrap_thread_target(executar_scraping_completo),
                         nif=nif,
                         password=password,
                         data_inicio=str(scrap_ini),
@@ -4054,7 +4069,7 @@ def _run_extracao_worker(
                     time.sleep(0.2 if simulacao_soap_ativa else random.uniform(1.0, 2.2))
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"ScraperFailover_{job_id[:6]}") as pool_failover:
                         failover_future = pool_failover.submit(
-                            executar_scraping_completo,
+                            workspace_context.wrap_thread_target(executar_scraping_completo),
                             nif=nif,
                             password=password,
                             data_inicio=str(data_inicio),
@@ -4473,7 +4488,7 @@ def iniciar_extracao_async(req: ExtracaoRequest, lic = Depends(verificar_licenca
     }
 
     thread = threading.Thread(
-        target=_run_extracao_worker,
+        target=workspace_context.wrap_thread_target(_run_extracao_worker),
         args=(
             job_id,
             req.nif,
@@ -5643,27 +5658,42 @@ def api_importar_tcredenciais_direto(req: ImportarTCredenciaisRequest):
     """
     Recebe o conteúdo de tCredenciais.xml lido diretamente pelo browser (File System Access API)
     a partir da pasta Dados_GexcelApps escolhida pelo utilizador e carrega todas as empresas e senhas.
+    Em servidor Cloud Zero-Storage mantém os dados estritamente na RAM do workspace autenticado.
     """
     import legado_bridge
     xml_raw = (req.xml_content or "").strip()
     if not xml_raw:
         raise HTTPException(status_code=400, detail="Conteúdo de tCredenciais.xml vazio.")
 
-    pasta_raiz = Path(pb_client.obter_pasta_dados_raiz())
-    pasta_raiz.mkdir(parents=True, exist_ok=True)
-    destino_xml = pasta_raiz / "tCredenciais.xml"
-    destino_xml.write_text(xml_raw, encoding="utf-8")
+    if workspace_context.is_cloud_zero_storage():
+        ws_id = workspace_context.get_current_ws_id()
+        if ws_id == "unlinked_empty":
+            raise HTTPException(status_code=400, detail="Sessão de posto inválida para isolamento Zero-Storage.")
+        try:
+            entidades = legado_bridge.parse_tcredenciais_xml_string(xml_raw)
+        except Exception as e_xml:
+            raise HTTPException(status_code=400, detail=f"XML tCredenciais inválido: {e_xml}")
+        workspace_context.set_entidades_ram(entidades, ws_id=ws_id)
+        try:
+            pb_client._ENTIDADES_CACHE["timestamp"] = 0.0
+        except Exception:
+            pass
+    else:
+        pasta_raiz = Path(pb_client.obter_pasta_dados_raiz())
+        pasta_raiz.mkdir(parents=True, exist_ok=True)
+        destino_xml = pasta_raiz / "tCredenciais.xml"
+        destino_xml.write_text(xml_raw, encoding="utf-8")
 
-    legado_bridge._CACHE_ENTIDADES["timestamp"] = 0.0
-    entidades = legado_bridge.carregar_entidades_legadas(str(destino_xml))
-    try:
-        pb_client.sincronizar_legado_para_pocketbase()
-    except Exception:
-        pass
-    try:
-        pb_client._ENTIDADES_CACHE["timestamp"] = 0.0
-    except Exception:
-        pass
+        legado_bridge._CACHE_ENTIDADES["timestamp"] = 0.0
+        entidades = legado_bridge.carregar_entidades_legadas(str(destino_xml))
+        try:
+            pb_client.sincronizar_legado_para_pocketbase()
+        except Exception:
+            pass
+        try:
+            pb_client._ENTIDADES_CACHE["timestamp"] = 0.0
+        except Exception:
+            pass
 
     return {
         "status": "sucesso",
@@ -5686,7 +5716,7 @@ def api_importar_tcredenciais_direto(req: ImportarTCredenciaisRequest):
 @app.get("/api/efatura/exportar-sqlite/{nif}")
 def api_exportar_sqlite_nif(nif: str):
     """
-    Devolve os ficheiros SQLite (.db) de uma empresa (compras, vendas e controlo_geral.db)
+    Devolve os ficheiros SQLite (.db) de uma empresa (compras, vendas, controlo_geral.db e pendentes_efatura.db)
     em Base64 para que o browser os grave diretamente na pasta Dados_evoGex\\BdsefaturaV4 do cliente.
     """
     import base64
@@ -5694,13 +5724,14 @@ def api_exportar_sqlite_nif(nif: str):
     pasta_v4 = Path(pb_client.obter_pasta_v4())
     ficheiros = []
 
-    ctrl_db = pasta_v4 / "controlo_geral.db"
-    if ctrl_db.exists() and ctrl_db.is_file():
-        ficheiros.append({
-            "rel_path": "controlo_geral.db",
-            "size": ctrl_db.stat().st_size,
-            "base64": base64.b64encode(ctrl_db.read_bytes()).decode("ascii"),
-        })
+    for root_db_name in ("controlo_geral.db", "pendentes_efatura.db"):
+        root_db = pasta_v4 / root_db_name
+        if root_db.exists() and root_db.is_file():
+            ficheiros.append({
+                "rel_path": root_db_name,
+                "size": root_db.stat().st_size,
+                "base64": base64.b64encode(root_db.read_bytes()).decode("ascii"),
+            })
 
     if nif_clean:
         nif_dir = pasta_v4 / nif_clean
@@ -5725,20 +5756,21 @@ def api_exportar_sqlite_nif(nif: str):
 @app.get("/api/efatura/exportar-todos-sqlites")
 def api_exportar_todos_sqlites():
     """
-    Devolve todos os ficheiros SQLite (.db) presentes em BdsefaturaV4 (controlo_geral.db + pastas NIF)
+    Devolve todos os ficheiros SQLite (.db) presentes em BdsefaturaV4 (controlo_geral.db, pendentes_efatura.db + pastas NIF)
     para sincronização direta e automática na pasta Dados_evoGex\\BdsefaturaV4 escolhida no browser.
     """
     import base64
     pasta_v4 = Path(pb_client.obter_pasta_v4())
     ficheiros = []
     if pasta_v4.exists():
-        ctrl_db = pasta_v4 / "controlo_geral.db"
-        if ctrl_db.exists() and ctrl_db.is_file():
-            ficheiros.append({
-                "rel_path": "controlo_geral.db",
-                "size": ctrl_db.stat().st_size,
-                "base64": base64.b64encode(ctrl_db.read_bytes()).decode("ascii"),
-            })
+        for root_db_name in ("controlo_geral.db", "pendentes_efatura.db"):
+            root_db = pasta_v4 / root_db_name
+            if root_db.exists() and root_db.is_file():
+                ficheiros.append({
+                    "rel_path": root_db_name,
+                    "size": root_db.stat().st_size,
+                    "base64": base64.b64encode(root_db.read_bytes()).decode("ascii"),
+                })
         for sub in sorted(pasta_v4.iterdir()):
             if sub.is_dir() and re.match(r"^\d{9}$", sub.name):
                 for db_file in sorted(sub.glob("*.db")):
@@ -5753,6 +5785,52 @@ def api_exportar_todos_sqlites():
         "assinatura": "API Importador e-Fatura Gexcel",
         "total_ficheiros": len(ficheiros),
         "ficheiros": ficheiros,
+    }
+
+
+class HidratarSqlitesRequest(BaseModel):
+    ficheiros: List[Dict[str, str]] = Field(default_factory=list)
+
+
+@app.post("/api/efatura/hidratar-sqlites-locais")
+def api_hidratar_sqlites_locais(req: HidratarSqlitesRequest):
+    """
+    Recebe ficheiros SQLite (.db) lidos localmente no posto do cliente e hidrata apenas
+    o buffer efémero isolado do workspace atual para leitura imediata e operações em sessão.
+    """
+    import base64
+    if workspace_context.is_cloud_zero_storage() and workspace_context.get_current_ws_id() == "unlinked_empty":
+        raise HTTPException(status_code=400, detail="Sessão de posto inválida para hidratação local.")
+
+    pasta_v4 = Path(pb_client.obter_pasta_v4())
+    pasta_v4.mkdir(parents=True, exist_ok=True)
+    restaurados = 0
+
+    for item in (req.ficheiros or []):
+        rel_raw = str(item.get("rel_path") or "").replace("\\", "/").strip()
+        b64_raw = str(item.get("base64") or "").strip()
+        if not rel_raw or not b64_raw:
+            continue
+        if rel_raw.startswith("/") or ".." in rel_raw or not rel_raw.lower().endswith(".db"):
+            continue
+        if not re.match(r"^(controlo_geral\.db|pendentes_efatura\.db|\d{9}/[A-Za-z0-9_.-]+\.db)$", rel_raw):
+            continue
+
+        destino = (pasta_v4 / rel_raw).resolve()
+        if pasta_v4.resolve() not in destino.parents:
+            continue
+        try:
+            raw_bytes = base64.b64decode(b64_raw)
+        except Exception:
+            continue
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_bytes(raw_bytes)
+        restaurados += 1
+
+    return {
+        "status": "sucesso",
+        "assinatura": "API Importador e-Fatura Gexcel",
+        "restaurados": restaurados,
     }
 
 
@@ -6732,7 +6810,7 @@ def api_iniciar_extracao_rv(req: RecibosVerdesExtracaoRequest, lic = Depends(ver
     }
 
     t = threading.Thread(
-        target=recibos_verdes_service.executar_job_recibos_verdes,
+        target=workspace_context.wrap_thread_target(recibos_verdes_service.executar_job_recibos_verdes),
         kwargs={
             "job_id": job_id,
             "jobs_dict": JOBS,
@@ -6916,7 +6994,7 @@ def api_pendentes_recolher_lote(req: PendentesRecolherLoteRequest, lic = Depends
     }
 
     t = threading.Thread(
-        target=pendentes_service.executar_job_recolha_pendentes,
+        target=workspace_context.wrap_thread_target(pendentes_service.executar_job_recolha_pendentes),
         kwargs={
             "job_id": job_id,
             "jobs_dict": JOBS,
@@ -7071,7 +7149,7 @@ def api_pendentes_submeter(req: PendentesSubmeterRequest, request: Request, lic 
         }
 
         t = threading.Thread(
-            target=pendentes_service.executar_job_ensaio_visivel_pendentes,
+            target=workspace_context.wrap_thread_target(pendentes_service.executar_job_ensaio_visivel_pendentes),
             kwargs={
                 "job_id": job_id,
                 "jobs_dict": JOBS,
@@ -7136,7 +7214,7 @@ def api_pendentes_submeter(req: PendentesSubmeterRequest, request: Request, lic 
     }
 
     t = threading.Thread(
-        target=pendentes_service.executar_job_submissao_pendentes,
+        target=workspace_context.wrap_thread_target(pendentes_service.executar_job_submissao_pendentes),
         kwargs={
             "job_id": job_id,
             "jobs_dict": JOBS,

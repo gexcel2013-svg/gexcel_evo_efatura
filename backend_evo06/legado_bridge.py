@@ -189,6 +189,58 @@ def normalizar_subutilizador_at(nif: str, sub: str) -> str:
     return s
 
 
+def _extrair_entidades_de_xml_root(root: ET.Element) -> List[Dict[str, Any]]:
+    linhas = root.findall("Linha")
+    # Regra Mandatória: Descartar as 3 primeiras linhas especiais
+    linhas_entidades = linhas[3:] if len(linhas) > 3 else []
+
+    entidades: List[Dict[str, Any]] = []
+    for linha in linhas_entidades:
+        nif = (linha.findtext("Nif") or "").strip()
+        nif_clean = re.sub(r"[^0-9]", "", nif)
+        if len(nif_clean) != 9:
+            continue
+
+        nome = (linha.findtext("Nome") or linha.findtext("NomeCli") or "").strip()
+        cod = (linha.findtext("Cod") or linha.findtext("IdContab") or "").strip()
+        p_efat = (linha.findtext("P_efatura") or "").strip()
+        u_efat = (linha.findtext("U_efatura") or "").strip()
+        p_at = (linha.findtext("P_AT") or "").strip()
+        u_at = (linha.findtext("U_AT") or "").strip()
+        if p_efat:
+            raw_pwd = p_efat
+            sub_raw = u_efat or u_at or nif_clean
+        else:
+            raw_pwd = p_at
+            sub_raw = u_at or u_efat or nif_clean
+        subuser = normalizar_subutilizador_at(nif_clean, sub_raw)
+
+        entidades.append({
+            "id": nif_clean,
+            "cod": cod,
+            "nif": nif_clean,
+            "nif_cc": nif_clean,
+            "nomecli": nome or f"Empresa {nif_clean}",
+            "password": descodificar_senha_legada(raw_pwd),
+            "subutilizador": subuser,
+        })
+
+    entidades.sort(key=lambda x: x["nomecli"].lower())
+    return entidades
+
+
+def parse_tcredenciais_xml_string(xml_content: str) -> List[Dict[str, Any]]:
+    """
+    Faz parsing de `tCredenciais.xml` inteiramente em memória RAM (Zero-Storage),
+    sem escrever qualquer ficheiro em disco.
+    """
+    xml_clean = str(xml_content or "").lstrip("\ufeff").strip()
+    if not xml_clean:
+        return []
+    root = ET.fromstring(xml_clean)
+    return _extrair_entidades_de_xml_root(root)
+
+
 def carregar_entidades_legadas(caminho_tcredenciais: str = "") -> List[Dict[str, Any]]:
     """
     Lê tCredenciais.xml descartando as 3 primeiras linhas especiais
@@ -196,6 +248,14 @@ def carregar_entidades_legadas(caminho_tcredenciais: str = "") -> List[Dict[str,
     Possui cache inteligente baseado no mtime do ficheiro.
     """
     global _CACHE_ENTIDADES
+
+    if not caminho_tcredenciais:
+        try:
+            import workspace_context
+            if workspace_context.is_cloud_zero_storage():
+                return workspace_context.get_entidades_ram()
+        except Exception:
+            pass
 
     caminho = caminho_tcredenciais or obter_caminho_tcredenciais()
     if not caminho or not os.path.exists(caminho):
@@ -214,43 +274,7 @@ def carregar_entidades_legadas(caminho_tcredenciais: str = "") -> List[Dict[str,
             return _CACHE_ENTIDADES["dados"]
 
         tree = ET.parse(caminho)
-        root = tree.getroot()
-        linhas = root.findall("Linha")
-
-        # Regra Mandatória: Descartar as 3 primeiras linhas especiais
-        linhas_entidades = linhas[3:] if len(linhas) > 3 else []
-
-        entidades = []
-        for linha in linhas_entidades:
-            nif = (linha.findtext("Nif") or "").strip()
-            nif_clean = re.sub(r"[^0-9]", "", nif)
-            if len(nif_clean) != 9:
-                continue
-
-            nome = (linha.findtext("Nome") or linha.findtext("NomeCli") or "").strip()
-            p_efat = (linha.findtext("P_efatura") or "").strip()
-            u_efat = (linha.findtext("U_efatura") or "").strip()
-            p_at = (linha.findtext("P_AT") or "").strip()
-            u_at = (linha.findtext("U_AT") or "").strip()
-            if p_efat:
-                raw_pwd = p_efat
-                sub_raw = u_efat or u_at or nif_clean
-            else:
-                raw_pwd = p_at
-                sub_raw = u_at or u_efat or nif_clean
-            subuser = normalizar_subutilizador_at(nif_clean, sub_raw)
-
-            entidades.append({
-                "id": nif_clean,
-                "nif": nif_clean,
-                "nif_cc": nif_clean,
-                "nomecli": nome or f"Empresa {nif_clean}",
-                "password": descodificar_senha_legada(raw_pwd),
-                "subutilizador": subuser,
-            })
-
-        # Ordenar alfabeticamente pelo nome da empresa
-        entidades.sort(key=lambda x: x["nomecli"].lower())
+        entidades = _extrair_entidades_de_xml_root(tree.getroot())
 
         _CACHE_ENTIDADES = {
             "ficheiro_xml": caminho,
