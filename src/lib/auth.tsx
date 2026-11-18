@@ -5,6 +5,11 @@ import {
   sincronizarEscritoriosLocaisComLicenca,
   selecionarLocalFsCentroAtivo,
 } from './localFsBridge';
+import {
+  clearSharedSsoCookie,
+  readSharedSsoCookie,
+  writeSharedSsoCookie,
+} from './evoCrossAppBridge';
 
 interface AuthContextType {
   currentUser: AppUser | null;
@@ -95,6 +100,22 @@ function decodeGxtkSsoToken(rawToken: string): StoredEvoSession | null {
   }
 }
 
+function persistSharedSsoFromSession(s: StoredEvoSession, preferredOfficeId?: string): void {
+  writeSharedSsoCookie({
+    id: String(s.id ?? '1'),
+    username: s.username,
+    nome: s.nome || s.username,
+    role: s.role || 'OPERADOR',
+    email: s.email || '',
+    telefone: s.telefone || '',
+    client_code: s.client_code,
+    session_context: s.session_context || 'OFFICE',
+    telework_expires_at: s.telework_expires_at || '',
+    preferred_office_id: preferredOfficeId || s.offices?.[0]?.officeId,
+    token: s.token,
+  });
+}
+
 function readStoredEvoSession(): StoredEvoSession | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -109,40 +130,66 @@ function readStoredEvoSession(): StoredEvoSession | null {
         const serialized = JSON.stringify(decoded);
         sessionStorage.setItem(EVO_SESSION_KEY, serialized);
         localStorage.setItem(EVO_SESSION_KEY, serialized);
+        persistSharedSsoFromSession(decoded);
         return decoded;
       }
     }
 
     const raw = sessionStorage.getItem(EVO_SESSION_KEY) || localStorage.getItem(EVO_SESSION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<StoredEvoSession>;
-    if (
-      !parsed ||
-      typeof parsed.token !== 'string' ||
-      parsed.token.trim().length === 0 ||
-      typeof parsed.username !== 'string' ||
-      parsed.username.trim().length === 0
-    ) {
-      return null;
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<StoredEvoSession>;
+      if (
+        parsed &&
+        typeof parsed.token === 'string' &&
+        parsed.token.trim().length > 0 &&
+        typeof parsed.username === 'string' &&
+        parsed.username.trim().length > 0
+      ) {
+        if (parsed.token.startsWith('gxtk.') && !decodeGxtkSsoToken(parsed.token)) {
+          sessionStorage.removeItem(EVO_SESSION_KEY);
+          localStorage.removeItem(EVO_SESSION_KEY);
+        } else {
+          const sessionObj: StoredEvoSession = {
+            id: parsed.id ?? 1,
+            username: parsed.username.trim(),
+            nome: (parsed.nome || parsed.username).trim(),
+            role: parsed.role || 'OPERADOR',
+            email: parsed.email || '',
+            telefone: parsed.telefone || '',
+            client_code: parsed.client_code ? String(parsed.client_code).trim().toUpperCase() : undefined,
+            session_context: parsed.session_context === 'TELEWORK' ? 'TELEWORK' : 'OFFICE',
+            telework_expires_at: parsed.telework_expires_at || '',
+            offices: Array.isArray(parsed.offices) ? parsed.offices : undefined,
+            token: parsed.token.trim(),
+          };
+          sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(sessionObj));
+          persistSharedSsoFromSession(sessionObj);
+          return sessionObj;
+        }
+      }
     }
-    if (parsed.token.startsWith('gxtk.') && !decodeGxtkSsoToken(parsed.token)) {
-      sessionStorage.removeItem(EVO_SESSION_KEY);
-      localStorage.removeItem(EVO_SESSION_KEY);
-      return null;
+
+    const cookieSess = readSharedSsoCookie();
+    if (cookieSess) {
+      const decodedFromTok = cookieSess.token.startsWith('gxtk.') ? decodeGxtkSsoToken(cookieSess.token) : null;
+      const sessionObj: StoredEvoSession = decodedFromTok || {
+        id: cookieSess.id,
+        username: cookieSess.username,
+        nome: cookieSess.nome,
+        role: cookieSess.role,
+        email: cookieSess.email,
+        telefone: cookieSess.telefone || '',
+        client_code: cookieSess.client_code,
+        session_context: cookieSess.session_context || 'OFFICE',
+        telework_expires_at: cookieSess.telework_expires_at || '',
+        token: cookieSess.token,
+      };
+      const serialized = JSON.stringify(sessionObj);
+      sessionStorage.setItem(EVO_SESSION_KEY, serialized);
+      localStorage.setItem(EVO_SESSION_KEY, serialized);
+      return sessionObj;
     }
-    const sessionObj: StoredEvoSession = {
-      id: parsed.id ?? 1,
-      username: parsed.username.trim(),
-      nome: (parsed.nome || parsed.username).trim(),
-      role: parsed.role || 'OPERADOR',
-      email: parsed.email || '',
-      telefone: parsed.telefone || '',
-      client_code: parsed.client_code ? String(parsed.client_code).trim().toUpperCase() : undefined,
-      offices: Array.isArray(parsed.offices) ? parsed.offices : undefined,
-      token: parsed.token.trim(),
-    };
-    sessionStorage.setItem(EVO_SESSION_KEY, JSON.stringify(sessionObj));
-    return sessionObj;
+    return null;
   } catch {
     return null;
   }
@@ -229,6 +276,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const clearSessionState = useCallback(() => {
+    clearSharedSsoCookie();
     setToken(null);
     setCurrentUser(null);
     setLicensedOffices([]);
@@ -364,6 +412,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const serialized = JSON.stringify(refreshedSession);
             sessionStorage.setItem(EVO_SESSION_KEY, serialized);
             localStorage.setItem(EVO_SESSION_KEY, serialized);
+            persistSharedSsoFromSession(refreshedSession);
             localStorage.setItem(TOKEN_KEY, refreshedSession.token);
             localStorage.setItem(USER_KEY, JSON.stringify(mapped));
             setToken(refreshedSession.token);
@@ -423,6 +472,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const serialized = JSON.stringify(evoSess);
         sessionStorage.setItem(EVO_SESSION_KEY, serialized);
         localStorage.setItem(EVO_SESSION_KEY, serialized);
+        persistSharedSsoFromSession(evoSess);
         localStorage.setItem(TOKEN_KEY, evoSess.token);
         localStorage.setItem(USER_KEY, JSON.stringify(usr));
         setToken(evoSess.token);
@@ -468,6 +518,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const serialized = JSON.stringify(evoSess);
       sessionStorage.setItem(EVO_SESSION_KEY, serialized);
       localStorage.setItem(EVO_SESSION_KEY, serialized);
+      persistSharedSsoFromSession(evoSess, extras?.preferredOfficeId);
       localStorage.setItem(USER_KEY, JSON.stringify(usr));
       localStorage.setItem(TOKEN_KEY, cleanTok);
       setCurrentUser({ ...usr, client_code: cc || usr.client_code });

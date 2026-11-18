@@ -77,6 +77,8 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
 
   const [inviteToken, setInviteToken] = useState<string>("");
   const [inspectedTenant, setInspectedTenant] = useState<InspectedTenant | null>(null);
+  const [showManualTokenBox, setShowManualTokenBox] = useState(false);
+  const [manualTokenInput, setManualTokenInput] = useState("");
   const [firstAdminNome, setFirstAdminNome] = useState("");
   const [firstAdminEmail, setFirstAdminEmail] = useState("");
   const [firstAdminTelefone, setFirstAdminTelefone] = useState("");
@@ -94,28 +96,46 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
   const [transferNewPassword, setTransferNewPassword] = useState("");
   const [transferSuccessMsg, setTransferSuccessMsg] = useState<string | null>(null);
 
+  const inspectActivationToken = async (rawTok: string, silentIfOffline = false) => {
+    const clean = rawTok.trim().toUpperCase();
+    if (!clean) {
+      if (!silentIfOffline) setError("Introduza o código do token de ativação.");
+      return;
+    }
+    setLoading(true);
+    if (!silentIfOffline) setError(null);
+    try {
+      const r = await fetch(`/api/auth/token/inspect?token=${encodeURIComponent(clean)}`);
+      const data = await r.json().catch(() => null);
+      if (data?.ok && data?.tenant) {
+        setInviteToken(clean);
+        setInspectedTenant(data.tenant);
+        setFirstOfficeName(String(data.tenant.office_name || "Escritório Principal"));
+        const rawNif = String(data.tenant.nif || "").replace(/\D/g, "");
+        if (rawNif.length === 9 && !rawNif.startsWith("599000000")) {
+          setFirstOfficeNif(rawNif);
+        }
+        setShowManualTokenBox(false);
+      } else if (data?.error) {
+        setError(data.error);
+      } else if (!silentIfOffline) {
+        setError("Token inválido ou expirado.");
+      }
+    } catch {
+      if (!silentIfOffline) {
+        setError("Não foi possível validar o token no servidor de autenticação.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlTok = (params.get("token") || "").trim().toUpperCase();
     if (!urlTok) return;
-    setInviteToken(urlTok);
-    fetch(`/api/auth/token/inspect?token=${encodeURIComponent(urlTok)}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.ok && data?.tenant) {
-          setInspectedTenant(data.tenant);
-          setFirstOfficeName(String(data.tenant.office_name || "Escritório Principal"));
-          const rawNif = String(data.tenant.nif || "").replace(/\D/g, "");
-          if (rawNif.length === 9 && !rawNif.startsWith("599000000")) {
-            setFirstOfficeNif(rawNif);
-          }
-        } else if (data?.error) {
-          setError(data.error);
-        }
-      })
-      .catch(() => {
-        // Silencioso se offline
-      });
+    setManualTokenInput(urlTok);
+    void inspectActivationToken(urlTok, true);
   }, []);
 
   const handleActivateFirstAdmin = async (e: React.FormEvent) => {
@@ -681,7 +701,71 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
               </span>
               <ArrowRight size={14} />
             </button>
+            {isFirstAdminOnboarding && (
+              <button
+                type="button"
+                onClick={() => {
+                  setInspectedTenant(null);
+                  setInviteToken("");
+                  setError(null);
+                }}
+                className="w-full py-1.5 text-[11px] font-mono text-slate-600 dark:text-slate-400 hover:text-foreground cursor-pointer"
+              >
+                Voltar ao login normal
+              </button>
+            )}
           </form>
+          )}
+
+          {!pendingTransferConfirm && !isFirstAdminOnboarding && (
+            <div className="mt-4 space-y-3">
+              {!showManualTokenBox ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowManualTokenBox(true);
+                    setError(null);
+                  }}
+                  className="w-full py-2 px-3 rounded-lg border border-border bg-slate-50 dark:bg-[#081019] hover:border-primary text-[11px] font-mono text-slate-700 dark:text-slate-200 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <KeyRound size={13} className="text-primary" />
+                  <span>Tem um token de ativação? Ativar acesso</span>
+                </button>
+              ) : (
+                <div className="p-3 rounded-lg border border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-[#0a1929] space-y-2">
+                  <label className="block text-[10px] font-mono font-semibold uppercase tracking-wider text-sky-900 dark:text-sky-200">
+                    Token de Ativação
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={manualTokenInput}
+                      onChange={(e) => setManualTokenInput(e.target.value.toUpperCase())}
+                      placeholder="GXL-XXXX-XXXX"
+                      className="flex-1 h-8 px-2.5 rounded border border-border bg-white dark:bg-[#0c1520] text-xs font-mono text-foreground focus:outline-none focus:border-primary"
+                    />
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void inspectActivationToken(manualTokenInput)}
+                      className="h-8 px-3 rounded bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-medium cursor-pointer disabled:opacity-50"
+                    >
+                      Validar
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowManualTokenBox(false)}
+                    className="text-[10px] font-mono text-slate-600 dark:text-slate-300 hover:underline cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
+              <p className="text-center font-mono text-[10px] text-slate-600 dark:text-slate-400">
+                Para aceder à aplicação é obrigatório iniciar sessão ou ativar um token válido.
+              </p>
+            </div>
           )}
         </div>
       </main>

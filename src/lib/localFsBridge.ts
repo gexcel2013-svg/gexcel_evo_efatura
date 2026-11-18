@@ -1,9 +1,15 @@
 /**
  * Ponte Direta de Sistema de Ficheiros no Browser (File System Access API — Zero .bat / Zero Atrito)
  * Permite ao utilizador escolher no Explorador do Windows onde instalar/ligar a pasta Dados_evoGex
- * e onde ler a pasta antiga Dados_GexcelApps (tCredenciais.xml), criando automaticamente toda a
+ * e onde ler a pasta antiga Gexcel (tCredenciais.xml), criando automaticamente toda a
  * estrutura de subpastas e gravando os ficheiros SQLite (.db) diretamente no disco do cliente.
  */
+
+import {
+  getOrCreateSharedWorkspaceId,
+  readSharedCentroMeta,
+  writeSharedCentroMeta,
+} from './evoCrossAppBridge';
 
 export interface LocalFsCentroConfig {
   id: string;
@@ -47,7 +53,6 @@ export function isWindowsPath(p?: string | null): boolean {
 const STORAGE_KEY = 'gexcel_local_fs_centro_v1';
 const MAP_STORAGE_KEY = 'gexcel_local_fs_centros_map_v2';
 const ACTIVE_ID_STORAGE_KEY = 'gexcel_local_fs_active_id_v2';
-const WS_STORAGE_PREFIX = 'gexcel_evo_ws_id_v1::';
 const DEVICE_ID_STORAGE_KEY = 'gexcel_evo_device_id_v1';
 const IDB_NAME = 'gexcel_evogex_fs_db';
 const IDB_STORE = 'dir_handles';
@@ -78,18 +83,7 @@ export function obterDeviceIdPosto(): string {
 export function obterWorkspaceIdIsolado(): string {
   try {
     const centroId = (localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || 'escritorio-principal').trim() || 'escritorio-principal';
-    const key = `${WS_STORAGE_PREFIX}${centroId}`;
-    const existing = (localStorage.getItem(key) || '').trim();
-    if (existing.length >= 16) {
-      return existing;
-    }
-    const rand =
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID().replace(/-/g, '')
-        : `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`.replace(/[^a-zA-Z0-9]/g, '');
-    const novo = `ws_${rand}`;
-    localStorage.setItem(key, novo);
-    return novo;
+    return getOrCreateSharedWorkspaceId(centroId);
   } catch {
     return 'ws_ephemeral_fallback';
   }
@@ -295,6 +289,16 @@ export function selecionarLocalFsCentroAtivo(
   writeCentrosMap(map);
   localStorage.setItem(ACTIVE_ID_STORAGE_KEY, oid);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  const sharedPrev = readSharedCentroMeta(oid);
+  writeSharedCentroMeta({
+    id: updated.id,
+    nome: updated.nome,
+    pastaEvogex: updated.pasta_evogex_display,
+    pastaAntiga: updated.pasta_gexcel_antiga_display,
+    evogexConfirmado: Boolean(updated.evogex_confirmado || sharedPrev?.evogexConfirmado),
+    entidadesCount: Number(updated.total_entidades_carregadas ?? sharedPrev?.entidadesCount ?? 0),
+    makeActive: true,
+  });
   window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: updated }));
   if (prevId !== oid) {
     window.setTimeout(() => {
@@ -502,6 +506,16 @@ export function guardarLocalFsCentroConfig(cfg: LocalFsCentroConfig): void {
   writeCentrosMap(map);
   localStorage.setItem(ACTIVE_ID_STORAGE_KEY, norm.id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(norm));
+  const sharedPrev = readSharedCentroMeta(norm.id);
+  writeSharedCentroMeta({
+    id: norm.id,
+    nome: norm.nome,
+    pastaEvogex: norm.pasta_evogex_display,
+    pastaAntiga: norm.pasta_gexcel_antiga_display,
+    evogexConfirmado: Boolean(norm.evogex_confirmado || sharedPrev?.evogexConfirmado),
+    entidadesCount: Number(norm.total_entidades_carregadas ?? sharedPrev?.entidadesCount ?? 0),
+    makeActive: true,
+  });
   window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: norm }));
   // Persistir também no servidor central para nunca se perder ao fechar/reabrir a aplicação
   void fetch('/api/app/centros-dados/registar', {
@@ -1206,9 +1220,45 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return window.btoa(bin);
 }
 
+async function lerBytesDataDbDeHandle(evogexHandle: any): Promise<Uint8Array | null> {
+  if (!evogexHandle) return null;
+  const caminhos: string[][] = [
+    ['index_core', 'pb_data', 'data.db'],
+    ['pb_data', 'data.db'],
+  ];
+  for (const parts of caminhos) {
+    try {
+      let curr = evogexHandle;
+      for (const dirName of parts.slice(0, -1)) {
+        curr = await curr.getDirectoryHandle(dirName, { create: false });
+      }
+      const fh = await curr.getFileHandle(parts[parts.length - 1], { create: false });
+      const file = await fh.getFile();
+      if (file.size > 0 && file.size <= 45 * 1024 * 1024) {
+        return new Uint8Array(await file.arrayBuffer());
+      }
+    } catch {
+      // continua
+    }
+  }
+  return null;
+}
+
+async function lerCentroJsonDoHandle(evogexHandle: any): Promise<Partial<LocalFsCentroConfig> | null> {
+  try {
+    const fh = await evogexHandle.getFileHandle('centro_dados.json', { create: false });
+    const file = await fh.getFile();
+    const txt = await file.text();
+    return JSON.parse(txt) as Partial<LocalFsCentroConfig>;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Hidrata em RAM na Cloud Hetzner apenas as entidades (tCredenciais.xml) e bases
- * SQLite (controlo_geral.db / pendentes_efatura.db) pertencentes a este posto local.
+ * Hidrata em RAM na Cloud Hetzner apenas a base oficial index_core (Gestor de Entidades),
+ * entidades (tCredenciais.xml) e bases SQLite (controlo_geral.db / pendentes_efatura.db)
+ * pertencentes a este posto local.
  */
 export async function hidratarSessaoIsoladaLocal(silentEvent = false): Promise<boolean> {
   if (typeof window === 'undefined') return false;
@@ -1216,6 +1266,63 @@ export async function hidratarSessaoIsoladaLocal(silentEvent = false): Promise<b
   const curId = (curCfg?.id || 'escritorio-principal').trim() || 'escritorio-principal';
   const wsId = obterWorkspaceIdIsolado();
   let algoHidratado = false;
+
+  // A0. Hidratar base oficial index_core/pb_data/data.db a partir da pasta Dados_evoGex autorizada
+  try {
+    const evoHandle = await obterHandleEvogexAtivo(false);
+    if (evoHandle) {
+      let readOk = true;
+      if (typeof evoHandle.queryPermission === 'function') {
+        const perm = await evoHandle.queryPermission({ mode: 'read' });
+        readOk = perm === 'granted';
+      }
+      if (readOk) {
+        const dbBytes = await lerBytesDataDbDeHandle(evoHandle);
+        if (dbBytes && dbBytes.length > 0) {
+          const hRes = await fetch('/api/bridge/workspace/hydrate-sqlite', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Evo-Workspace-Id': wsId,
+            },
+            body: JSON.stringify({ sqlite_b64: arrayBufferToBase64(dbBytes.buffer as ArrayBuffer) }),
+          });
+          if (hRes.ok) {
+            const hData = await hRes.json().catch(() => null);
+            const entCount = Number(hData?.entidades_count || 0);
+            if (entCount > 0 || curCfg) {
+              const baseCfg = curCfg || normalizeLocalFsCentro({ id: curId }, curId);
+              const nextCfg: LocalFsCentroConfig = {
+                ...baseCfg,
+                evogex_confirmado: true,
+                total_entidades_carregadas: entCount || baseCfg.total_entidades_carregadas,
+                updated_at: new Date().toISOString(),
+              };
+              const map = readRawCentrosMap();
+              map[nextCfg.id] = nextCfg;
+              writeCentrosMap(map);
+              localStorage.setItem(ACTIVE_ID_STORAGE_KEY, nextCfg.id);
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(nextCfg));
+              writeSharedCentroMeta({
+                id: nextCfg.id,
+                nome: nextCfg.nome,
+                pastaEvogex: nextCfg.pasta_evogex_display,
+                pastaAntiga: nextCfg.pasta_gexcel_antiga_display,
+                evogexConfirmado: true,
+                entidadesCount: entCount,
+                makeActive: true,
+              });
+            }
+            if (entCount > 0) {
+              algoHidratado = true;
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[LOCAL FS] Aviso ao hidratar data.db do Gestor de Entidades:', err);
+  }
 
   // A. Hidratar entidades (tCredenciais.xml) do posto ativo
   try {
@@ -1318,4 +1425,117 @@ export async function hidratarSessaoIsoladaLocal(silentEvent = false): Promise<b
     window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: obterLocalFsCentroConfig() }));
   }
   return algoHidratado;
+}
+
+export async function reconectarPastaEscritorioNoEfatura(): Promise<{
+  ok: boolean;
+  totalEntidades: number;
+  precisaGestor: boolean;
+  erro?: string;
+}> {
+  if (typeof window === 'undefined') {
+    return { ok: false, totalEntidades: 0, precisaGestor: true };
+  }
+  const win = window as any;
+  const cfgAtual = obterLocalFsCentroConfig();
+  const sharedMeta = readSharedCentroMeta(cfgAtual?.id);
+  const targetId = (cfgAtual?.id || sharedMeta?.id || 'escritorio-principal').trim() || 'escritorio-principal';
+  const wsId = getOrCreateSharedWorkspaceId(targetId);
+
+  try {
+    let evogexHandle = await obterHandleEvogexAtivo(true);
+
+    if (!evogexHandle) {
+      if (typeof win.showDirectoryPicker !== 'function') {
+        return {
+          ok: false,
+          totalEntidades: 0,
+          precisaGestor: true,
+          erro: 'Utilize o Google Chrome ou Microsoft Edge para ligar a pasta do escritório.',
+        };
+      }
+      const picked = await win.showDirectoryPicker({ mode: 'readwrite' });
+      const pickedName = String(picked.name || 'Dados_evoGex').trim();
+      if (/^dados_evogex/i.test(pickedName)) {
+        evogexHandle = picked;
+      } else {
+        const subEvo = await picked.getDirectoryHandle('Dados_evoGex', { create: false }).catch(() => null);
+        const subIdx = await picked.getDirectoryHandle('index_core', { create: false }).catch(() => null);
+        evogexHandle = subEvo || (subIdx ? picked : picked);
+      }
+
+      activeEvogexHandle = evogexHandle;
+      activeEvogexHandleId = targetId;
+      await saveHandleIdb(`evogex_root::${targetId}`, evogexHandle);
+      if (targetId === 'escritorio-principal' || /-E01$/i.test(targetId)) {
+        await saveHandleIdb('evogex_root', evogexHandle);
+      }
+    }
+
+    const manifest = await lerCentroJsonDoHandle(evogexHandle);
+    const dbBytes = await lerBytesDataDbDeHandle(evogexHandle);
+    if (dbBytes && dbBytes.length > 0) {
+      await fetch('/api/bridge/workspace/hydrate-sqlite', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Evo-Workspace-Id': wsId,
+        },
+        body: JSON.stringify({ sqlite_b64: arrayBufferToBase64(dbBytes.buffer as ArrayBuffer) }),
+      }).catch(() => null);
+    }
+
+    await hidratarSessaoIsoladaLocal(true);
+
+    const entRes = await fetch('/api/entidades', {
+      headers: { 'X-Evo-Workspace-Id': wsId },
+      cache: 'no-store',
+    }).catch(() => null);
+    let totalEntidades = 0;
+    if (entRes && entRes.ok) {
+      const entData = await entRes.json().catch(() => null);
+      totalEntidades = Number(entData?.total ?? entData?.entidades?.length ?? 0);
+    }
+
+    const displayPath =
+      manifest?.pasta_evogex_display ||
+      cfgAtual?.pasta_evogex_display ||
+      sharedMeta?.pastaEvogex ||
+      sugerirPastaEvogexPorEscritorio(targetId);
+
+    if (totalEntidades > 0) {
+      const nextCfg = normalizeLocalFsCentro(
+        {
+          ...cfgAtual,
+          ...manifest,
+          id: targetId,
+          nome: manifest?.nome || cfgAtual?.nome || sharedMeta?.nome || 'Escritório Principal',
+          pasta_evogex_display: displayPath,
+          evogex_confirmado: true,
+          total_entidades_carregadas: totalEntidades,
+          updated_at: new Date().toISOString(),
+        },
+        targetId
+      );
+      guardarLocalFsCentroConfig(nextCfg);
+      return { ok: true, totalEntidades, precisaGestor: false };
+    }
+
+    return {
+      ok: false,
+      totalEntidades: 0,
+      precisaGestor: true,
+      erro: 'A pasta ligada ainda não contém entidades configuradas. Conclua a carga no Gestor de Entidades.',
+    };
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      return { ok: false, totalEntidades: 0, precisaGestor: false, erro: 'Seleção cancelada.' };
+    }
+    return {
+      ok: false,
+      totalEntidades: 0,
+      precisaGestor: true,
+      erro: err?.message || 'Não foi possível ligar à pasta do escritório.',
+    };
+  }
 }

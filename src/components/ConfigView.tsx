@@ -19,9 +19,11 @@ import {
   Building2,
   Laptop,
   Wifi,
-  ShieldAlert
+  ShieldAlert,
+  ArrowUpRight
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { getEvoSubdomainUrl } from '../lib/evoCrossAppBridge';
 import { validateEmail, validatePhone, formatPhoneDisplay } from '../lib/contactValidation';
 import type {
   AppUser,
@@ -1328,6 +1330,20 @@ export function ConfigView() {
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              const base = getEvoSubdomainUrl('entidades');
+              const qs = new URLSearchParams();
+              if (token) qs.set('sso', token);
+              qs.set('return_to', `${window.location.origin}/`);
+              window.open(`${base}/?${qs.toString()}`, '_blank', 'noopener,noreferrer');
+            }}
+            className="flex items-center space-x-1.5 bg-sky-50 dark:bg-[#0a1929] hover:bg-sky-100 dark:hover:bg-[#0e243b] border border-sky-300 dark:border-sky-700 px-3 py-1.5 rounded-full text-xs font-mono font-semibold text-sky-900 dark:text-sky-200 cursor-pointer transition-colors"
+          >
+            <span>Abrir Gestor de Entidades</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
           <div className="flex items-center space-x-2 bg-card border border-border px-3 py-1.5 rounded-full text-xs font-mono shadow-2xs">
             <SlidersHorizontal className="w-3.5 h-3.5 text-[#0284c7] dark:text-sky-400" />
             <span className="text-slate-700 dark:text-slate-300">

@@ -14,13 +14,17 @@ import { LoginModal } from './components/LoginModal';
 import { SetupWizardModal } from './components/SetupWizardModal';
 import { AuthProvider, useAuth, EVO_SESSION_KEY } from './lib/auth';
 import { EvoLoginGate } from './components/EvoLoginGate';
+import { EvoGestorSetupGate } from './components/EvoGestorSetupGate';
 import type { CentroDadosItem } from './types/auth';
 import {
+  guardarLocalFsCentroConfig,
   obterLocalFsCentroConfig,
   obterLocalFsTodosCentrosMap,
+  reconectarPastaEscritorioNoEfatura,
   selecionarLocalFsCentroAtivo,
   sugerirPastaEvogexPorEscritorio,
 } from './lib/localFsBridge';
+import { getEvoSubdomainUrl, readSharedCentroMeta } from './lib/evoCrossAppBridge';
 
 function AppContent() {
   const {
@@ -34,11 +38,16 @@ function AppContent() {
     showSetupWizard,
     setShowLoginModal,
     setExternalSession,
+    logout,
     isTeleworkExternal,
     teleworkExpiresAt,
   } = useAuth();
   const [centroKey, setCentroKey] = useState<number>(0);
   const [localFsRev, setLocalFsRev] = useState<number>(0);
+  const [gateState, setGateState] = useState<'checking' | 'ready' | 'reconnect' | 'setup_required'>('checking');
+  const [gateEntidadesTotal, setGateEntidadesTotal] = useState<number>(0);
+  const [gateOfficeConfirmed, setGateOfficeConfirmed] = useState<boolean>(false);
+  const [gateRecheckTick, setGateRecheckTick] = useState<number>(0);
 
   useEffect(() => {
     const onFsUpdated = () => setLocalFsRev(prev => prev + 1);
@@ -105,7 +114,7 @@ function AppContent() {
   const handleSelecionarCentro = async (centroId: string) => {
     if (centroAtivo && centroId === centroAtivo.id) return;
     const alvo = centrosDisponiveis.find(c => c.id === centroId);
-    const updatedLoc = selecionarLocalFsCentroAtivo(centroId, {
+    selecionarLocalFsCentroAtivo(centroId, {
       nome: alvo?.nome,
       pastaEvogex: alvo?.pasta_evogex,
       pastaGexcelAntiga: alvo?.pasta_gexcel_antiga,
@@ -113,6 +122,8 @@ function AppContent() {
     });
     setLocalFsRev(prev => prev + 1);
     setCentroKey(prev => prev + 1);
+    setGateState('checking');
+    setGateRecheckTick(prev => prev + 1);
 
     try {
       const res = await fetch('http://127.0.0.1:8015/api/app/centros-dados/selecionar', {
@@ -124,10 +135,6 @@ function AppContent() {
         await refreshConfig();
       }
     } catch {}
-
-    if (!updatedLoc.evogex_confirmado && currentUser?.role !== 'subutilizador') {
-      setActiveTab('config');
-    }
   };
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -286,6 +293,107 @@ function AppContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Porteiro Obrigatório de Prontidão (Ligação ao Escritório + Carteira de Entidades no Gestor)
+  useEffect(() => {
+    if (!currentUser || !token) {
+      setGateState('checking');
+      return;
+    }
+    let cancel = false;
+
+    const verificarProntidao = async () => {
+      try {
+        const [entSettled, bridgeSettled] = await Promise.allSettled([
+          fetch('http://127.0.0.1:8015/api/entidades', { cache: 'no-store' }),
+          fetch('http://127.0.0.1:8095/api/bridge/health', { signal: AbortSignal.timeout(900) }),
+        ]);
+
+        let entidadesTotal = 0;
+        if (entSettled.status === 'fulfilled' && entSettled.value.ok) {
+          const entData = await entSettled.value.json().catch(() => null);
+          entidadesTotal = Number(entData?.total ?? entData?.entidades?.length ?? 0);
+        }
+
+        let localBridgeOk = false;
+        if (bridgeSettled.status === 'fulfilled' && bridgeSettled.value.ok) {
+          const bData = await bridgeSettled.value.json().catch(() => null);
+          localBridgeOk = Boolean(bData && bData.status === 'ok');
+        }
+
+        if (cancel) return;
+
+        const localCfg = obterLocalFsCentroConfig();
+        const sharedMeta = readSharedCentroMeta(centroAtivo?.id);
+        const localServiceConfirmed = Boolean(localBridgeOk || window.__GEXCEL_MOTOR_SOURCE__ === 'local');
+        const officeConfirmed =
+          localServiceConfirmed ||
+          isTeleworkExternal ||
+          Boolean(localCfg?.evogex_confirmado) ||
+          Boolean(sharedMeta?.evogexConfirmado);
+
+        setGateEntidadesTotal(entidadesTotal);
+        setGateOfficeConfirmed(officeConfirmed);
+
+        if (entidadesTotal > 0 && officeConfirmed) {
+          if (!localCfg?.evogex_confirmado && sharedMeta?.evogexConfirmado) {
+            guardarLocalFsCentroConfig({
+              id: localCfg?.id || centroAtivo?.id || sharedMeta.id || 'escritorio-principal',
+              nome: sharedMeta.nome || localCfg?.nome || centroAtivo?.nome || 'Escritório Principal',
+              hostname: localCfg?.hostname || 'COMPUTADOR-LOCAL',
+              pasta_evogex_display: sharedMeta.pastaEvogex || localCfg?.pasta_evogex_display || 'C:\\Dados_evoGex',
+              pasta_motor_display: `${sharedMeta.pastaEvogex || localCfg?.pasta_evogex_display || 'C:\\Dados_evoGex'}\\motor`,
+              pasta_v4_display: `${sharedMeta.pastaEvogex || localCfg?.pasta_evogex_display || 'C:\\Dados_evoGex'}\\BdsefaturaV4`,
+              pasta_v3_display: localCfg?.pasta_v3_display || 'C:\\Dados_GexcelApps\\BdsefaturaV3',
+              pasta_bdsrv_display: localCfg?.pasta_bdsrv_display || 'C:\\Dados_GexcelApps\\BdsRV',
+              pasta_pdfs_display: `${sharedMeta.pastaEvogex || localCfg?.pasta_evogex_display || 'C:\\Dados_evoGex'}\\PDFs_Recibos`,
+              pasta_gexcel_antiga_display: sharedMeta.pastaAntiga || localCfg?.pasta_gexcel_antiga_display || '',
+              ligado: true,
+              evogex_confirmado: true,
+              antiga_confirmada: Boolean(sharedMeta.pastaAntiga || localCfg?.antiga_confirmada),
+              total_entidades_carregadas: entidadesTotal,
+              updated_at: new Date().toISOString(),
+            });
+          }
+          setGateState('ready');
+          return;
+        }
+
+        if (
+          entidadesTotal === 0 &&
+          !localServiceConfirmed &&
+          !isTeleworkExternal &&
+          (Boolean(localCfg?.evogex_confirmado) ||
+            (Boolean(sharedMeta?.evogexConfirmado) && Number(sharedMeta?.entidadesCount || 0) > 0))
+        ) {
+          setGateState('reconnect');
+          return;
+        }
+
+        setGateState('setup_required');
+      } catch {
+        if (!cancel) {
+          setGateState('setup_required');
+        }
+      }
+    };
+
+    void verificarProntidao();
+    return () => {
+      cancel = true;
+    };
+  }, [currentUser, token, centroAtivo?.id, isTeleworkExternal, gateRecheckTick]);
+
+  useEffect(() => {
+    if (!currentUser || !token || gateState === 'ready') return;
+    const onFocus = () => {
+      if (document.visibilityState !== 'hidden') {
+        setGateRecheckTick(prev => prev + 1);
+      }
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [currentUser, token, gateState]);
+
   if (loading) {
     return (
       <div className="min-h-screen w-screen bg-background text-foreground flex items-center justify-center font-sans select-none relative">
@@ -330,13 +438,81 @@ function AppContent() {
             preferredOfficeId: u.preferred_office_id,
           });
           setLocalFsRev(prev => prev + 1);
-          if (u.preferred_office_id && mappedRole !== 'subutilizador') {
-            const cfgAtivo = obterLocalFsCentroConfig();
-            if (!cfgAtivo?.evogex_confirmado) {
-              setActiveTab('config');
-            }
-          }
+          setGateState('checking');
+          setGateRecheckTick(prev => prev + 1);
         }}
+      />
+    );
+  }
+
+  const sharedMetaGate = readSharedCentroMeta(centroAtivo?.id);
+  const localCfgGate = obterLocalFsCentroConfig();
+
+  const handleOpenGestorEntidades = () => {
+    const base = getEvoSubdomainUrl('entidades');
+    const ret = `${window.location.origin}/`;
+    const officeId = centroAtivo?.id || '';
+    const qs = new URLSearchParams();
+    if (token) qs.set('sso', token);
+    qs.set('return_to', ret);
+    qs.set('setup', '1');
+    if (officeId) qs.set('office_id', officeId);
+    window.location.href = `${base}/?${qs.toString()}`;
+  };
+
+  if (gateState === 'checking') {
+    return (
+      <div className="min-h-screen w-screen bg-background text-foreground flex items-center justify-center font-sans select-none relative">
+        <div className="workspace-ledger absolute inset-0 pointer-events-none" />
+        <div className="relative z-10 px-5 py-3.5 rounded-xl bg-white dark:bg-[#0c1520] border border-border shadow-xl font-mono text-xs text-slate-700 dark:text-slate-200">
+          A verificar configuração do escritório e entidades...
+        </div>
+      </div>
+    );
+  }
+
+  if (gateState === 'reconnect' || gateState === 'setup_required') {
+    return (
+      <EvoGestorSetupGate
+        mode={gateState}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        userEmail={currentUser.email || currentUser.username}
+        userName={currentUser.nome || currentUser.username}
+        officeName={
+          localCfgGate?.nome ||
+          sharedMetaGate?.nome ||
+          centroAtivo?.nome ||
+          'Escritório Principal'
+        }
+        pastaDisplay={
+          localCfgGate?.pasta_evogex_display ||
+          sharedMetaGate?.pastaEvogex ||
+          centroAtivo?.pasta_evogex ||
+          'C:\\Dados_evoGex'
+        }
+        officeConfirmed={gateOfficeConfirmed}
+        entidadesTotal={gateEntidadesTotal}
+        entidadesPrevias={Number(
+          sharedMetaGate?.entidadesCount || localCfgGate?.total_entidades_carregadas || 0
+        )}
+        onOpenGestor={handleOpenGestorEntidades}
+        onRecheck={() => {
+          setGateRecheckTick(prev => prev + 1);
+        }}
+        onReconnectFolder={async () => {
+          const res = await reconectarPastaEscritorioNoEfatura();
+          if (res.ok && res.totalEntidades > 0) {
+            setLocalFsRev(prev => prev + 1);
+            setGateEntidadesTotal(res.totalEntidades);
+            setGateOfficeConfirmed(true);
+            setGateState('ready');
+          } else if (res.precisaGestor) {
+            setGateState('setup_required');
+          }
+          return res;
+        }}
+        onLogout={logout}
       />
     );
   }

@@ -1163,6 +1163,127 @@ def obter_dbs_gestor_entidades_evo12() -> List[str]:
     return [c for c in candidatos if c and os.path.exists(c)]
 
 
+def obter_db_workspace_evo12_ram(ws_id: Optional[str] = None) -> Optional[str]:
+    """
+    Localiza a base SQLite efemera em RAM do Gestor de Entidades (EVO-12) para este workspace_id.
+    Utiliza exatamente o mesmo hash SHA-256[:24] do motor gexcel_bridge_service na Hetzner.
+    """
+    import tempfile
+    wid = ws_id
+    if not wid:
+        try:
+            import workspace_context
+            wid = workspace_context.get_current_ws_id()
+        except Exception:
+            wid = ""
+    clean_id = (wid or "").strip()
+    if not clean_id or clean_id == "unlinked_empty":
+        return None
+    digest = hashlib.sha256(clean_id.encode("utf-8")).hexdigest()[:24]
+    candidatos = [
+        f"/dev/shm/evo12_workspaces/ws_{digest}.db",
+        os.path.join(tempfile.gettempdir(), "evo12_workspaces", f"ws_{digest}.db"),
+    ]
+    for p in candidatos:
+        try:
+            if p and os.path.exists(p) and os.path.getsize(p) > 0:
+                return p
+        except Exception:
+            continue
+    return None
+
+
+def tem_entidades_workspace_evo12_ram(ws_id: Optional[str] = None) -> bool:
+    """Verifica rapidamente se existem entidades ativas no workspace RAM partilhado com EVO-12."""
+    db_ws = obter_db_workspace_evo12_ram(ws_id)
+    if not db_ws:
+        return False
+    try:
+        with sqlite3.connect(db_ws, timeout=3) as conn:
+            conn.execute("PRAGMA busy_timeout=3000;")
+            c = conn.cursor()
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entidades_base'")
+            if not c.fetchone():
+                return False
+            c.execute(
+                "SELECT 1 FROM entidades_base WHERE nif != '' AND ativo NOT IN (0, '0', 'false', 'False') LIMIT 1"
+            )
+            return c.fetchone() is not None
+    except Exception:
+        return False
+
+
+def _carregar_entidades_db_evo12(db_path: str, por_nif: Dict[str, Dict[str, Any]], origem: str = "evo12_gestor_entidades") -> None:
+    """Lê entidades_base + entidades_senhas de uma base SQLite EVO-12 para o dicionário por NIF."""
+    try:
+        with sqlite3.connect(db_path, timeout=5) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=5000;")
+            c = conn.cursor()
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entidades_base'")
+            if not c.fetchone():
+                return
+            c.execute("""
+                SELECT eb.id as pb_id,
+                       eb.idcli as cod,
+                       eb.nif as nif,
+                       eb.nif_cc as nif_cc,
+                       eb.nomecli as nomecli,
+                       eb.ativo as ativo,
+                       es.utilizador_efatura as utilizador_efatura,
+                       es.password_efatura as password_efatura,
+                       es.utilizador_at as utilizador_at,
+                       es.password_at as password_at,
+                       es.senha_invalida_at as senha_invalida_at,
+                       es.erro_at_detalhe as erro_at_detalhe
+                FROM entidades_base eb
+                LEFT JOIN entidades_senhas es ON es.nomecli = eb.id
+                ORDER BY eb.nomecli ASC
+            """)
+            for r in c.fetchall():
+                nif_raw = str(r["nif"] or r["nif_cc"] or "").strip()
+                nif_clean = re.sub(r"[^0-9]", "", nif_raw)[:9]
+                if len(nif_clean) != 9:
+                    continue
+                ativo_val = r["ativo"]
+                if ativo_val in (0, False, "0", "false", "False"):
+                    continue
+
+                p_efat = str(r["password_efatura"] or "").strip()
+                u_efat = str(r["utilizador_efatura"] or "").strip()
+                p_at = str(r["password_at"] or "").strip()
+                u_at = str(r["utilizador_at"] or "").strip()
+                if p_efat:
+                    raw_pwd = p_efat
+                    sub_raw_orig = u_efat or u_at or nif_clean
+                else:
+                    raw_pwd = p_at
+                    sub_raw_orig = u_at or u_efat or nif_clean
+                pwd_dec = legado_bridge.descodificar_senha_legada(raw_pwd) if raw_pwd else ""
+                sub_raw = legado_bridge.normalizar_subutilizador_at(nif_clean, sub_raw_orig)
+                cod_cli = str(r["cod"] or "").strip()
+                nome_cli = str(r["nomecli"] or f"Entidade {nif_clean}").strip()
+
+                existente = por_nif.get(nif_clean)
+                if not existente or (pwd_dec and not existente.get("password")):
+                    por_nif[nif_clean] = {
+                        "id": nif_clean,
+                        "pb_id": str(r["pb_id"] or nif_clean),
+                        "cod": cod_cli,
+                        "nif": nif_clean,
+                        "nif_cc": str(r["nif_cc"] or nif_clean).strip(),
+                        "nomecli": nome_cli,
+                        "ativo": True,
+                        "subutilizador": sub_raw or nif_clean,
+                        "password": pwd_dec,
+                        "senha_invalida_at": str(r["senha_invalida_at"] or "").strip(),
+                        "erro_at_detalhe": str(r["erro_at_detalhe"] or "").strip(),
+                        "origem": origem,
+                    }
+    except Exception as e_pb:
+        LOGGER.debug(f"Aviso ao ler Gestor de Entidades EVO-12 ({db_path}): {e_pb}")
+
+
 def carregar_entidades_gestor_evo12() -> List[Dict[str, Any]]:
     """
     Carrega de forma unificada todas as entidades e respetivas credenciais AT/e-Fatura:
@@ -1174,26 +1295,42 @@ def carregar_entidades_gestor_evo12() -> List[Dict[str, Any]]:
         try:
             import workspace_context
             if workspace_context.is_cloud_zero_storage():
-                ents_ram = workspace_context.get_entidades_ram()
-                out_ws: List[Dict[str, Any]] = []
+                ws_id = workspace_context.get_current_ws_id()
+                if ws_id == "unlinked_empty":
+                    return []
+                por_nif_ws: Dict[str, Dict[str, Any]] = {}
+                db_ws = obter_db_workspace_evo12_ram(ws_id)
+                if db_ws:
+                    _carregar_entidades_db_evo12(db_ws, por_nif_ws, origem="evo12_workspace_ram")
+                ents_ram = workspace_context.get_entidades_ram(ws_id)
                 for e in ents_ram:
                     nif_clean = re.sub(r"[^0-9]", "", str(e.get("nif") or "")).strip()[:9]
                     if len(nif_clean) != 9:
                         continue
-                    out_ws.append({
-                        "id": nif_clean,
-                        "pb_id": nif_clean,
-                        "cod": str(e.get("cod") or e.get("id_contab") or "").strip(),
-                        "nif": nif_clean,
-                        "nif_cc": str(e.get("nif_cc") or nif_clean).strip(),
-                        "nomecli": str(e.get("nomecli") or f"Entidade {nif_clean}").strip(),
-                        "ativo": True,
-                        "subutilizador": str(e.get("subutilizador") or nif_clean).strip(),
-                        "password": str(e.get("password") or "").strip(),
-                        "senha_invalida_at": str(e.get("senha_invalida_at") or "").strip(),
-                        "erro_at_detalhe": str(e.get("erro_at_detalhe") or "").strip(),
-                        "origem": "local_browser_session",
-                    })
+                    pwd_ram = str(e.get("password") or "").strip()
+                    cod_ram = str(e.get("cod") or e.get("id_contab") or "").strip()
+                    if nif_clean not in por_nif_ws:
+                        por_nif_ws[nif_clean] = {
+                            "id": nif_clean,
+                            "pb_id": nif_clean,
+                            "cod": cod_ram,
+                            "nif": nif_clean,
+                            "nif_cc": str(e.get("nif_cc") or nif_clean).strip(),
+                            "nomecli": str(e.get("nomecli") or f"Entidade {nif_clean}").strip(),
+                            "ativo": True,
+                            "subutilizador": str(e.get("subutilizador") or nif_clean).strip(),
+                            "password": pwd_ram,
+                            "senha_invalida_at": str(e.get("senha_invalida_at") or "").strip(),
+                            "erro_at_detalhe": str(e.get("erro_at_detalhe") or "").strip(),
+                            "origem": "local_browser_session",
+                        }
+                    else:
+                        if pwd_ram and not por_nif_ws[nif_clean].get("password"):
+                            por_nif_ws[nif_clean]["password"] = pwd_ram
+                            por_nif_ws[nif_clean]["subutilizador"] = str(e.get("subutilizador") or nif_clean).strip()
+                        if cod_ram and not por_nif_ws[nif_clean].get("cod"):
+                            por_nif_ws[nif_clean]["cod"] = cod_ram
+                out_ws = list(por_nif_ws.values())
                 out_ws.sort(key=lambda x: (x.get("nomecli") or "").upper())
                 return out_ws
         except Exception as e_ws:
@@ -1203,72 +1340,7 @@ def carregar_entidades_gestor_evo12() -> List[Dict[str, Any]]:
 
     # 1. Ler do Gestor de Entidades (EVO-12 SQLite data.db)
     for db_evo12 in obter_dbs_gestor_entidades_evo12():
-        try:
-            with sqlite3.connect(db_evo12, timeout=5) as conn:
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
-                c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entidades_base'")
-                if not c.fetchone():
-                    continue
-                c.execute("""
-                    SELECT eb.id as pb_id,
-                           eb.idcli as cod,
-                           eb.nif as nif,
-                           eb.nif_cc as nif_cc,
-                           eb.nomecli as nomecli,
-                           eb.ativo as ativo,
-                           es.utilizador_efatura as utilizador_efatura,
-                           es.password_efatura as password_efatura,
-                           es.utilizador_at as utilizador_at,
-                           es.password_at as password_at,
-                           es.senha_invalida_at as senha_invalida_at,
-                           es.erro_at_detalhe as erro_at_detalhe
-                    FROM entidades_base eb
-                    LEFT JOIN entidades_senhas es ON es.nomecli = eb.id
-                    ORDER BY eb.nomecli ASC
-                """)
-                for r in c.fetchall():
-                    nif_raw = str(r["nif"] or r["nif_cc"] or "").strip()
-                    nif_clean = re.sub(r"[^0-9]", "", nif_raw)[:9]
-                    if len(nif_clean) != 9:
-                        continue
-                    ativo_val = r["ativo"]
-                    if ativo_val in (0, False, "0", "false", "False"):
-                        continue
-
-                    p_efat = str(r["password_efatura"] or "").strip()
-                    u_efat = str(r["utilizador_efatura"] or "").strip()
-                    p_at = str(r["password_at"] or "").strip()
-                    u_at = str(r["utilizador_at"] or "").strip()
-                    if p_efat:
-                        raw_pwd = p_efat
-                        sub_raw_orig = u_efat or u_at or nif_clean
-                    else:
-                        raw_pwd = p_at
-                        sub_raw_orig = u_at or u_efat or nif_clean
-                    pwd_dec = legado_bridge.descodificar_senha_legada(raw_pwd) if raw_pwd else ""
-                    sub_raw = legado_bridge.normalizar_subutilizador_at(nif_clean, sub_raw_orig)
-                    cod_cli = str(r["cod"] or "").strip()
-                    nome_cli = str(r["nomecli"] or f"Entidade {nif_clean}").strip()
-
-                    existente = por_nif.get(nif_clean)
-                    if not existente or (pwd_dec and not existente.get("password")):
-                        por_nif[nif_clean] = {
-                            "id": nif_clean,
-                            "pb_id": str(r["pb_id"] or nif_clean),
-                            "cod": cod_cli,
-                            "nif": nif_clean,
-                            "nif_cc": str(r["nif_cc"] or nif_clean).strip(),
-                            "nomecli": nome_cli,
-                            "ativo": True,
-                            "subutilizador": sub_raw or nif_clean,
-                            "password": pwd_dec,
-                            "senha_invalida_at": str(r["senha_invalida_at"] or "").strip(),
-                            "erro_at_detalhe": str(r["erro_at_detalhe"] or "").strip(),
-                            "origem": "evo12_gestor_entidades",
-                        }
-        except Exception as e_pb:
-            LOGGER.debug(f"Aviso ao ler Gestor de Entidades EVO-12 ({db_evo12}): {e_pb}")
+        _carregar_entidades_db_evo12(db_evo12, por_nif, origem="evo12_gestor_entidades")
 
     # 2. Complementar com tCredenciais.xml (legado_bridge)
     try:

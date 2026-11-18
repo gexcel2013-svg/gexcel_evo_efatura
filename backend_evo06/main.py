@@ -436,7 +436,11 @@ async def add_pna_headers(request: Request, call_next):
     ws_empty_hdr = "0"
     try:
         response = await call_next(request)
-        if workspace_context.is_cloud_zero_storage() and not workspace_context.get_entidades_ram():
+        if (
+            workspace_context.is_cloud_zero_storage()
+            and not workspace_context.get_entidades_ram()
+            and not pb_client.tem_entidades_workspace_evo12_ram()
+        ):
             ws_empty_hdr = "1"
     finally:
         workspace_context.reset_current_ws_id(tok_ws)

@@ -53,6 +53,7 @@ function shouldBypassHydrationWait(urlStr: string): boolean {
   return (
     urlStr.includes('/api/entidades/importar-tcredenciais') ||
     urlStr.includes('/api/efatura/hidratar-sqlites-locais') ||
+    urlStr.includes('/api/bridge/workspace/') ||
     urlStr.includes('/api/auth/') ||
     urlStr.includes('/version.json')
   );
