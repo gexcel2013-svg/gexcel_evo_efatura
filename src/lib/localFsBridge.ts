@@ -8,6 +8,7 @@
 import {
   getOrCreateSharedWorkspaceId,
   readSharedCentroMeta,
+  readSharedSandboxMeta,
   writeSharedCentroMeta,
 } from './evoCrossAppBridge';
 
@@ -82,6 +83,10 @@ export function obterDeviceIdPosto(): string {
 
 export function obterWorkspaceIdIsolado(): string {
   try {
+    const sbx = readSharedSandboxMeta();
+    if (sbx?.sandboxId) {
+      return `sbx_${sbx.sandboxId}`;
+    }
     const centroId = (localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || 'escritorio-principal').trim() || 'escritorio-principal';
     return getOrCreateSharedWorkspaceId(centroId);
   } catch {
@@ -827,6 +832,7 @@ export async function garantirAcessoPastaLocalNoClique(): Promise<boolean> {
 export function sincronizarSqlitesParaPastaLocal(nif?: string, pedirPermissao = false): Promise<number> {
   const exec = async (): Promise<number> => {
     try {
+      if (readSharedSandboxMeta()) return 0;
       const rootHandle = await obterHandleEvogexAtivo(pedirPermissao);
       if (!rootHandle) return 0;
 
@@ -1262,6 +1268,7 @@ async function lerCentroJsonDoHandle(evogexHandle: any): Promise<Partial<LocalFs
  */
 export async function hidratarSessaoIsoladaLocal(silentEvent = false): Promise<boolean> {
   if (typeof window === 'undefined') return false;
+  if (readSharedSandboxMeta()) return false;
   const curCfg = obterLocalFsCentroConfig();
   const curId = (curCfg?.id || 'escritorio-principal').trim() || 'escritorio-principal';
   const wsId = obterWorkspaceIdIsolado();

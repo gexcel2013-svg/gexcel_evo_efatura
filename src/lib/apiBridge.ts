@@ -16,6 +16,7 @@ import {
   hidratarSessaoIsoladaLocal,
   obterDeviceIdPosto,
 } from './localFsBridge';
+import { readSharedSandboxMeta } from './evoCrossAppBridge';
 
 export type MotorSourceType = 'local' | 'cloud';
 
@@ -76,7 +77,11 @@ function obterTokenSessaoAtiva(): string {
 
 function withWorkspaceHeader(init?: RequestInit, stripSignal = false): RequestInit {
   const headers = new Headers(init?.headers || undefined);
-  if (!headers.has('X-Evo-Workspace-Id')) {
+  const sbx = readSharedSandboxMeta();
+  if (sbx?.sandboxId) {
+    headers.set('X-Evo-Sandbox-Id', sbx.sandboxId);
+    headers.set('X-Evo-Workspace-Id', `sbx_${sbx.sandboxId}`);
+  } else if (!headers.has('X-Evo-Workspace-Id')) {
     headers.set('X-Evo-Workspace-Id', obterWorkspaceIdIsolado());
   }
   if (!headers.has('X-Evo-Device-Id')) {
@@ -141,6 +146,11 @@ export function getMotorSource(): MotorSourceType {
 
 async function probeLocalMotor(): Promise<boolean> {
   if (typeof window === 'undefined') return false;
+  if (readSharedSandboxMeta()) {
+    localMotorAvailable = false;
+    setMotorSource('cloud');
+    return false;
+  }
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 700);
   try {
@@ -229,8 +239,9 @@ if (typeof window !== 'undefined') {
     const matchApi = rawUrl.match(LOCAL_API_PREFIX);
     if (matchApi) {
       const pathPart = matchApi[2] || '/';
+      const activeSbx = readSharedSandboxMeta();
 
-      if (localMotorAvailable || !isCloudHost) {
+      if (!activeSbx && (localMotorAvailable || !isCloudHost)) {
         try {
           const localRes = await origFetch(rawUrl, init);
           if (localRes.ok || !isCloudHost) {

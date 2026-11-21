@@ -32,6 +32,14 @@ export interface SharedCentroEntry {
   updatedAt: string;
 }
 
+export interface SharedSandboxMeta {
+  sandboxId: string;
+  clientLabel: string;
+  expiresAt: string;
+  entidadesCount: number;
+  activatedAt: string;
+}
+
 interface SharedCentroStore {
   activeId: string;
   items: Record<string, SharedCentroEntry>;
@@ -436,5 +444,54 @@ export function removeSharedCentroMeta(centroId: string): void {
     writeCentroStore(store);
   } catch {
     // ignore
+  }
+}
+
+function getSandboxCookieName(): string {
+  return `gevo_sandbox_${getEvoChannelKey()}`;
+}
+
+export function writeSharedSandboxMeta(meta: SharedSandboxMeta): void {
+  if (!meta?.sandboxId) return;
+  try {
+    writeCookieRaw(getSandboxCookieName(), JSON.stringify(meta), 7 * 24 * 3600);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('gevo-sandbox-changed', { detail: meta }));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function readSharedSandboxMeta(): SharedSandboxMeta | null {
+  try {
+    const raw = readCookieRaw(getSandboxCookieName());
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SharedSandboxMeta>;
+    const sid = String(parsed?.sandboxId || '').trim().toUpperCase();
+    if (!sid || !/^SBX-[A-Z0-9]{6,16}$/.test(sid)) return null;
+    if (parsed?.expiresAt) {
+      const expMs = Date.parse(parsed.expiresAt);
+      if (Number.isFinite(expMs) && expMs <= Date.now()) {
+        clearSharedSandboxMeta();
+        return null;
+      }
+    }
+    return {
+      sandboxId: sid,
+      clientLabel: String(parsed?.clientLabel || 'Espelho Temporário').trim(),
+      expiresAt: String(parsed?.expiresAt || '').trim(),
+      entidadesCount: Math.max(0, Number(parsed?.entidadesCount || 0)),
+      activatedAt: String(parsed?.activatedAt || '').trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearSharedSandboxMeta(): void {
+  deleteCookieRaw(getSandboxCookieName());
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('gevo-sandbox-changed', { detail: null }));
   }
 }

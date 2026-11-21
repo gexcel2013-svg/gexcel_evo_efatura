@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { ShieldCheck, ExternalLink, LogOut } from 'lucide-react';
 import { Sidebar, MobileBottomNav } from './components/Sidebar';
 import { InicioHubView } from './components/InicioHubView';
 import CommandCenter from './components/CommandCenter';
@@ -24,7 +25,13 @@ import {
   selecionarLocalFsCentroAtivo,
   sugerirPastaEvogexPorEscritorio,
 } from './lib/localFsBridge';
-import { getEvoSubdomainUrl, readSharedCentroMeta } from './lib/evoCrossAppBridge';
+import {
+  clearSharedSandboxMeta,
+  getEvoSubdomainUrl,
+  readSharedCentroMeta,
+  readSharedSandboxMeta,
+  type SharedSandboxMeta,
+} from './lib/evoCrossAppBridge';
 
 function AppContent() {
   const {
@@ -48,6 +55,7 @@ function AppContent() {
   const [gateEntidadesTotal, setGateEntidadesTotal] = useState<number>(0);
   const [gateOfficeConfirmed, setGateOfficeConfirmed] = useState<boolean>(false);
   const [gateRecheckTick, setGateRecheckTick] = useState<number>(0);
+  const [activeSandbox, setActiveSandbox] = useState<SharedSandboxMeta | null>(() => readSharedSandboxMeta());
 
   useEffect(() => {
     const onFsUpdated = () => setLocalFsRev(prev => prev + 1);
@@ -303,6 +311,29 @@ function AppContent() {
 
     const verificarProntidao = async () => {
       try {
+        const curSbx = readSharedSandboxMeta();
+        if (curSbx?.sandboxId) {
+          try {
+            const sbxRes = await fetch(`/api/bridge/sandbox/status?sandbox_id=${encodeURIComponent(curSbx.sandboxId)}`, {
+              cache: 'no-store',
+            });
+            const sbxData = await sbxRes.json().catch(() => null);
+            if (sbxData?.active) {
+              if (!cancel) {
+                setActiveSandbox(curSbx);
+                setGateEntidadesTotal(Number(sbxData.entidades_count || 1));
+                setGateOfficeConfirmed(true);
+                setGateState('ready');
+              }
+              return;
+            }
+          } catch {
+            // fallback
+          }
+          clearSharedSandboxMeta();
+          if (!cancel) setActiveSandbox(null);
+        }
+
         const [entSettled, bridgeSettled] = await Promise.allSettled([
           fetch('http://127.0.0.1:8015/api/entidades', { cache: 'no-store' }),
           fetch('http://127.0.0.1:8095/api/bridge/health', { signal: AbortSignal.timeout(900) }),
@@ -548,6 +579,50 @@ function AppContent() {
 
       {/* Área Principal de Trabalho Delimitada (z-10) */}
       <main className="flex-1 flex flex-col p-2 sm:p-3.5 min-h-0 overflow-hidden relative z-10">
+        {activeSandbox && (
+          <div className="mb-2 px-3 py-1.5 rounded-md bg-amber-50 dark:bg-[#221a09] border border-amber-400 dark:border-amber-700 text-amber-950 dark:text-amber-100 text-xs flex flex-wrap items-center justify-between gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 font-mono font-bold px-2 py-0.5 rounded bg-amber-600 text-white text-[11px]">
+                <ShieldCheck size={12} />
+                <span>ESPELHO HETZNER · {activeSandbox.sandboxId}</span>
+              </span>
+              <span className="font-semibold">{activeSandbox.clientLabel}</span>
+              <span className="font-mono text-[11px]">
+                Isolado na Hetzner · Zero ficheiros no teu PC
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <a
+                href={getEvoSubdomainUrl('entidades')}
+                className="h-6 px-2 rounded border border-amber-400 dark:border-amber-700 bg-white dark:bg-[#0c1520] text-[11px] font-semibold inline-flex items-center gap-1"
+              >
+                <span>Entidades</span>
+                <ExternalLink size={10} />
+              </a>
+              <a
+                href={getEvoSubdomainUrl('portais')}
+                className="h-6 px-2 rounded border border-amber-400 dark:border-amber-700 bg-white dark:bg-[#0c1520] text-[11px] font-semibold inline-flex items-center gap-1"
+              >
+                <span>Portais</span>
+                <ExternalLink size={10} />
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  clearSharedSandboxMeta();
+                  setActiveSandbox(null);
+                  setGateState('checking');
+                  setGateRecheckTick(prev => prev + 1);
+                  setCentroKey(prev => prev + 1);
+                }}
+                className="h-6 px-2 rounded bg-amber-700 hover:bg-amber-800 text-white text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+              >
+                <LogOut size={10} />
+                <span>Sair</span>
+              </button>
+            </div>
+          </div>
+        )}
         {isTeleworkExternal && (
           <div className="mb-2 px-3 py-1.5 rounded-md bg-amber-50 dark:bg-[#241a08] border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 font-mono text-[11px] flex items-center justify-between gap-2 shrink-0">
             <span className="font-semibold">

@@ -105,6 +105,13 @@ export function Sidebar({
       : typeof window !== 'undefined' && window.location.hostname.startsWith('beta.')
         ? 'https://beta.painel.evogex.com'
         : 'https://painel.evogex.com';
+  const baseEntidadesUrl =
+    typeof window !== 'undefined' && window.location.hostname.startsWith('dev.')
+      ? 'https://dev.entidades.evogex.com'
+      : typeof window !== 'undefined' && window.location.hostname.startsWith('beta.')
+        ? 'https://beta.entidades.evogex.com'
+        : 'https://entidades.evogex.com';
+  const suporteUrl = `${baseEntidadesUrl}/?suporte=1${token ? `&sso=${encodeURIComponent(token)}` : ''}`;
   const painelUrl = token
     ? `${basePainelUrl}/?sso=${encodeURIComponent(token)}`
     : basePainelUrl;
@@ -560,8 +567,23 @@ export function Sidebar({
           );
         })}
 
-        {/* Atalho Direto para o Painel Central (EVO-00) */}
-        <div className="pt-2 border-t border-slate-200 dark:border-[#222f3e]">
+        {/* Atalho Direto para o Painel Central (EVO-00) e Espelho Suporte (EVO-12) */}
+        <div className="pt-2 border-t border-slate-200 dark:border-[#222f3e] space-y-1.5">
+          <a
+            href={suporteUrl}
+            title="Partilhar carteira num Espelho Temporário Hetzner ou gerir via PIN Técnico"
+            className={`w-full flex items-center px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer bg-sky-50 hover:bg-sky-100 dark:bg-[#0a1929] dark:hover:bg-[#13263a] text-sky-900 dark:text-sky-200 border border-sky-300 dark:border-sky-700 ${
+              collapsed ? 'justify-center px-0' : 'justify-between'
+            }`}
+          >
+            <div className="flex items-center space-x-2.5 overflow-hidden">
+              <ShieldCheck className="w-4 h-4 shrink-0 text-[#0284c7] dark:text-sky-400" />
+              {!collapsed && (
+                <span className="truncate font-sans font-medium text-xs">Espelho Suporte</span>
+              )}
+            </div>
+            {!collapsed && <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-70" />}
+          </a>
           <a
             href={painelUrl}
             target="_blank"

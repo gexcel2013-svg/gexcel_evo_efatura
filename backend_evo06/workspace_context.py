@@ -30,6 +30,28 @@ _WS_LOCK = threading.RLock()
 _WORKSPACES_RAM: Dict[str, Dict[str, Any]] = {}
 _TTL_INATIVO_SEG = 12 * 3600  # 12 horas
 _TMP_BASE_DIR = Path("/tmp/gexcel_evo06_ws") if sys.platform != "win32" else (Path(tempfile.gettempdir()) / "gexcel_evo06_ws")
+_SANDBOX_BASE_DIR = Path("/dev/shm/evo_support_sandboxes") if Path("/dev/shm").is_dir() else (Path(tempfile.gettempdir()) / "evo_support_sandboxes")
+
+
+def resolve_sandbox_dir(ws_id: Optional[str] = None) -> Optional[Path]:
+    raw = str(ws_id if ws_id is not None else get_current_ws_id()).strip()
+    if not raw.lower().startswith("sbx_"):
+        return None
+    sbx_id = re.sub(r"[^A-Za-z0-9-]", "", raw[4:].upper())
+    if not re.match(r"^SBX-[A-Z0-9]{6,16}$", sbx_id):
+        return None
+    sbx_dir = _SANDBOX_BASE_DIR / sbx_id
+    meta_path = sbx_dir / "meta.json"
+    if not meta_path.is_file():
+        return None
+    try:
+        import json
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if float(meta.get("expires_ts") or 0) <= time.time():
+            return None
+    except Exception:
+        return None
+    return sbx_dir
 
 
 def is_cloud_zero_storage() -> bool:
@@ -38,7 +60,12 @@ def is_cloud_zero_storage() -> bool:
 
 
 def sanitize_ws_id(raw: Optional[str]) -> str:
-    clean = re.sub(r"[^A-Za-z0-9_-]", "", str(raw or "").strip())
+    s = str(raw or "").strip()
+    if s.lower().startswith("sbx_"):
+        sbx = re.sub(r"[^A-Za-z0-9-]", "", s[4:].upper())
+        if re.match(r"^SBX-[A-Z0-9]{6,16}$", sbx):
+            return f"sbx_{sbx}"
+    clean = re.sub(r"[^A-Za-z0-9_-]", "", s)
     if len(clean) < 8:
         return "unlinked_empty"
     return clean[:64]
@@ -137,7 +164,12 @@ def clear_workspace(ws_id: Optional[str] = None, keep_entidades: bool = True) ->
 
 
 def get_ephemeral_root_dir(ws_id: Optional[str] = None) -> str:
-    """Retorna pasta efemera isolada para operacao SQLite em buffer do workspace."""
+    """Retorna pasta efemera isolada para operacao SQLite em buffer do workspace (ou Espelho Temporario Hetzner)."""
+    sbx_dir = resolve_sandbox_dir(ws_id)
+    if sbx_dir is not None:
+        sbx_dir.mkdir(parents=True, exist_ok=True)
+        (sbx_dir / "BdsefaturaV4").mkdir(parents=True, exist_ok=True)
+        return str(sbx_dir.resolve())
     wid = sanitize_ws_id(ws_id if ws_id is not None else get_current_ws_id())
     root = _TMP_BASE_DIR / wid
     root.mkdir(parents=True, exist_ok=True)

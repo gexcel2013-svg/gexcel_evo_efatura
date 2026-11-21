@@ -1179,6 +1179,16 @@ def obter_db_workspace_evo12_ram(ws_id: Optional[str] = None) -> Optional[str]:
     clean_id = (wid or "").strip()
     if not clean_id or clean_id == "unlinked_empty":
         return None
+    try:
+        import workspace_context
+        sbx_dir = workspace_context.resolve_sandbox_dir(clean_id)
+        if sbx_dir is not None:
+            sbx_db = sbx_dir / "data.db"
+            if sbx_db.is_file() and sbx_db.stat().st_size > 0:
+                return str(sbx_db)
+            return None
+    except Exception:
+        pass
     digest = hashlib.sha256(clean_id.encode("utf-8")).hexdigest()[:24]
     candidatos = [
         f"/dev/shm/evo12_workspaces/ws_{digest}.db",

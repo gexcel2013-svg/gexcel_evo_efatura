@@ -79,7 +79,7 @@ def build_caddy_site_block(domain: str, web_root: str, on_demand_tls: bool = Tru
     header @html_or_ver Expires "0"
 
     handle /api/collections/* {{
-        reverse_proxy 127.0.0.1:8090
+        reverse_proxy 127.0.0.1:8095
     }}
     handle /api/admins/* {{
         reverse_proxy 127.0.0.1:8090

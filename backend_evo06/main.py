@@ -431,7 +431,11 @@ async def add_pna_headers(request: Request, call_next):
         resp.headers["Access-Control-Allow-Headers"] = "*"
         resp.headers["Access-Control-Allow-Private-Network"] = "true"
         return resp
-    raw_ws = request.headers.get("x-evo-workspace-id") or request.query_params.get("ws_id") or ""
+    raw_sbx = (request.headers.get("x-evo-sandbox-id") or request.query_params.get("sandbox_id") or "").strip().upper()
+    if raw_sbx and re.match(r"^SBX-[A-Z0-9]{6,16}$", raw_sbx):
+        raw_ws = f"sbx_{raw_sbx}"
+    else:
+        raw_ws = request.headers.get("x-evo-workspace-id") or request.query_params.get("ws_id") or ""
     tok_ws = workspace_context.set_current_ws_id(raw_ws)
     ws_empty_hdr = "0"
     try:
