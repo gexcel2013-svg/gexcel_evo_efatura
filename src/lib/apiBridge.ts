@@ -1,11 +1,11 @@
 /**
- * Ponte Híbrida Pilar 2: Motor Local do Gabinete (127.0.0.1:8015) + Retaguarda Cloud Hetzner
+ * Ponte Híbrida Pilar 2: Motor Local do Escritório (127.0.0.1:8015) + Retaguarda Cloud Hetzner
  * (EVO-06 Importador e-Fatura <-> EVO-05 API + EVO-12 Gestor de Entidades)
  *
  * Arquitetura Híbrida Inteligente:
  * 1. Sonda silenciosamente em background `http://127.0.0.1:8015/` (timeout 800ms, sem bloquear a UI).
  * 2. Se o Motor Local estiver ativo no PC do cliente, prioriza o Motor Local (0 carga no Hetzner,
- *    IP residencial do gabinete perante a AT e gravação direta nas pastas locais BdsefaturaV4/V3/BdsRV).
+ *    IP residencial do escritório perante a AT e gravação direta nas pastas locais BdsefaturaV4/V3/BdsRV).
  * 3. Se o Motor Local não estiver ativo (ou acesso fora do escritório), encaminha em 0ms para o
  *    Motor Cloud Hetzner (`/api/...`), garantindo disponibilidade 24/7 sem qualquer espera.
  */

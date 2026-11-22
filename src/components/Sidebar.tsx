@@ -657,7 +657,7 @@ export function Sidebar({
               title={
                 apiOnline
                   ? motorSource === 'local'
-                    ? `Motor Local do Gabinete Ativo (127.0.0.1:8015 · v${versaoExibida})`
+                    ? `Motor Local do Escritório Ativo (127.0.0.1:8015 · v${versaoExibida})`
                     : `Motor Cloud Hetzner Ativo (v${versaoExibida})`
                   : 'Motor Offline'
               }
