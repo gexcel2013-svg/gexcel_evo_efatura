@@ -50,7 +50,6 @@ const BLOCKED_DEV_IDENTIFIERS = new Set([
   "evogex",
   "dev",
   "superadmin",
-  "gexcel2013@gmail.com",
 ]);
 
 export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
@@ -258,7 +257,6 @@ export const EvoLoginGate: React.FC<EvoLoginGateProps> = ({
           username: u,
           password: p,
           appCodigo,
-          isDevChannel,
           deviceId: devId,
           pairingCode: needsPairingCode ? pairingCode.trim().toUpperCase() : "",
         }),

@@ -117,8 +117,9 @@ def get_at_client(nif_subuser, password, pem_path=None, endpoint=None):
             raise FileNotFoundError(f"Certificado de Produtor de Software em falta ou não inicializado pelo cofre.")
     
     # URL local para o WSDL
-    wsdl_path = os.path.join(BASE_DIR, "docs/fatshareInvoices.wsdl.txt").replace('\\', '/')
-    wsdl_url = f"file:///{wsdl_path}"
+    from pathlib import Path
+    wsdl_path = Path(BASE_DIR) / "docs" / "fatshareInvoices.wsdl.txt"
+    wsdl_url = wsdl_path.resolve().as_uri()
 
     # Plugin de WS-Security customizado
     security_plugin = ATWSSecurityPlugin(nif_subuser, password, cert_path)
@@ -1497,7 +1498,7 @@ def obter_pasta_raiz_dados_padrao() -> str:
         return pb_client.obter_pasta_dados_raiz()
     except Exception:
         import legado_bridge
-        return legado_bridge.obter_caminho_dados_gexcel() or os.environ.get("GEXCEL_DADOS_DIR", r"C:\Users\Victor Gamboa\Dropbox\AA_MultiIntegrador")
+        return legado_bridge.obter_caminho_dados_gexcel() or os.environ.get("GEXCEL_DADOS_DIR", "")
 
 DEFAULT_PASTA_RAIZ_LEGADO = obter_pasta_raiz_dados_padrao()
 
@@ -1670,7 +1671,7 @@ def exportar_lote_xml_legado(
     if not por_mes and not invoices:
         return ficheiros_gerados, ultimo_xml_string
 
-    raiz = pasta_raiz or DEFAULT_PASTA_RAIZ_LEGADO
+    raiz = pasta_raiz or obter_pasta_raiz_dados_padrao()
 
     for (ano, mes), mes_invoices in sorted(por_mes.items()):
         p_expected = None
@@ -1952,7 +1953,7 @@ def exportar_lote_xml_legado_de_horizontal(
     if not por_mes and not horizontal_rows:
         return ficheiros_gerados, ultimo_xml_string
 
-    raiz = pasta_raiz or DEFAULT_PASTA_RAIZ_LEGADO
+    raiz = pasta_raiz or obter_pasta_raiz_dados_padrao()
 
     for (ano, mes), mes_rows in sorted(por_mes.items()):
         p_expected = total_esperado if total_esperado is not None else len(mes_rows)

@@ -336,7 +336,10 @@ function AppContent() {
 
         const [entSettled, bridgeSettled] = await Promise.allSettled([
           fetch('http://127.0.0.1:8015/api/entidades', { cache: 'no-store' }),
-          fetch('http://127.0.0.1:8095/api/bridge/health', { signal: AbortSignal.timeout(900) }),
+          fetch('http://127.0.0.1:8095/api/bridge/health', {
+            headers: { 'X-Evo-Local-Only': '1' },
+            signal: AbortSignal.timeout(900),
+          }),
         ]);
 
         let entidadesTotal = 0;

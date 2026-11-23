@@ -70,7 +70,7 @@ def configurar_logging() -> str:
         handler = LOGGER.handlers[0]
         return getattr(handler, "baseFilename", "")
 
-    local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+    local_app_data = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
     pasta_logs = os.path.join(local_app_data, "GExcelAYD", "logs")
     caminho_log = os.path.join(pasta_logs, "gevo_efatura_api.log")
     LOGGER.setLevel(logging.INFO)
@@ -97,7 +97,7 @@ def obter_caminho_ficheiro_descoberta() -> str:
     """Retorna o caminho do ficheiro local de descoberta de porta."""
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     if not local_app_data:
-        local_app_data = os.path.expanduser("~\\AppData\\Local")
+        local_app_data = os.path.join(os.path.expanduser("~"), "AppData", "Local")
     
     pasta = os.path.join(local_app_data, "GexcelApps")
     os.makedirs(pasta, exist_ok=True)

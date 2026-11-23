@@ -491,7 +491,7 @@ export function AssistenteImportacaoPanel({
       });
       if (res.ok) {
         const d = await res.json();
-        if (d.status === 'ok' && d.origem !== 'cloud') return;
+        if ((d.status === 'ok' || d.status === 'sucesso') && d.origem !== 'cloud') return;
       }
     } catch {
       // fallback File System Access API
@@ -508,7 +508,7 @@ export function AssistenteImportacaoPanel({
       });
       if (res.ok) {
         const d = await res.json();
-        if (d.status === 'ok' && d.origem !== 'cloud') return;
+        if ((d.status === 'ok' || d.status === 'sucesso') && d.origem !== 'cloud') return;
       }
     } catch {
       // fallback File System Access API

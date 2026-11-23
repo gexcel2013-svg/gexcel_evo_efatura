@@ -309,7 +309,14 @@ def carregar_mapa_nomes_nifs_locais(nif_titular: str = None) -> dict:
     já conhecidos em controlo_geral.db e nas bases de vendas/compras do cliente.
     Elimina dezenas de milhares de aberturas de SQLite linha a linha em PCs lentos.
     """
-    cache_key = str(nif_titular or "").strip()
+    ws_key = "local"
+    try:
+        import workspace_context
+        if workspace_context.is_cloud_zero_storage():
+            ws_key = workspace_context.get_current_ws_id()
+    except Exception:
+        pass
+    cache_key = f"{ws_key}::{str(nif_titular or '').strip()}"
     now_ts = time.time()
     with _CACHE_NOMES_LOCK:
         cached = _CACHE_NOMES_MAPA.get(cache_key)
@@ -589,7 +596,7 @@ def atualizar_nomes_xml_legado(nif: str, nomes_dict: dict, data_inicio: str = No
         return
     nif_clean = re.sub(r'[^0-9]', '', str(nif)).strip()[:9]
     import legado_bridge
-    raiz = pasta_raiz or legado_bridge.obter_pasta_raiz_dados()
+    raiz = pasta_raiz or legado_bridge.obter_caminho_dados_gexcel()
     if not raiz or not os.path.exists(raiz):
         return
 
@@ -989,14 +996,15 @@ def init_vendas_db(nif: str = None):
     except Exception as e:
         LOGGER.warning(f"Aviso ao inicializar base de vendas ({db_path}): {e}")
 
-_CONTROLO_DB_INITIALIZED = False
+_CONTROLO_DBS_INITIALIZED = set()
+_CONTROLO_DBS_LOCK = threading.Lock()
 
 def init_controlo_db():
     """Garante que a base controlo_geral.db e respetivas tabelas centrais de controlo existem."""
-    global _CONTROLO_DB_INITIALIZED
-    if _CONTROLO_DB_INITIALIZED:
-        return
     db_path = obter_db_controlo_path()
+    with _CONTROLO_DBS_LOCK:
+        if db_path in _CONTROLO_DBS_INITIALIZED and os.path.exists(db_path):
+            return
     try:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         with db_connect(db_path, timeout=30) as conn:
@@ -1074,7 +1082,8 @@ def init_controlo_db():
             """)
             c.execute("CREATE INDEX IF NOT EXISTS `idx_nif_nomes_nif` ON `nif_nomes_cache` (`nif`);")
             conn.commit()
-        _CONTROLO_DB_INITIALIZED = True
+        with _CONTROLO_DBS_LOCK:
+            _CONTROLO_DBS_INITIALIZED.add(db_path)
     except Exception as e:
         LOGGER.warning(f"Aviso ao inicializar base de controlo ({db_path}): {e}")
 
@@ -1152,6 +1161,7 @@ def obter_dbs_gestor_entidades_evo12() -> List[str]:
         candidatos.append(env_pb)
     if os.name == "nt":
         candidatos.extend([
+            r"C:\Dados_evoGex\index_core\pb_data\data.db",
             r"C:\ProgramData\GExcelAYD\SafeDrive\index_core\pb_data\data.db",
             r"C:\DEV\Ecossistema_Gexcel\03_EVO_Ecossistema_Evo\EVO-12-Entidades e Cofre\pb_data\data.db",
         ])
@@ -1302,9 +1312,11 @@ def carregar_entidades_gestor_evo12() -> List[Dict[str, Any]]:
     3. Fallback Local: `controlo_geral.db` (`DB_PATH`).
     """
     if not (os.environ.get("GEXCEL_DADOS_DIR") or "").strip():
+        is_cloud_zs = False
         try:
             import workspace_context
-            if workspace_context.is_cloud_zero_storage():
+            is_cloud_zs = workspace_context.is_cloud_zero_storage()
+            if is_cloud_zs:
                 ws_id = workspace_context.get_current_ws_id()
                 if ws_id == "unlinked_empty":
                     return []
@@ -1345,6 +1357,8 @@ def carregar_entidades_gestor_evo12() -> List[Dict[str, Any]]:
                 return out_ws
         except Exception as e_ws:
             LOGGER.debug(f"Aviso no isolamento workspace RAM em carregar_entidades_gestor_evo12: {e_ws}")
+            if is_cloud_zs:
+                return []
 
     por_nif: Dict[str, Dict[str, Any]] = {}
 
@@ -1388,10 +1402,11 @@ def carregar_entidades_gestor_evo12() -> List[Dict[str, Any]]:
     except Exception as e_leg:
         LOGGER.debug(f"Aviso ao ler legado_bridge em carregar_entidades_gestor_evo12: {e_leg}")
 
-    # 3. Fallback controlo_geral.db (DB_PATH) se ainda vazio
-    if not por_nif and os.path.exists(DB_PATH):
+    # 3. Fallback controlo_geral.db dinâmico se ainda vazio
+    ctrl_db_fb = obter_db_controlo_path()
+    if not por_nif and os.path.exists(ctrl_db_fb):
         try:
-            with db_connect(DB_PATH, timeout=5) as conn:
+            with db_connect(ctrl_db_fb, timeout=5) as conn:
                 c = conn.cursor()
                 c.execute("""
                     SELECT eb.id, eb.nif, eb.nif_cc, eb.nomecli,
@@ -1446,9 +1461,17 @@ def get_entidade_id(nif):
     nif_clean = re.sub(r'[^0-9]', '', str(nif or "")).strip()[:9]
     if not nif_clean:
         return None
+    ws_key = "local"
+    try:
+        import workspace_context
+        if workspace_context.is_cloud_zero_storage():
+            ws_key = workspace_context.get_current_ws_id()
+    except Exception:
+        pass
+    cache_id_key = (ws_key, nif_clean)
     now_ts = time.time()
     with _CACHE_ENTIDADE_ID_LOCK:
-        cached = _CACHE_ENTIDADE_ID.get(nif_clean)
+        cached = _CACHE_ENTIDADE_ID.get(cache_id_key)
         if cached and (now_ts - cached[0]) < 120.0:
             return cached[1]
     res_id = nif_clean
@@ -1457,7 +1480,7 @@ def get_entidade_id(nif):
             res_id = ent.get("pb_id") or nif_clean
             break
     with _CACHE_ENTIDADE_ID_LOCK:
-        _CACHE_ENTIDADE_ID[nif_clean] = (now_ts, res_id)
+        _CACHE_ENTIDADE_ID[cache_id_key] = (now_ts, res_id)
     return res_id
 
 def get_lista_entidades_ui():
@@ -1652,6 +1675,23 @@ def _limpar_bloqueio_tabelas_auxiliares_conn(c, nif_clean: str):
         pass
 
 
+def _hash_senha_invalida(pwd: str) -> str:
+    clean = str(pwd or "").strip()
+    if not clean:
+        return ""
+    return "sha256:" + hashlib.sha256(clean.encode("utf-8")).hexdigest()
+
+
+def _senha_guardada_corresponde(stored: str, current_pwd: str) -> bool:
+    s = str(stored or "").strip()
+    c = str(current_pwd or "").strip()
+    if not s or not c:
+        return False
+    if s.startswith("sha256:"):
+        return s == _hash_senha_invalida(c)
+    return s == c
+
+
 def check_if_password_marked_invalid(nif, current_pwd):
     """
     Verifica se a senha atual está memorizada como rejeitada pela AT na base central (Dados Gexcel Apps).
@@ -1681,7 +1721,7 @@ def check_if_password_marked_invalid(nif, current_pwd):
                         f"Bloqueio falso-positivo de rede/portal removido automaticamente para NIF {nif_clean}: {detalhe_guardado}"
                     )
                     return False, ""
-                if row[0].strip() == current_pwd.strip():
+                if _senha_guardada_corresponde(row[0], current_pwd):
                     return True, detalhe_guardado or "Autenticação Inválida"
                 else:
                     # A senha foi alterada no ficheiro de credenciais: limpa automaticamente o registo antigo
@@ -1709,7 +1749,7 @@ def check_if_password_marked_invalid(nif, current_pwd):
                         )
                         conn.commit()
                         return False, ""
-                    if row[0].strip() == current_pwd.strip():
+                    if _senha_guardada_corresponde(row[0], current_pwd):
                         return True, detalhe_ent or "Autenticação Inválida"
     except Exception:
         pass
@@ -1741,7 +1781,7 @@ def record_invalid_password(nif, invalid_pwd, error_detail):
                 senha=excluded.senha,
                 erro_detalhe=excluded.erro_detalhe,
                 updated_at=excluded.updated_at
-            """, (nif_clean, invalid_pwd.strip(), str(error_detail), now_str))
+            """, (nif_clean, _hash_senha_invalida(invalid_pwd), str(error_detail), now_str))
             conn.commit()
             LOGGER.warning(f"Senha do NIF {nif_clean} memorizada como INVÁLIDA na base central ({ctrl_db}).")
     except Exception as e:
@@ -1785,7 +1825,7 @@ def obter_mapa_senhas_invalidas() -> dict:
                 mapa_senhas_atuais[n_val] = p_val
             s_inv_evo12 = str(ent.get("senha_invalida_at") or "").strip()
             det_evo12 = str(ent.get("erro_at_detalhe") or "Autenticação Rejeitada")
-            if n_val and s_inv_evo12 and not is_erro_falso_positivo_at(det_evo12) and (not p_val or s_inv_evo12 == p_val):
+            if n_val and s_inv_evo12 and not is_erro_falso_positivo_at(det_evo12) and (not p_val or _senha_guardada_corresponde(s_inv_evo12, p_val)):
                 invalidas[n_val] = det_evo12
     except Exception:
         pass
@@ -1806,7 +1846,7 @@ def obter_mapa_senhas_invalidas() -> dict:
                     continue
                 senha_guardada = str(r_senha or "").strip()
                 senha_atual_xml = mapa_senhas_atuais.get(nif_key, "")
-                if senha_atual_xml and senha_guardada and senha_atual_xml != senha_guardada:
+                if senha_atual_xml and senha_guardada and not _senha_guardada_corresponde(senha_guardada, senha_atual_xml):
                     nifs_para_limpar.append((r_nif, nif_key))
                     continue
                 invalidas[nif_key] = r_erro or "Autenticação Rejeitada"
@@ -1965,10 +2005,9 @@ def upsert_faturas_direto(vertical_rows):
             row["id_fatura_unico"] = id_fatura
             if id_fatura:
                 faturas_a_substituir_id.add((id_fatura, fatura_raw))
-            else:
-                dt_curta = str(row.get("Data") or "")[:10]
-                if nif_emissor and fatura_raw and dt_curta:
-                    faturas_a_substituir_chave.add((nif_emissor, fatura_raw, dt_curta))
+            dt_curta = str(row.get("Data") or "")[:10]
+            if nif_emissor and fatura_raw and dt_curta:
+                faturas_a_substituir_chave.add((nif_emissor, fatura_raw, dt_curta))
 
             taxa_raw = row.get("Taxa (%)")
             try:
@@ -2106,10 +2145,16 @@ def upsert_faturas_direto(vertical_rows):
     return total_gravado
 
 def upsert_faturas_async(vertical_rows):
-    """Inicia a gravação no SQLite numa thread separada."""
+    """Inicia a gravação no SQLite numa thread separada preservando o contexto de workspace."""
     if not vertical_rows:
         return
-    threading.Thread(target=upsert_faturas_direto, args=(vertical_rows,), daemon=True).start()
+    target_fn = upsert_faturas_direto
+    try:
+        import workspace_context
+        target_fn = workspace_context.wrap_thread_target(upsert_faturas_direto)
+    except Exception:
+        pass
+    threading.Thread(target=target_fn, args=(vertical_rows,), daemon=True).start()
 
 def delete_vendas_periodo(nif, data_inicio, data_fim):
     """Apaga os registos de Vendas de um cliente num determinado intervalo de datas (Wipe & Fetch)."""
@@ -2206,10 +2251,9 @@ def upsert_vendas_direto(vertical_rows):
             row["id_fatura_unico"] = id_fatura
             if id_fatura:
                 faturas_a_substituir_id.add((id_fatura, fatura_raw))
-            else:
-                dt_curta = str(row.get("Data") or "")[:10]
-                if fatura_raw and dt_curta:
-                    faturas_a_substituir_chave.add((fatura_raw, dt_curta))
+            dt_curta = str(row.get("Data") or "")[:10]
+            if fatura_raw and dt_curta:
+                faturas_a_substituir_chave.add((fatura_raw, dt_curta))
 
             data_str = str(row.get("Data", "")).replace("-", "") or "00000000"
             fatura_no = str(row.get("Fatura", "")).strip().replace(" ", "_")
@@ -2739,8 +2783,10 @@ def atualizar_status_mes(nif, ano, mes, tipo, total_esperado=None, docs_gravados
     else:
         total_esp_final = docs_reais if completo else 0
 
-    if total_esp_final > 0 and docs_reais >= total_esp_final:
-        is_comp = 1
+    if total_esp_final > 0 and docs_reais < total_esp_final:
+        is_comp = 0
+    elif total_esp_final > 0 and docs_reais >= total_esp_final:
+        is_comp = 1 if (completo is not False) else 0
     elif completo is not None:
         is_comp = 1 if completo else 0
     elif total_esp_final == 0 and docs_reais == 0:
@@ -2749,8 +2795,7 @@ def atualizar_status_mes(nif, ano, mes, tipo, total_esperado=None, docs_gravados
         is_comp = comp_atual
 
     # Invariante #10: Nunca marcar um mês como completo se existir qualquer fatura com divergência contabilística
-    # (exceto quando 100% dos documentos esperados da AT já estão confirmados na base)
-    if is_comp == 1 and docs_reais > 0 and not (total_esp_final > 0 and docs_reais >= total_esp_final):
+    if is_comp == 1 and docs_reais > 0:
         d_ini_m = f"{int(ano):04d}-{int(mes):02d}-01"
         d_fim_m = f"{int(ano):04d}-{int(mes):02d}-31"
         if periodo_tem_inconsistencia_faturas(nif_clean, d_ini_m, d_fim_m, tipo_str):

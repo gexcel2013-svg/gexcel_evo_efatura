@@ -29,6 +29,7 @@ import {
 import { useAuth } from '../lib/auth';
 import type { CentroDadosItem } from '../types/auth';
 import { getMotorSource, type MotorSourceType } from '../lib/apiBridge';
+import { getEvoSubdomainUrl } from '../lib/evoCrossAppBridge';
 import { EvoVersionWatchBadge } from './EvoVersionWatchBadge';
 import { APP_BUILD, APP_CHANNEL, APP_VERSION } from '../lib/version';
 
@@ -99,18 +100,8 @@ export function Sidebar({
   const { currentUser, token, logout } = useAuth();
   const toggleCollapsed = () => setCollapsed(prev => !prev);
 
-  const basePainelUrl =
-    typeof window !== 'undefined' && window.location.hostname.startsWith('dev.')
-      ? 'https://dev.painel.evogex.com'
-      : typeof window !== 'undefined' && window.location.hostname.startsWith('beta.')
-        ? 'https://beta.painel.evogex.com'
-        : 'https://painel.evogex.com';
-  const baseEntidadesUrl =
-    typeof window !== 'undefined' && window.location.hostname.startsWith('dev.')
-      ? 'https://dev.entidades.evogex.com'
-      : typeof window !== 'undefined' && window.location.hostname.startsWith('beta.')
-        ? 'https://beta.entidades.evogex.com'
-        : 'https://entidades.evogex.com';
+  const basePainelUrl = getEvoSubdomainUrl('painel');
+  const baseEntidadesUrl = getEvoSubdomainUrl('entidades');
   const suporteUrl = `${baseEntidadesUrl}/?suporte=1${token ? `&sso=${encodeURIComponent(token)}` : ''}`;
   const painelUrl = token
     ? `${basePainelUrl}/?sso=${encodeURIComponent(token)}`

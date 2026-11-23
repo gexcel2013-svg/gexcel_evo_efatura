@@ -15,8 +15,9 @@ import {
   obterWorkspaceIdIsolado,
   hidratarSessaoIsoladaLocal,
   obterDeviceIdPosto,
+  resetarCacheHidratacaoNifs,
 } from './localFsBridge';
-import { readSharedSandboxMeta } from './evoCrossAppBridge';
+import { readSharedSandboxMeta, readSharedSsoCookie } from './evoCrossAppBridge';
 
 export type MotorSourceType = 'local' | 'cloud';
 
@@ -42,13 +43,22 @@ let lastSyncedJobId = '';
 let lastEmptyRehydrateAt = 0;
 let rehydratingNow = false;
 
-const hydrationPromise: Promise<void> =
-  isCloudHost && typeof window !== 'undefined'
-    ? Promise.race([
-        hidratarSessaoIsoladaLocal(true).then(() => undefined).catch(() => undefined),
-        new Promise<void>((resolve) => window.setTimeout(resolve, 3500)),
-      ])
-    : Promise.resolve();
+let _bootHydrationPromise: Promise<void> | null = null;
+function ensureBootHydration(): Promise<void> {
+  if (!isCloudHost || typeof window === 'undefined') {
+    return Promise.resolve();
+  }
+  if (!obterTokenSessaoAtiva()) {
+    return Promise.resolve();
+  }
+  if (!_bootHydrationPromise) {
+    _bootHydrationPromise = Promise.race([
+      hidratarSessaoIsoladaLocal(true).then(() => undefined).catch(() => undefined),
+      new Promise<void>((resolve) => window.setTimeout(resolve, 3500)),
+    ]);
+  }
+  return _bootHydrationPromise;
+}
 
 function shouldBypassHydrationWait(urlStr: string): boolean {
   return (
@@ -56,12 +66,19 @@ function shouldBypassHydrationWait(urlStr: string): boolean {
     urlStr.includes('/api/efatura/hidratar-sqlites-locais') ||
     urlStr.includes('/api/bridge/workspace/') ||
     urlStr.includes('/api/auth/') ||
+    urlStr.includes('/api/licenca/estado') ||
+    urlStr.includes('/api/efatura/health') ||
+    urlStr.includes('/api/health') ||
     urlStr.includes('/version.json')
   );
 }
 
 function obterTokenSessaoAtiva(): string {
   try {
+    if (typeof window !== 'undefined') {
+      const ssoUrl = (new URLSearchParams(window.location.search).get('sso') || '').trim();
+      if (ssoUrl) return ssoUrl;
+    }
     const raw = sessionStorage.getItem('gexcel_evo06_auth_session') || localStorage.getItem('gexcel_evo06_auth_session');
     if (raw) {
       const p = JSON.parse(raw);
@@ -69,13 +86,17 @@ function obterTokenSessaoAtiva(): string {
         return p.token.trim();
       }
     }
+    const shared = readSharedSsoCookie();
+    if (shared?.token && typeof shared.token === 'string') {
+      return shared.token.trim();
+    }
   } catch {
     // ignore
   }
   return '';
 }
 
-function withWorkspaceHeader(init?: RequestInit, stripSignal = false): RequestInit {
+function withWorkspaceHeader(init?: RequestInit): RequestInit {
   const headers = new Headers(init?.headers || undefined);
   const sbx = readSharedSandboxMeta();
   if (sbx?.sandboxId) {
@@ -93,11 +114,7 @@ function withWorkspaceHeader(init?: RequestInit, stripSignal = false): RequestIn
       headers.set('Authorization', `Bearer ${tok}`);
     }
   }
-  const next: RequestInit = { ...(init || {}), headers };
-  if (stripSignal) {
-    next.signal = undefined;
-  }
-  return next;
+  return { ...(init || {}), headers };
 }
 
 function inspecionarSegurancaTeletrabalho(pathPart: string, res: Response) {
@@ -180,13 +197,15 @@ async function probeLocalMotor(): Promise<boolean> {
 
 if (typeof window !== 'undefined') {
   window.__GEXCEL_MOTOR_SOURCE__ = currentMotorSource;
-  // Adia ligeiramente a sondagem local para não bloquear o render inicial
-  window.setTimeout(() => {
-    void probeLocalMotor();
-  }, 150);
-  window.setInterval(() => {
-    void probeLocalMotor();
-  }, 15000);
+  if (!isCloudHost) {
+    // Em modo Desktop/Local monitoriza o motor local periodicamente
+    window.setTimeout(() => {
+      void probeLocalMotor();
+    }, 150);
+    window.setInterval(() => {
+      void probeLocalMotor();
+    }, 15000);
+  }
 }
 
 function inspecionarRespostaESincronizarSqlite(pathPart: string, res: Response) {
@@ -202,7 +221,9 @@ function inspecionarRespostaESincronizarSqlite(pathPart: string, res: Response) 
   if (
     pathPart.startsWith('/api/extracao/status/') ||
     pathPart.startsWith('/api/jobs/') ||
-    pathPart.startsWith('/api/sincronizar')
+    pathPart.startsWith('/api/sincronizar') ||
+    pathPart.startsWith('/api/anuladas/sincronizar-lote') ||
+    pathPart.startsWith('/api/efatura/scrape/anuladas')
   ) {
     res
       .clone()
@@ -213,11 +234,18 @@ function inspecionarRespostaESincronizarSqlite(pathPart: string, res: Response) 
             const jobId = data.job_id || pathPart;
             if (lastSyncedJobId !== jobId) {
               lastSyncedJobId = jobId;
-              const isPendentes = data.fase === 'pendentes_recolha' || data.fase === 'pendentes_submissao';
-              void sincronizarSqlitesParaPastaLocal(isPendentes ? undefined : (data.nif || undefined));
+              const isMultiNif =
+                data.fase === 'pendentes_recolha' ||
+                data.fase === 'pendentes_submissao' ||
+                (data.fase === 'anuladas' && String(data.nome_empresa || '').includes('entidade'));
+              void sincronizarSqlitesParaPastaLocal(isMultiNif ? undefined : (data.nif || undefined));
             }
           }
-        } else if (pathPart.startsWith('/api/sincronizar')) {
+        } else if (pathPart.startsWith('/api/anuladas/sincronizar-lote')) {
+          if (!data?.job_id) {
+            void sincronizarSqlitesParaPastaLocal();
+          }
+        } else if (pathPart.startsWith('/api/sincronizar') || pathPart.startsWith('/api/efatura/scrape/anuladas')) {
           void sincronizarSqlitesParaPastaLocal(data?.nif || undefined);
         }
       })
@@ -225,6 +253,37 @@ function inspecionarRespostaESincronizarSqlite(pathPart: string, res: Response) 
         // ignore non-json
       });
   }
+}
+
+async function executarCloudRequest(targetUrl: string, pathPart: string, init?: RequestInit): Promise<Response> {
+  if (!shouldBypassHydrationWait(targetUrl)) {
+    await ensureBootHydration();
+  }
+  let cloudRes = await origFetch(targetUrl, withWorkspaceHeader(init));
+  const methodUpper = (init?.method || 'GET').toUpperCase();
+  if (
+    cloudRes.headers.get('X-Evo-Ws-Empty') === '1' &&
+    methodUpper === 'GET' &&
+    obterTokenSessaoAtiva() &&
+    !shouldBypassHydrationWait(targetUrl) &&
+    !rehydratingNow &&
+    Date.now() - lastEmptyRehydrateAt > 15000
+  ) {
+    rehydratingNow = true;
+    lastEmptyRehydrateAt = Date.now();
+    resetarCacheHidratacaoNifs();
+    try {
+      const ok = await hidratarSessaoIsoladaLocal(true);
+      if (ok) {
+        cloudRes = await origFetch(targetUrl, withWorkspaceHeader(init));
+      }
+    } finally {
+      rehydratingNow = false;
+    }
+  }
+  inspecionarSegurancaTeletrabalho(pathPart, cloudRes);
+  inspecionarRespostaESincronizarSqlite(pathPart, cloudRes);
+  return cloudRes;
 }
 
 if (typeof window !== 'undefined') {
@@ -260,39 +319,15 @@ if (typeof window !== 'undefined') {
 
       setMotorSource('cloud');
       const cloudUrl = pathPart === '/' ? '/api/efatura/health' : pathPart;
-      if (!shouldBypassHydrationWait(cloudUrl)) {
-        await hydrationPromise;
-      }
-      let cloudRes = await origFetch(cloudUrl, withWorkspaceHeader(init, true));
-      const methodUpper = (init?.method || 'GET').toUpperCase();
-      if (
-        cloudRes.headers.get('X-Evo-Ws-Empty') === '1' &&
-        methodUpper === 'GET' &&
-        !shouldBypassHydrationWait(cloudUrl) &&
-        !rehydratingNow &&
-        Date.now() - lastEmptyRehydrateAt > 15000
-      ) {
-        rehydratingNow = true;
-        lastEmptyRehydrateAt = Date.now();
-        try {
-          const ok = await hidratarSessaoIsoladaLocal(true);
-          if (ok) {
-            cloudRes = await origFetch(cloudUrl, withWorkspaceHeader(init, true));
-          }
-        } finally {
-          rehydratingNow = false;
-        }
-      }
-      inspecionarSegurancaTeletrabalho(pathPart, cloudRes);
-      inspecionarRespostaESincronizarSqlite(pathPart, cloudRes);
-      return cloudRes;
+      return executarCloudRequest(cloudUrl, pathPart, init);
     }
 
     const matchPb = rawUrl.match(LOCAL_PB_PREFIX);
-    if (matchPb && isCloudHost) {
+    const isLocalOnly = new Headers(init?.headers || undefined).get('X-Evo-Local-Only') === '1';
+    if (matchPb && isCloudHost && !isLocalOnly) {
       const pathPart = matchPb[3] || '/';
       try {
-        const cloudPbRes = await origFetch(pathPart, withWorkspaceHeader(init, false));
+        const cloudPbRes = await origFetch(pathPart, withWorkspaceHeader(init));
         if (cloudPbRes.ok) {
           return cloudPbRes;
         }
@@ -302,13 +337,7 @@ if (typeof window !== 'undefined') {
     }
 
     if (isCloudHost && rawUrl.startsWith('/api/')) {
-      if (!shouldBypassHydrationWait(rawUrl)) {
-        await hydrationPromise;
-      }
-      const relRes = await origFetch(input, withWorkspaceHeader(init, false));
-      inspecionarSegurancaTeletrabalho(rawUrl, relRes);
-      inspecionarRespostaESincronizarSqlite(rawUrl, relRes);
-      return relRes;
+      return executarCloudRequest(rawUrl, rawUrl, init);
     }
 
     return origFetch(input, init);

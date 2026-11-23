@@ -32,6 +32,8 @@ import {
   isWindowsPath,
   obterResumoDestinosConfigurados,
   abrirPastaNoExploradorNativo,
+  hidratarSqliteNifSobDemanda,
+  hidratarTodosSqlitesNifsSobDemanda,
 } from '../lib/localFsBridge';
 
 function testarFiltroNumerico(valor: number, filtroStr: string): boolean {
@@ -286,7 +288,7 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
       });
       if (res.ok) {
         const d = await res.json();
-        if (d.status === 'ok' && d.origem !== 'cloud') return;
+        if ((d.status === 'ok' || d.status === 'sucesso') && d.origem !== 'cloud') return;
       }
     } catch {}
     await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
@@ -657,6 +659,12 @@ export function FaturasView({ onApiStatusChange, modoPrivacidade = false, filtro
     const reqId = ++ultimoReqIdRef.current;
     setCarregando(true);
     try {
+      if (nifSelecionado) {
+        await hidratarSqliteNifSobDemanda(nifSelecionado);
+      } else {
+        await hidratarTodosSqlitesNifsSobDemanda();
+      }
+      if (reqId !== ultimoReqIdRef.current) return;
       const offset = (pagina - 1) * limite;
       const params = new URLSearchParams({
         tipo: tipoOperacao,

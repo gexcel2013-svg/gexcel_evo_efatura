@@ -27,7 +27,7 @@ PORTA_PADRAO = 8015
 def obter_pasta_slots(engine_dir: Optional[str] = None) -> str:
     """Resolve a pasta de slots do motor."""
     if not engine_dir:
-        local_app = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+        local_app = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
         engine_dir = os.path.join(local_app, "GExcelAYD", "gexcelEvo", "engines", "gevo_ef2026")
     slots_dir = os.path.join(engine_dir, "slots")
     os.makedirs(os.path.join(slots_dir, "stable"), exist_ok=True)

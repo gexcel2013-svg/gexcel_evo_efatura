@@ -87,7 +87,9 @@ export function obterWorkspaceIdIsolado(): string {
     if (sbx?.sandboxId) {
       return `sbx_${sbx.sandboxId}`;
     }
-    const centroId = (localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || 'escritorio-principal').trim() || 'escritorio-principal';
+    const centroId =
+      (localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || readSharedCentroMeta()?.id || 'escritorio-principal').trim() ||
+      'escritorio-principal';
     return getOrCreateSharedWorkspaceId(centroId);
   } catch {
     return 'ws_ephemeral_fallback';
@@ -522,19 +524,6 @@ export function guardarLocalFsCentroConfig(cfg: LocalFsCentroConfig): void {
     makeActive: true,
   });
   window.dispatchEvent(new CustomEvent('gexcel-local-fs-updated', { detail: norm }));
-  // Persistir também no servidor central para nunca se perder ao fechar/reabrir a aplicação
-  void fetch('/api/app/centros-dados/registar', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      centro_id: norm.id || 'escritorio-principal',
-      nome: norm.nome || 'Escritório Principal',
-      hostname: norm.hostname || 'COMPUTADOR-LOCAL',
-      ip_local: '127.0.0.1:8015',
-      pasta_evogex: norm.pasta_evogex_display || 'C:\\Dados_evoGex',
-      pasta_gexcel_antiga: norm.pasta_gexcel_antiga_display || '',
-    }),
-  }).catch(() => {});
 }
 
 async function limparMotorDescompiladoSeExistir(evogexHandle: any): Promise<void> {
@@ -1545,4 +1534,148 @@ export async function reconectarPastaEscritorioNoEfatura(): Promise<{
       erro: err?.message || 'Não foi possível ligar à pasta do escritório.',
     };
   }
+}
+
+const _hydratedNifsMem = new Set<string>();
+
+export function resetarCacheHidratacaoNifs(): void {
+  _hydratedNifsMem.clear();
+}
+
+export async function limparCredenciaisTemporariasIdb(): Promise<void> {
+  try {
+    const db = await openIdb();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      const req = typeof store.getAllKeys === 'function' ? store.getAllKeys() : null;
+      if (req) {
+        req.onsuccess = () => {
+          const keys = Array.isArray(req.result) ? req.result : [];
+          for (const k of keys) {
+            if (typeof k === 'string' && k.startsWith('tcred_xml_text::')) {
+              store.delete(k);
+            }
+          }
+        };
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {
+    // ignore
+  }
+}
+
+export async function hidratarSqliteNifSobDemanda(nif: string, forcar = false): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  if ((window as any).__GEXCEL_MOTOR_SOURCE__ === 'local') return false;
+  if (readSharedSandboxMeta()) return false;
+
+  const nifClean = String(nif || '').replace(/\D/g, '').slice(0, 9);
+  if (nifClean.length !== 9) return false;
+  if (!forcar && _hydratedNifsMem.has(nifClean)) return true;
+
+  try {
+    const evoHandle = await obterHandleEvogexAtivo(false);
+    if (!evoHandle) return false;
+    if (typeof evoHandle.queryPermission === 'function') {
+      const perm = await evoHandle.queryPermission({ mode: 'read' });
+      if (perm !== 'granted') return false;
+    }
+
+    const v4Handle = await evoHandle.getDirectoryHandle('BdsefaturaV4', { create: false }).catch(() => null);
+    if (!v4Handle) return false;
+
+    const nifDir = await v4Handle.getDirectoryHandle(nifClean, { create: false }).catch(() => null);
+    if (!nifDir) {
+      _hydratedNifsMem.add(nifClean);
+      return true;
+    }
+
+    const ficheiros: Array<{ rel_path: string; base64: string }> = [];
+    if (typeof nifDir.entries === 'function') {
+      for await (const [fname, entryHandle] of nifDir.entries()) {
+        if (entryHandle?.kind === 'file' && String(fname).toLowerCase().endsWith('.db')) {
+          try {
+            const file = await entryHandle.getFile();
+            if (file.size > 0 && file.size <= 35 * 1024 * 1024) {
+              const buf = await file.arrayBuffer();
+              ficheiros.push({
+                rel_path: `${nifClean}/${fname}`,
+                base64: arrayBufferToBase64(buf),
+              });
+            }
+          } catch {
+            // ignore unreadable file
+          }
+        }
+      }
+    }
+
+    if (ficheiros.length === 0) {
+      _hydratedNifsMem.add(nifClean);
+      return true;
+    }
+
+    const wsId = obterWorkspaceIdIsolado();
+    const res = await fetch('/api/efatura/hidratar-sqlites-locais', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Evo-Workspace-Id': wsId,
+      },
+      body: JSON.stringify({ ficheiros }),
+    });
+    if (res.ok) {
+      _hydratedNifsMem.add(nifClean);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export async function hidratarTodosSqlitesNifsSobDemanda(nifs?: string[]): Promise<number> {
+  if (typeof window === 'undefined') return 0;
+  if ((window as any).__GEXCEL_MOTOR_SOURCE__ === 'local') return 0;
+  if (readSharedSandboxMeta()) return 0;
+
+  let alvoNifs: string[] = [];
+  if (Array.isArray(nifs) && nifs.length > 0) {
+    alvoNifs = Array.from(new Set(nifs.map((n) => String(n || '').replace(/\D/g, '').slice(0, 9)).filter((n) => n.length === 9)));
+  } else {
+    try {
+      const evoHandle = await obterHandleEvogexAtivo(false);
+      if (!evoHandle) return 0;
+      if (typeof evoHandle.queryPermission === 'function') {
+        const perm = await evoHandle.queryPermission({ mode: 'read' });
+        if (perm !== 'granted') return 0;
+      }
+      const v4Handle = await evoHandle.getDirectoryHandle('BdsefaturaV4', { create: false }).catch(() => null);
+      if (!v4Handle || typeof v4Handle.entries !== 'function') return 0;
+      for await (const [dname, entryHandle] of v4Handle.entries()) {
+        if (entryHandle?.kind === 'directory' && /^\d{9}$/.test(String(dname))) {
+          alvoNifs.push(String(dname));
+        }
+      }
+    } catch {
+      return 0;
+    }
+  }
+
+  let hidratados = 0;
+  const fila = [...alvoNifs];
+  const workers = Array.from({ length: Math.min(4, fila.length) }, async () => {
+    while (fila.length > 0) {
+      const prox = fila.shift();
+      if (!prox) break;
+      if (await hidratarSqliteNifSobDemanda(prox, false)) {
+        hidratados++;
+      }
+    }
+  });
+  await Promise.all(workers);
+  return hidratados;
 }

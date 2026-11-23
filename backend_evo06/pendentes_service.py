@@ -1810,19 +1810,30 @@ def executar_job_recolha_pendentes(
             return
 
     if verificar_bloqueio_fn is None:
+        is_cloud_zs = False
         try:
-            from logins_Gov import (
-                limpar_bloqueio_sucesso as _lbs,
-                registar_senha_rejeitada as _rsr,
-                verificar_bloqueio_senha as _vbs,
-            )
-            verificar_bloqueio_fn = _vbs
-            registar_rejeitada_fn = _rsr
-            limpar_bloqueio_fn = _lbs
+            import workspace_context
+            is_cloud_zs = workspace_context.is_cloud_zero_storage()
         except Exception:
-            verificar_bloqueio_fn = lambda *_a, **_kw: (False, "")
-            registar_rejeitada_fn = lambda *_a, **_kw: None
-            limpar_bloqueio_fn = lambda *_a, **_kw: None
+            pass
+        if is_cloud_zs:
+            verificar_bloqueio_fn = lambda n, _portal, p: pb_client.check_if_password_marked_invalid(n, p)
+            registar_rejeitada_fn = lambda n, _portal, p, det: pb_client.record_invalid_password(n, p, det)
+            limpar_bloqueio_fn = lambda n, _portal: pb_client.clear_invalid_password_if_success(n)
+        else:
+            try:
+                from logins_Gov import (
+                    limpar_bloqueio_sucesso as _lbs,
+                    registar_senha_rejeitada as _rsr,
+                    verificar_bloqueio_senha as _vbs,
+                )
+                verificar_bloqueio_fn = _vbs
+                registar_rejeitada_fn = _rsr
+                limpar_bloqueio_fn = _lbs
+            except Exception:
+                verificar_bloqueio_fn = lambda *_a, **_kw: (False, "")
+                registar_rejeitada_fn = lambda *_a, **_kw: None
+                limpar_bloqueio_fn = lambda *_a, **_kw: None
 
     total_pend_global = 0
     total_pre_global = 0

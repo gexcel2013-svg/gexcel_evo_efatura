@@ -36,6 +36,8 @@ import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
 import {
   obterResumoDestinosConfigurados,
   abrirPastaNoExploradorNativo,
+  hidratarSqliteNifSobDemanda,
+  hidratarTodosSqlitesNifsSobDemanda,
 } from '../lib/localFsBridge';
 import type { LinhaFatura } from './FaturasView';
 import {
@@ -384,7 +386,7 @@ export function MapasResumoView({
       });
       if (res.ok) {
         const d = await res.json().catch(() => null);
-        if (d?.status === 'ok' && d?.origem !== 'cloud') return;
+        if ((d?.status === 'ok' || d?.status === 'sucesso') && d?.origem !== 'cloud') return;
       }
     } catch {}
     const abriu = await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
@@ -462,6 +464,12 @@ export function MapasResumoView({
     setErroCarga(null);
 
     try {
+      if (nifSelecionado) {
+        await hidratarSqliteNifSobDemanda(nifSelecionado);
+      } else {
+        await hidratarTodosSqlitesNifsSobDemanda();
+      }
+      if (reqId !== reqCounterRef.current) return;
       const pageSize = 50000;
       const paramsEf = new URLSearchParams({
         tipo: tipoOperacao,

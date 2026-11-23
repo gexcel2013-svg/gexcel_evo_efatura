@@ -63,7 +63,6 @@ export function ConfigView() {
     refreshConfig,
     refreshClientCloudState,
     refreshUsers, 
-    setShowLoginModal, 
     logout 
   } = useAuth();
 
@@ -528,7 +527,7 @@ export function ConfigView() {
       });
       if (res.ok) {
         const d = await res.json();
-        if (d.status === 'ok' && d.origem !== 'cloud') {
+        if ((d.status === 'ok' || d.status === 'sucesso') && d.origem !== 'cloud') {
           return;
         }
       }
@@ -1879,7 +1878,7 @@ export function ConfigView() {
                 <div className="flex items-center space-x-2">
                   <button
                     type="button"
-                    onClick={() => setShowLoginModal(true)}
+                    onClick={logout}
                     className="px-3 py-1.5 rounded bg-white dark:bg-[#0c1520] hover:bg-slate-200 dark:hover:bg-[#1c314a] border border-slate-300 dark:border-[#222f3e] text-xs font-mono transition cursor-pointer flex items-center space-x-1.5"
                   >
                     <User className="w-3.5 h-3.5 text-slate-700 dark:text-slate-300" />

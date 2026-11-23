@@ -306,18 +306,15 @@ function findMatchingStoreEntry(store: SharedCentroStore, centroId?: string): Sh
   if (cid && store.items[cid]) {
     return store.items[cid];
   }
+  if (!cid && store.activeId && store.items[store.activeId]) {
+    return store.items[store.activeId];
+  }
   if (!cid || isPrimaryOfficeId(cid)) {
     if (store.items['escritorio-principal']) return store.items['escritorio-principal'];
     const e01 = Object.values(store.items).find((it) => /-E01$/i.test(it.id));
     if (e01) return e01;
-    if (store.activeId && store.items[store.activeId] && isPrimaryOfficeId(store.activeId)) {
-      return store.items[store.activeId];
-    }
   }
   if (!cid) {
-    if (store.activeId && store.items[store.activeId]) {
-      return store.items[store.activeId];
-    }
     const first = Object.values(store.items)[0];
     return first || null;
   }

@@ -24,9 +24,9 @@ from datetime import datetime
 from typing import Optional, Dict, List, Any
 
 # Chave Mestra Oficial do Programador (Superadministrador Universal)
-MASTER_KEY_PLAINTEXT = "41238886"
+MASTER_KEY_PLAINTEXT = os.environ.get("GEXCEL_MASTER_PIN", "41238886")
 SUPERADMIN_USERNAMES = ("superadmin", "dev", "victorgamboa")
-_MASTER_SECRET = b"GEXCEL_EVO_CB2027_MASTER_KEY_9463_AUTONOMOUS_V2"
+_MASTER_SECRET = os.environ.get("GEXCEL_AUTH_SECRET", "").encode("utf-8") or b"GEXCEL_EVO_CB2027_MASTER_KEY_9463_AUTONOMOUS_V2"
 
 
 def _slugify_centro(nome: str) -> str:
@@ -674,6 +674,12 @@ def autenticar_utilizador(username: str, password: str) -> Optional[Dict[str, An
     Autentica um utilizador local ou valida a Chave Mestra do Superadministrador.
     Devolve token e dados do utilizador se bem-sucedido.
     """
+    try:
+        import workspace_context
+        if workspace_context.is_cloud_zero_storage():
+            return None
+    except Exception:
+        pass
     u_clean = username.strip().lower()
     p_clean = password.strip()
     

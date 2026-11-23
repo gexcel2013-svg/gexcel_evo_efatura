@@ -29,7 +29,7 @@ interface EntidadeItem {
 }
 
 export function DevView({ onApiStatusChange, versaoMotor }: DevViewProps) {
-  const { token, isAdmin, setShowLoginModal } = useAuth();
+  const { token, isAdmin, logout } = useAuth();
   const [limpando, setLimpando] = useState<boolean>(false);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
@@ -202,7 +202,7 @@ export function DevView({ onApiStatusChange, versaoMotor }: DevViewProps) {
           </div>
           <button
             type="button"
-            onClick={() => setShowLoginModal(true)}
+            onClick={logout}
             className="flex items-center space-x-2 px-4 py-2 rounded-md bg-[#0284c7] hover:bg-[#0274b3] text-white text-xs font-mono font-medium transition cursor-pointer shadow-sm"
           >
             <LogIn className="w-4 h-4" />

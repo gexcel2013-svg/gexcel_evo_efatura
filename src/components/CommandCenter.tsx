@@ -54,6 +54,7 @@ interface Entidade {
   nif: string;
   nif_cc?: string;
   nomecli: string;
+  tem_credenciais_at?: boolean;
 }
 
 interface InfoMes {
@@ -378,7 +379,7 @@ export default function CommandCenter({
       });
       if (res.ok) {
         const d = await res.json();
-        if (d.status === 'ok' && d.origem !== 'cloud') return;
+        if ((d.status === 'ok' || d.status === 'sucesso') && d.origem !== 'cloud') return;
       }
     } catch {}
     await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
@@ -2060,24 +2061,34 @@ export default function CommandCenter({
         </div>
       </header>
 
-      {/* Aviso Claro quando o Computador / Servidor do Centro de Dados no Escritório está Desligado ou PC Novo */}
+      {/* Aviso Claro quando o Motor / Centro de Dados está indisponível */}
       {apiOnline === false && !aLigarMotor && (
         <div className="p-3 bg-rose-50 dark:bg-[#290f14] border border-rose-400 dark:border-rose-800 rounded-md text-rose-800 dark:text-rose-200 font-mono text-xs flex flex-wrap items-center justify-between gap-2 shrink-0">
           <div className="flex items-center space-x-2.5">
             <ServerCrash className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
             <span>
-              <strong>Centro de Dados do Escritório Desligado (ou Computador Novo):</strong> Ligue o computador/servidor do escritório onde reside o Centro de Dados ou, se quiser criar o Centro de Dados neste computador, instale o pacote unificado (Dados evoGex + Motor).
+              {typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' ? (
+                <>
+                  <strong>Ligação ao Motor Cloud temporariamente indisponível:</strong> Verifique a sua ligação à internet ou tente novamente dentro de instantes.
+                </>
+              ) : (
+                <>
+                  <strong>Centro de Dados do Escritório Desligado (ou Computador Novo):</strong> Ligue o computador/servidor do escritório onde reside o Centro de Dados ou, se quiser criar o Centro de Dados neste computador, instale o pacote unificado (Dados evoGex + Motor).
+                </>
+              )}
             </span>
           </div>
           <div className="flex items-center space-x-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => window.open('/api/sistema/instalador-centro-dados', '_blank')}
-              className="px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-semibold text-[11px] cursor-pointer transition shrink-0"
-              title="Cria a pasta única Dados_evoGex e instala automaticamente o Motor, SafeDrive, PocketBase e Bases SQLite neste computador"
-            >
-              Instalar Centro + Motor neste PC
-            </button>
+            {(typeof window === 'undefined' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && (
+              <button
+                type="button"
+                onClick={() => window.open('/api/sistema/instalador-centro-dados', '_blank')}
+                className="px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-semibold text-[11px] cursor-pointer transition shrink-0"
+                title="Cria a pasta única Dados_evoGex e instala automaticamente o Motor, SafeDrive, PocketBase e Bases SQLite neste computador"
+              >
+                Instalar Centro + Motor neste PC
+              </button>
+            )}
             <button
               type="button"
               onClick={ligarMotorAutomatico}
@@ -2357,7 +2368,11 @@ export default function CommandCenter({
 
                     <div className="flex items-start space-x-1.5 p-2 rounded bg-slate-100 dark:bg-[#132233] text-[10px] text-slate-700 dark:text-slate-300 leading-snug">
                       <Info className="w-3.5 h-3.5 text-[#0284c7] shrink-0 mt-0.5" />
-                      <span>Após iniciar, a extração continua em segundo plano mesmo se fechar o browser.</span>
+                      <span>
+                        {motorSource === 'cloud'
+                          ? 'Mantenha este separador aberto durante a extração para gravar automaticamente os dados na pasta do escritório.'
+                          : 'Após iniciar, a extração continua em segundo plano no motor local do escritório.'}
+                      </span>
                     </div>
 
                     {Object.keys(syncStatus).length > 0 && (
@@ -2597,6 +2612,14 @@ export default function CommandCenter({
                           >
                             {modoPrivacidade ? mascararTexto(ent.nomecli) : ent.nomecli}
                           </span>
+                          {ent.tem_credenciais_at === false && (
+                            <span
+                              title="Sem credenciais AT configuradas no Gestor de Entidades"
+                              className="inline-flex items-center shrink-0 mr-1 px-1 py-0.5 rounded bg-amber-100 dark:bg-[#241a08] text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700"
+                            >
+                              <Key className="w-2.5 h-2.5" />
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => {

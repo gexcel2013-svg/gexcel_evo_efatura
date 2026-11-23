@@ -41,6 +41,7 @@ import {
   isWindowsPath,
   obterResumoDestinosConfigurados,
   abrirPastaNoExploradorNativo,
+  garantirAcessoPastaLocalNoClique,
 } from '../lib/localFsBridge';
 
 interface SetorCatalogItem {
@@ -245,16 +246,12 @@ export function PendentesView({
   onApiStatusChange,
   modoPrivacidade = false,
 }: PendentesViewProps) {
-  const { currentUser, isSuperadmin, clientNif } = useAuth();
+  const { currentUser, isSuperadmin } = useAuth();
   const isDeveloperUser = useMemo(() => {
-    if (isSuperadmin || currentUser?.role === 'superadmin' || currentUser?.is_system) return true;
-    const uname = (currentUser?.username || '').trim().toLowerCase();
-    const email = (currentUser?.email || '').trim().toLowerCase();
-    if (['@gexcel', 'gexcel', '@evogex', 'evogex', 'dev', 'superadmin'].includes(uname)) return true;
-    if (email === 'gexcel2013@gmail.com') return true;
-    if (clientNif === '200685341' || clientNif === '510766524') return true;
-    return false;
-  }, [isSuperadmin, currentUser, clientNif]);
+    if (isSuperadmin || currentUser?.is_system) return true;
+    const r = String(currentUser?.role || '').trim().toUpperCase();
+    return r === 'DEV' || r === 'SUPERADMIN';
+  }, [isSuperadmin, currentUser]);
 
   const anoAtual = new Date().getFullYear();
   const [anoLocal, setAnoLocal] = useState<number>(anoProp ?? anoAtual);
@@ -331,7 +328,7 @@ export function PendentesView({
       });
       if (res.ok) {
         const d = await res.json();
-        if (d.status === 'ok' && d.origem !== 'cloud') return;
+        if ((d.status === 'ok' || d.status === 'sucesso') && d.origem !== 'cloud') return;
       }
     } catch {}
     await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
@@ -862,6 +859,9 @@ export function PendentesView({
 
     setSeletorClientesAberto(false);
     try {
+      if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        await garantirAcessoPastaLocalNoClique();
+      }
       const res = await fetch('http://127.0.0.1:8015/api/pendentes/recolher-lote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -930,6 +930,9 @@ export function PendentesView({
     if (!termoAceite) return;
     const usarEnsaioVisual = Boolean(isDeveloperUser && modoEnsaioVisivel);
     try {
+      if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        await garantirAcessoPastaLocalNoClique();
+      }
       const nifsFiltro =
         nifsSelecionados.size > 0 && nifsSelecionados.size < entidades.length
           ? Array.from(nifsSelecionados)

@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 
 import auth_manager
+import workspace_context
 
 APP_ID = "EVO_06_EFATURA"
 EVO11_CHANGELOG_URL = "http://127.0.0.1:8010/api/public/changelog?app=EVO-06&channel=DEV&limit=20"
@@ -82,6 +83,8 @@ class StartHubEvo06Service:
     """Serviço de gestão do painel Início para o Importador e-Fatura (EVO-06)."""
 
     def _state_file(self) -> str:
+        if workspace_context.is_cloud_zero_storage():
+            return os.path.join(workspace_context.get_ephemeral_root_dir(), "start_hub_evo06.json")
         db_path = auth_manager.obter_caminho_db_app()
         return os.path.join(os.path.dirname(db_path), "start_hub_evo06.json")
 
@@ -123,7 +126,7 @@ class StartHubEvo06Service:
                 for rel in (raw.get("releases") or [])[:6]:
                     ver = str(rel.get("versao") or "").strip()
                     rel_id = str(rel.get("id") or f"chg-{ver}")
-                    itens = rel.get("itens") or rel.get("entries") or []
+                    itens = rel.get("items") or rel.get("itens") or rel.get("entries") or []
                     highlights = [str(it.get("titulo") or it.get("title") or "").strip() for it in itens[:4] if str(it.get("titulo") or it.get("title") or "").strip()]
                     if ver or highlights:
                         collected.append({
@@ -132,10 +135,10 @@ class StartHubEvo06Service:
                             "category": "feature",
                             "badge_label": f"VERSÃO {ver or 'DEV'}",
                             "version_tag": ver or "DEV",
-                            "title": str(rel.get("titulo") or f"Atualização Importador e-Fatura {ver}"),
-                            "summary": str(rel.get("resumo") or "Novidades e melhorias publicadas no ecossistema EVO GEX."),
+                            "title": str(rel.get("tituloRelease") or rel.get("titulo") or f"Atualização Importador e-Fatura {ver}"),
+                            "summary": str(rel.get("resumoExecutivo") or rel.get("resumo") or "Novidades e melhorias publicadas no ecossistema EVO GEX."),
                             "highlights": highlights,
-                            "published_at": str(rel.get("published_at") or rel.get("created_at") or "")[:16].replace("T", " "),
+                            "published_at": str(rel.get("dataPublicacao") or rel.get("published_at") or rel.get("created_at") or "")[:16].replace("T", " "),
                             "is_pinned": False,
                         })
         except Exception:

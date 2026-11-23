@@ -26,11 +26,91 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 _CTX_WS_ID: contextvars.ContextVar[str] = contextvars.ContextVar("evo_ws_id", default="")
+_CTX_AUTH_USER: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar("evo_auth_user", default=None)
 _WS_LOCK = threading.RLock()
 _WORKSPACES_RAM: Dict[str, Dict[str, Any]] = {}
+_WS_OWNERS: Dict[str, str] = {}
+_LAST_SWEEP_TS: float = 0.0
 _TTL_INATIVO_SEG = 12 * 3600  # 12 horas
 _TMP_BASE_DIR = Path("/tmp/gexcel_evo06_ws") if sys.platform != "win32" else (Path(tempfile.gettempdir()) / "gexcel_evo06_ws")
 _SANDBOX_BASE_DIR = Path("/dev/shm/evo_support_sandboxes") if Path("/dev/shm").is_dir() else (Path(tempfile.gettempdir()) / "evo_support_sandboxes")
+
+
+def set_current_auth_user(user: Optional[Dict[str, Any]]) -> contextvars.Token:
+    return _CTX_AUTH_USER.set(dict(user) if isinstance(user, dict) else None)
+
+
+def reset_current_auth_user(token: contextvars.Token) -> None:
+    _CTX_AUTH_USER.reset(token)
+
+
+def get_current_auth_user() -> Optional[Dict[str, Any]]:
+    val = _CTX_AUTH_USER.get(None)
+    return dict(val) if isinstance(val, dict) else None
+
+
+def bind_or_verify_ws_owner(ws_id: Optional[str], tenant_key: str, is_dev: bool = False) -> bool:
+    """Vincula cada workspace ao primeiro tenant autenticado e bloqueia acesso cruzado entre clientes."""
+    wid = sanitize_ws_id(ws_id)
+    if wid == "unlinked_empty":
+        return True
+    if wid.startswith("sbx_"):
+        return bool(is_dev)
+    tkey = str(tenant_key or "").strip()
+    if not tkey:
+        return bool(is_dev)
+    with _WS_LOCK:
+        owner = _WS_OWNERS.get(wid)
+        if not owner:
+            _WS_OWNERS[wid] = tkey
+            return True
+        if owner == tkey or is_dev:
+            return True
+        return False
+
+
+def limpar_workspaces_expirados_disco(forcar: bool = False) -> int:
+    """Remove diretórios efémeros inativos (>12h) mesmo após reinícios ou sem entidades em RAM."""
+    global _LAST_SWEEP_TS
+    now = time.time()
+    with _WS_LOCK:
+        if not forcar and (now - _LAST_SWEEP_TS) < 1800.0:
+            return 0
+        _LAST_SWEEP_TS = now
+        removidos = 0
+        if not _TMP_BASE_DIR.exists():
+            return 0
+        try:
+            for item in list(_TMP_BASE_DIR.iterdir()):
+                if not item.is_dir():
+                    continue
+                if item.name != "unlinked_empty" and not item.name.startswith("ws_"):
+                    continue
+                latest_mtime = 0.0
+                try:
+                    latest_mtime = item.stat().st_mtime
+                    for root, dirs, files in os.walk(item):
+                        rel = os.path.relpath(root, item)
+                        depth = 0 if rel == "." else rel.count(os.sep) + 1
+                        if depth >= 3:
+                            dirs[:] = []
+                        for fname in files:
+                            try:
+                                st = os.stat(os.path.join(root, fname))
+                                if st.st_mtime > latest_mtime:
+                                    latest_mtime = st.st_mtime
+                            except Exception:
+                                pass
+                except Exception:
+                    continue
+                if (now - latest_mtime) > _TTL_INATIVO_SEG:
+                    shutil.rmtree(item, ignore_errors=True)
+                    _WORKSPACES_RAM.pop(item.name, None)
+                    _WS_OWNERS.pop(item.name, None)
+                    removidos += 1
+        except Exception:
+            pass
+        return removidos
 
 
 def resolve_sandbox_dir(ws_id: Optional[str] = None) -> Optional[Path]:
@@ -94,31 +174,37 @@ def _limpar_workspaces_expirados_locked(agora: Optional[float] = None) -> None:
     ]
     for wid in expirados:
         _WORKSPACES_RAM.pop(wid, None)
+        _WS_OWNERS.pop(wid, None)
         ws_dir = _TMP_BASE_DIR / wid
         try:
             if ws_dir.exists():
                 shutil.rmtree(ws_dir, ignore_errors=True)
         except Exception:
             pass
+    limpar_workspaces_expirados_disco(forcar=False)
 
 
 def wrap_thread_target(fn: Callable[..., Any], ws_id: Optional[str] = None) -> Callable[..., Any]:
-    """Propaga o workspace_id atual para threads e executors em segundo plano."""
+    """Propaga o workspace_id e utilizador autenticado para threads e executors em segundo plano."""
     captured_ws = sanitize_ws_id(ws_id if ws_id is not None else get_current_ws_id())
+    captured_user = get_current_auth_user()
 
     @wraps(fn)
     def _runner(*args: Any, **kwargs: Any) -> Any:
-        tok = set_current_ws_id(captured_ws)
+        tok_ws = set_current_ws_id(captured_ws)
+        tok_user = set_current_auth_user(captured_user)
         try:
             return fn(*args, **kwargs)
         finally:
-            reset_current_ws_id(tok)
+            reset_current_auth_user(tok_user)
+            reset_current_ws_id(tok_ws)
 
     return _runner
 
 
 def set_entidades_ram(entidades: List[Dict[str, Any]], ws_id: Optional[str] = None) -> int:
     """Guarda entidades exclusivamente na RAM do workspace autenticado."""
+    limpar_workspaces_expirados_disco(forcar=False)
     wid = sanitize_ws_id(ws_id if ws_id is not None else get_current_ws_id())
     if wid == "unlinked_empty":
         return 0
@@ -136,6 +222,7 @@ def set_entidades_ram(entidades: List[Dict[str, Any]], ws_id: Optional[str] = No
 
 def get_entidades_ram(ws_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Devolve as entidades em RAM apenas deste workspace (nunca dados globais)."""
+    limpar_workspaces_expirados_disco(forcar=False)
     wid = sanitize_ws_id(ws_id if ws_id is not None else get_current_ws_id())
     if wid == "unlinked_empty":
         return []
@@ -151,6 +238,7 @@ def get_entidades_ram(ws_id: Optional[str] = None) -> List[Dict[str, Any]]:
 
 
 def clear_workspace(ws_id: Optional[str] = None, keep_entidades: bool = True) -> None:
+    limpar_workspaces_expirados_disco(forcar=False)
     wid = sanitize_ws_id(ws_id if ws_id is not None else get_current_ws_id())
     with _WS_LOCK:
         if not keep_entidades:
@@ -170,6 +258,7 @@ def get_ephemeral_root_dir(ws_id: Optional[str] = None) -> str:
         sbx_dir.mkdir(parents=True, exist_ok=True)
         (sbx_dir / "BdsefaturaV4").mkdir(parents=True, exist_ok=True)
         return str(sbx_dir.resolve())
+    limpar_workspaces_expirados_disco(forcar=False)
     wid = sanitize_ws_id(ws_id if ws_id is not None else get_current_ws_id())
     root = _TMP_BASE_DIR / wid
     root.mkdir(parents=True, exist_ok=True)

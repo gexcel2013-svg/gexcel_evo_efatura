@@ -33,7 +33,13 @@ import {
 } from 'lucide-react';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
 import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
-import { isWindowsPath, obterResumoDestinosConfigurados } from '../lib/localFsBridge';
+import {
+  isWindowsPath,
+  obterResumoDestinosConfigurados,
+  garantirAcessoPastaLocalNoClique,
+  hidratarSqliteNifSobDemanda,
+  hidratarTodosSqlitesNifsSobDemanda,
+} from '../lib/localFsBridge';
 
 interface Entidade {
   id: string;
@@ -327,6 +333,7 @@ export function RecibosVerdesView({
   const carregarMatriz = useCallback(async () => {
     setCarregandoMatriz(true);
     try {
+      await hidratarTodosSqlitesNifsSobDemanda();
       const res = await fetch(`http://127.0.0.1:8015/api/recibos-verdes/matriz/${ano}?tipo=${tipoFluxo}`);
       if (res.ok) {
         const data = await res.json();
@@ -354,6 +361,11 @@ export function RecibosVerdesView({
   const carregarDocumentos = useCallback(async () => {
     setCarregandoDetalhe(true);
     try {
+      if (nifDetalhe) {
+        await hidratarSqliteNifSobDemanda(nifDetalhe);
+      } else {
+        await hidratarTodosSqlitesNifsSobDemanda();
+      }
       const params = new URLSearchParams();
       params.set('tipo', tipoFluxo);
       params.set('ano', String(ano));
@@ -518,12 +530,17 @@ export function RecibosVerdesView({
   const abrirNoExplorador = async (caminho: string) => {
     if (!caminho) return;
     try {
-      await fetch('http://127.0.0.1:8015/api/sistema/abrir-explorador', {
+      const res = await fetch('http://127.0.0.1:8015/api/sistema/abrir-explorador', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caminho }),
       });
+      if (res.ok) {
+        const d = await res.json().catch(() => null);
+        if ((d?.status === 'ok' || d?.status === 'sucesso') && d?.origem !== 'cloud') return;
+      }
     } catch {}
+    copiarEndereco(caminho);
   };
 
   const copiarEndereco = (caminho: string) => {
@@ -563,10 +580,13 @@ export function RecibosVerdesView({
   };
 
   // 6. Disparo de Extração (Individual ou Lote)
-  const iniciarExtracaoEntidade = async (ent: Entidade) => {
+  const iniciarExtracaoEntidade = async (ent: Entidade, skipFsCheck = false) => {
     if (!incluirRv && !incluirRendas) {
       alert('Selecione pelo menos um tipo de documento (Recibos Verdes ou Recibos de Renda).');
       return;
+    }
+    if (!skipFsCheck && typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      await garantirAcessoPastaLocalNoClique();
     }
     try {
       const res = await fetch('http://127.0.0.1:8015/api/recibos-verdes/iniciar', {
@@ -607,8 +627,11 @@ export function RecibosVerdesView({
   const iniciarExtracaoSelecionadas = async () => {
     const listaAlvo = entidades.filter(e => selecionadas.has(e.nif));
     if (listaAlvo.length === 0) return;
+    if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      await garantirAcessoPastaLocalNoClique();
+    }
     for (const ent of listaAlvo) {
-      await iniciarExtracaoEntidade(ent);
+      await iniciarExtracaoEntidade(ent, true);
     }
   };
 

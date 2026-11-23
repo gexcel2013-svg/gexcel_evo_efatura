@@ -158,6 +158,11 @@ def _init_cliente_rv_db(nif: str) -> str:
     return db_path
 
 
+def _is_windows_style_path(caminho: str) -> bool:
+    s = str(caminho or "").strip()
+    return bool(re.match(r"^[A-Za-z]:[\\/]", s) or s.startswith("\\\\"))
+
+
 def obter_pasta_pdfs_configurada() -> str:
     """Obtém a pasta base configurada para download de PDFs de Recibos Verdes e Rendas."""
     _init_config_rv_db()
@@ -169,7 +174,10 @@ def obter_pasta_pdfs_configurada() -> str:
             c.execute("SELECT valor FROM config_recibos_verdes WHERE chave = 'pasta_pdfs'")
             row = c.fetchone()
             if row and row[0] and str(row[0]).strip():
-                return str(row[0]).strip()
+                val = str(row[0]).strip()
+                if sys.platform != "win32" and _is_windows_style_path(val):
+                    return default_dir
+                return val
     except Exception:
         pass
     return default_dir
@@ -180,7 +188,7 @@ def guardar_pasta_pdfs_configurada(caminho: str) -> str:
     _init_config_rv_db()
     ctrl_db = pb_client.obter_db_controlo_path()
     caminho_limpo = str(caminho or "").strip()
-    if not caminho_limpo:
+    if not caminho_limpo or (sys.platform != "win32" and _is_windows_style_path(caminho_limpo)):
         caminho_limpo = str(Path(pb_client.obter_pasta_dados_raiz()) / "BdsRV_PDFs")
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
@@ -200,8 +208,14 @@ def obter_alimentar_xml_legado() -> bool:
     """
     Indica se o sistema deve continuar a alimentar em paralelo os ficheiros XML legados
     do Gexcel Apps (BdsefaturaV3 e BdsRV) além da gravação moderna em SQLite (BdsefaturaV4).
-    Por defeito: True (alimenta SQLite + XML Gexcel Apps).
+    Por defeito: True em local Windows; False em Cloud Zero-Storage.
     """
+    try:
+        import workspace_context
+        if workspace_context.is_cloud_zero_storage():
+            return False
+    except Exception:
+        pass
     _init_config_rv_db()
     ctrl_db = pb_client.obter_db_controlo_path()
     try:
@@ -1014,7 +1028,13 @@ def executar_job_recibos_verdes(
         j = jobs_dict.get(job_id)
         return bool(not j or j.get("cancelar") or j.get("cancelado") or j.get("status") == "cancelado")
 
-    concurrency_manager.acquire(volume=10, cancel_fn=_is_cancelled)
+    try:
+        import workspace_context
+        ws_client_id = workspace_context.get_current_ws_id()
+    except Exception:
+        ws_client_id = "default"
+
+    concurrency_manager.acquire(volume=10, cancel_fn=_is_cancelled, client_id=ws_client_id)
     _BROWSER_SEMAPHORE.acquire()
     try:
         if _is_cancelled():
@@ -1033,9 +1053,12 @@ def executar_job_recibos_verdes(
 
         login_user = str(sub).strip() if sub and str(sub).strip() else nif_clean
         pasta_bdsrv = obter_pasta_bdsrv()
-        pasta_pdfs_final = Path(pasta_pdfs.strip()) if (pasta_pdfs and str(pasta_pdfs).strip()) else Path(obter_pasta_pdfs_configurada())
-        if pasta_pdfs and str(pasta_pdfs).strip():
+        pasta_pdfs_req = str(pasta_pdfs or "").strip()
+        if pasta_pdfs_req and not (sys.platform != "win32" and _is_windows_style_path(pasta_pdfs_req)):
+            pasta_pdfs_final = Path(pasta_pdfs_req)
             guardar_pasta_pdfs_configurada(str(pasta_pdfs_final))
+        else:
+            pasta_pdfs_final = Path(obter_pasta_pdfs_configurada())
 
         if job_id in jobs_dict:
             jobs_dict[job_id]["status"] = "em_progresso"
@@ -1147,4 +1170,4 @@ def executar_job_recibos_verdes(
             _BROWSER_SEMAPHORE.release()
         except Exception:
             pass
-        concurrency_manager.release()
+        concurrency_manager.release(client_id=ws_client_id)

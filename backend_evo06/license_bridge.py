@@ -33,7 +33,7 @@ def obter_caminho_gexcel_auth() -> str:
     """Retorna o caminho padrão oficial do gexcel_auth.exe em %LOCALAPPDATA%\\GExcelAYD."""
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     if not local_app_data:
-        local_app_data = os.path.expanduser("~\\AppData\\Local")
+        local_app_data = os.path.join(os.path.expanduser("~"), "AppData", "Local")
     
     caminho_padrao = os.path.join(local_app_data, "GExcelAYD", "gexcel_auth.exe")
     return caminho_padrao

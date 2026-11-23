@@ -81,12 +81,6 @@ def build_caddy_site_block(domain: str, web_root: str, on_demand_tls: bool = Tru
     handle /api/collections/* {{
         reverse_proxy 127.0.0.1:8095
     }}
-    handle /api/admins/* {{
-        reverse_proxy 127.0.0.1:8090
-    }}
-    handle /api/superusers/* {{
-        reverse_proxy 127.0.0.1:8090
-    }}
     handle /api/safedrive* {{
         reverse_proxy 127.0.0.1:8095
     }}

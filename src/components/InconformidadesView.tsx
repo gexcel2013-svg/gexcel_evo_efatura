@@ -28,6 +28,9 @@ import {
   isWindowsPath,
   obterResumoDestinosConfigurados,
   abrirPastaNoExploradorNativo,
+  garantirAcessoPastaLocalNoClique,
+  hidratarSqliteNifSobDemanda,
+  hidratarTodosSqlitesNifsSobDemanda,
 } from '../lib/localFsBridge';
 
 interface Entidade {
@@ -156,7 +159,7 @@ export function InconformidadesView({
       });
       if (res.ok) {
         const d = await res.json();
-        if (d.status === 'ok' && d.origem !== 'cloud') return;
+        if ((d.status === 'ok' || d.status === 'sucesso') && d.origem !== 'cloud') return;
       }
     } catch {}
     await abrirPastaNoExploradorNativo('BdsefaturaV4', 'evogex');
@@ -298,6 +301,11 @@ export function InconformidadesView({
     setCarregando(true);
     setErro(null);
     try {
+      if (nifFiltro) {
+        await hidratarSqliteNifSobDemanda(nifFiltro);
+      } else {
+        await hidratarTodosSqlitesNifsSobDemanda();
+      }
       const params = new URLSearchParams();
       if (nifFiltro) params.set('nif', nifFiltro);
       if (moduloFiltro !== 'todos') params.set('modulo', moduloFiltro);
@@ -386,12 +394,37 @@ export function InconformidadesView({
       : <ArrowDown className="w-3 h-3 text-[#0284c7] dark:text-sky-400 ml-1 inline shrink-0" />;
   };
 
+  const aguardarJobAnuladas = async (jobId: string) => {
+    for (let tent = 0; tent < 180; tent++) {
+      await new Promise((r) => window.setTimeout(r, 1500));
+      try {
+        const stRes = await fetch(`http://127.0.0.1:8015/api/extracao/status/${jobId}`);
+        if (!stRes.ok) break;
+        const st = await stRes.json();
+        setScrapeResultado(st);
+        if (st.status === 'concluido' || st.status === 'interrompido') {
+          carregarAnuladas();
+          return;
+        }
+        if (st.status === 'erro' || st.status === 'cancelado') {
+          if (st.erro) setScrapeErro(st.erro);
+          return;
+        }
+      } catch {
+        break;
+      }
+    }
+  };
+
   const executarSincronizacaoAnuladas = async () => {
     setScrapeExecutando(true);
     setScrapeResultado(null);
     setScrapeErro(null);
 
     try {
+      if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        await garantirAcessoPastaLocalNoClique();
+      }
       if (modoSync === 'lote') {
         const res = await fetch('http://127.0.0.1:8015/api/anuladas/sincronizar-lote', {
           method: 'POST',
@@ -406,7 +439,11 @@ export function InconformidadesView({
         if (res.ok) {
           const json = await res.json();
           setScrapeResultado(json);
-          carregarAnuladas();
+          if (json?.job_id) {
+            await aguardarJobAnuladas(json.job_id);
+          } else {
+            carregarAnuladas();
+          }
         } else {
           const errJson = await res.json();
           setScrapeErro(errJson.detail || 'Erro ao agendar sincronização em lote.');
@@ -453,6 +490,9 @@ export function InconformidadesView({
     setScrapeErro(null);
     setScrapeResultado(null);
     try {
+      if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        await garantirAcessoPastaLocalNoClique();
+      }
       const nifsSelecionados = Array.from(selecionadasAssistente);
       const enviarTodos = nifsSelecionados.length === 0 || nifsSelecionados.length >= entidadesCombobox.length;
       const res = await fetch('http://127.0.0.1:8015/api/anuladas/sincronizar-lote', {
@@ -469,7 +509,11 @@ export function InconformidadesView({
         const json = await res.json().catch(() => ({}));
         setScrapeResultado(json);
         fecharAssistente();
-        carregarAnuladas();
+        if (json?.job_id) {
+          await aguardarJobAnuladas(json.job_id);
+        } else {
+          carregarAnuladas();
+        }
       } else {
         const errJson = await res.json().catch(() => ({}));
         setScrapeErro(errJson.detail || 'Erro ao agendar sincronização em lote.');

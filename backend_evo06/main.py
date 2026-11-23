@@ -14,6 +14,8 @@ import html
 import json
 import concurrent.futures
 import logging
+import asyncio
+import hashlib
 import uuid
 import threading
 import heapq
@@ -51,7 +53,7 @@ import sys
 from pathlib import Path
 
 # Inclusão do ambiente de bibliotecas portátil (prioriza Dados_evoGex\motor e mantém fallback %LOCALAPPDATA%\GExcelAYD)
-_local_app = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+_local_app = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
 _env_dados_dir = (os.environ.get("GEXCEL_DADOS_DIR") or "").strip()
 if _env_dados_dir and os.path.exists(_env_dados_dir):
     _ayd_dir = Path(_env_dados_dir) / "motor"
@@ -306,6 +308,9 @@ def _garantir_playwright_e_ambiente(progress_cb=None) -> bool:
     3. libs\\py311\\playwright
     4. Sincronização com Google Sheet (requirements311.txt)
     """
+    if sys.platform != "win32" or workspace_context.is_cloud_zero_storage():
+        _INSTALL_CONCLUIDO.set()
+        return True
     with _INSTALL_LOCK:
         global _INSTALL_ERRO, _BOOTSTRAP_STATUS_MSG
         try:
@@ -392,8 +397,8 @@ if sys.platform != "win32":
     except Exception:
         pass
 
-API_VERSION = os.environ.get("GEXCEL_EFATURA_VERSION", "4.2.29")
-BUILD_NUMBER = 53
+API_VERSION = os.environ.get("GEXCEL_EFATURA_VERSION", "4.2.30")
+BUILD_NUMBER = 54
 _PROCESS_BOOT_STR = datetime.now().strftime("%d/%m %H:%M")
 _PROCESS_BOOT_SHORT = datetime.now().strftime("%H:%M")
 _PROCESS_MODE = "EXE" if getattr(sys, "frozen", False) else "DEV"
@@ -420,38 +425,192 @@ app = FastAPI(title="API Importador e-Fatura Gexcel", description="API local de 
 
 from fastapi import Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
+from fastapi.responses import JSONResponse
+
+_ALLOWED_ORIGIN_RE = re.compile(
+    r"^(https?://([a-zA-Z0-9-]+\.)?(evogex\.com|gexcelapps\.com|localhost|127\.0\.0\.1)(:\d+)?|tauri://localhost|https://tauri\.localhost)$",
+    re.IGNORECASE,
+)
+_CLOUD_PUBLIC_API_PATHS = frozenset({
+    "/api/health",
+    "/api/efatura/health",
+    "/api/motor/ligar",
+    "/api/licenca/estado",
+    "/api/auth/login",
+    "/api/auth/token/inspect",
+    "/api/auth/token/activate",
+    "/api/auth/transfer/confirm",
+    "/api/auth/verify",
+})
+_TOKEN_VERIFY_CACHE: Dict[str, Any] = {}
+_TOKEN_VERIFY_LOCK = threading.Lock()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=_ALLOWED_ORIGIN_RE.pattern,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Evo-Zero-Storage", "X-Evo-Ws-Empty"],
+)
+
+
+def _apply_cors_headers(resp: Response, request: Request) -> None:
+    origin = (request.headers.get("origin") or "").strip()
+    if origin and _ALLOWED_ORIGIN_RE.match(origin):
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+        existing_vary = resp.headers.get("Vary", "")
+        if "Origin" not in existing_vary:
+            resp.headers["Vary"] = f"{existing_vary}, Origin".strip(", ")
+    elif not workspace_context.is_cloud_zero_storage():
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Private-Network"] = "true"
+    resp.headers["Access-Control-Expose-Headers"] = "X-Evo-Zero-Storage, X-Evo-Ws-Empty"
+
+
+def _validar_token_cloud_cached(request: Request, raw_tok: str) -> Optional[Dict[str, Any]]:
+    tok = str(raw_tok or "").strip()
+    if not tok.startswith("gxtk."):
+        return None
+    claims = _decodificar_claims_gxtk(tok)
+    if not claims:
+        return None
+    tok_hash = hashlib.sha256(tok.encode("utf-8")).hexdigest()
+    now = time.time()
+    with _TOKEN_VERIFY_LOCK:
+        cached = _TOKEN_VERIFY_CACHE.get(tok_hash)
+        if cached and now < cached[0]:
+            return dict(cached[1]) if cached[1] is not None else None
+        if len(_TOKEN_VERIFY_CACHE) > 2048:
+            expired = [k for k, (exp_ts, _) in _TOKEN_VERIFY_CACHE.items() if exp_ts <= now]
+            for k in expired:
+                _TOKEN_VERIFY_CACHE.pop(k, None)
+
+    verified_user: Optional[Dict[str, Any]] = None
+    ttl_sec = 45.0
+    try:
+        r = requests.get(
+            "http://127.0.0.1:8010/api/auth/verify",
+            params={"token": tok},
+            headers=_forward_evo11_headers(request),
+            timeout=2.0,
+        )
+        if r.status_code in (401, 403):
+            verified_user = None
+            ttl_sec = 15.0
+        elif r.status_code == 200:
+            data = r.json()
+            if data.get("ok") and isinstance(data.get("user"), dict):
+                merged = dict(claims)
+                merged.update(data["user"])
+                verified_user = merged
+            else:
+                verified_user = None
+                ttl_sec = 15.0
+        else:
+            verified_user = dict(claims)
+            ttl_sec = 10.0
+    except Exception:
+        verified_user = dict(claims)
+        ttl_sec = 10.0
+
+    claim_exp = float(claims.get("exp") or (now + ttl_sec))
+    cache_until = min(now + ttl_sec, claim_exp)
+    with _TOKEN_VERIFY_LOCK:
+        _TOKEN_VERIFY_CACHE[tok_hash] = (cache_until, dict(verified_user) if verified_user is not None else None)
+    return dict(verified_user) if verified_user is not None else None
+
 
 @app.middleware("http")
 async def add_pna_headers(request: Request, call_next):
     if request.method == "OPTIONS":
         resp = Response(status_code=204)
-        resp.headers["Access-Control-Allow-Origin"] = "*"
+        _apply_cors_headers(resp, request)
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "*"
-        resp.headers["Access-Control-Allow-Private-Network"] = "true"
+        req_hdrs = request.headers.get("access-control-request-headers")
+        resp.headers["Access-Control-Allow-Headers"] = req_hdrs or "Authorization, Content-Type, X-Auth-Token, X-Evo-Workspace-Id, X-Evo-Sandbox-Id, X-Evo-Device-Id, X-Evo-Zero-Storage, X-Evo-Local-Only"
         return resp
+
+    is_cloud = workspace_context.is_cloud_zero_storage()
+    req_path = request.url.path or "/"
+    auth_user: Optional[Dict[str, Any]] = None
+    is_dev_user = False
+
+    if is_cloud and req_path.startswith("/api/") and req_path not in _CLOUD_PUBLIC_API_PATHS:
+        raw_tok = _extract_token_from_request(request, request.query_params.get("token", ""))
+        auth_user = await asyncio.to_thread(_validar_token_cloud_cached, request, raw_tok)
+        if not auth_user:
+            err_resp = JSONResponse(
+                status_code=401,
+                content={
+                    "ok": False,
+                    "error": "Autenticação EvoGex obrigatória.",
+                    "detail": "Sessão inválida ou expirada.",
+                },
+            )
+            _apply_cors_headers(err_resp, request)
+            return err_resp
+        role_u = str(auth_user.get("role") or "").upper()
+        is_dev_user = role_u in ("DEV", "SUPERADMIN")
+
     raw_sbx = (request.headers.get("x-evo-sandbox-id") or request.query_params.get("sandbox_id") or "").strip().upper()
     if raw_sbx and re.match(r"^SBX-[A-Z0-9]{6,16}$", raw_sbx):
         raw_ws = f"sbx_{raw_sbx}"
     else:
         raw_ws = request.headers.get("x-evo-workspace-id") or request.query_params.get("ws_id") or ""
+
+    if is_cloud and auth_user is not None:
+        cc = str(auth_user.get("client_code") or "").strip()
+        uid_fallback = str(auth_user.get("id") or auth_user.get("email") or auth_user.get("username") or "").strip()
+        tenant_key = f"cli:{cc}" if cc else (f"usr:{uid_fallback}" if uid_fallback else "")
+        base_ws = workspace_context.sanitize_ws_id(raw_ws)
+        if base_ws.startswith("sbx_"):
+            if not is_dev_user or not workspace_context.bind_or_verify_ws_owner(base_ws, tenant_key, is_dev=is_dev_user):
+                deny_resp = JSONResponse(
+                    status_code=403,
+                    content={
+                        "ok": False,
+                        "error": "Acesso negado ao sandbox solicitado.",
+                        "detail": "Modo sandbox reservado ao perfil DEV.",
+                    },
+                )
+                _apply_cors_headers(deny_resp, request)
+                return deny_resp
+            raw_ws = base_ws
+        elif base_ws != "unlinked_empty" and tenant_key:
+            tenant_tag = hashlib.sha256(tenant_key.encode("utf-8")).hexdigest()[:12]
+            raw_ws = f"ws_{tenant_tag}_{base_ws}"[:64]
+            if not workspace_context.bind_or_verify_ws_owner(raw_ws, tenant_key, is_dev=is_dev_user):
+                deny_resp = JSONResponse(
+                    status_code=403,
+                    content={
+                        "ok": False,
+                        "error": "Acesso negado ao workspace solicitado.",
+                        "detail": "Isolamento multi-tenant: este workspace pertence a outra conta.",
+                    },
+                )
+                _apply_cors_headers(deny_resp, request)
+                return deny_resp
+        else:
+            raw_ws = base_ws
+
     tok_ws = workspace_context.set_current_ws_id(raw_ws)
+    tok_auth = workspace_context.set_current_auth_user(auth_user)
     ws_empty_hdr = "0"
     try:
         response = await call_next(request)
         if (
-            workspace_context.is_cloud_zero_storage()
+            is_cloud
             and not workspace_context.get_entidades_ram()
             and not pb_client.tem_entidades_workspace_evo12_ram()
         ):
             ws_empty_hdr = "1"
     finally:
+        workspace_context.reset_current_auth_user(tok_auth)
         workspace_context.reset_current_ws_id(tok_ws)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Private-Network"] = "true"
-    response.headers["Access-Control-Expose-Headers"] = "X-Evo-Zero-Storage, X-Evo-Ws-Empty"
-    response.headers["X-Evo-Zero-Storage"] = "1" if workspace_context.is_cloud_zero_storage() else "0"
+    _apply_cors_headers(response, request)
+    response.headers["X-Evo-Zero-Storage"] = "1" if is_cloud else "0"
     response.headers["X-Evo-Ws-Empty"] = ws_empty_hdr
     return response
 
@@ -598,7 +757,7 @@ class ScrapeAnuladasRequest(BaseModel):
     data_inicio: Optional[str] = Field(default=None, description="Data de início (YYYY-MM-DD)")
     data_fim: Optional[str] = Field(default=None, description="Data de fim (YYYY-MM-DD)")
     modulo: str = Field(default="compras", description="'compras' ou 'vendas'")
-    canal: Optional[str] = Field(default="msedge", description="Navegador ('msedge', 'chrome', 'auto')")
+    canal: Optional[str] = Field(default="chromium" if sys.platform != "win32" else "msedge", description="Navegador ('msedge', 'chrome', 'chromium', 'auto')")
     password: Optional[str] = Field(default=None, description="Senha opcional da AT. Se omitida, recupera de tCredenciais.xml / entidades_senhas")
     threads: Optional[int] = Field(default=6, description="Threads paralelas para extração de detalhes")
     gravar_db: Optional[bool] = Field(default=True, description="Se True, grava nas bases SQLite e no Cofre")
@@ -755,10 +914,49 @@ def classificar_erro_at(erro_obj_ou_str) -> dict:
         "detalhe": texto or "A AT devolveu um erro inesperado."
     }
 
-_MODO_TESTE_SCRAPER = {
-    "ativo": str(os.environ.get("GEXCEL_SIMULAR_RECUSA_SOAP", "")).strip().lower() in ("1", "true", "sim", "on", "yes"),
+_DEFAULT_SIMULAR_RECUSA_SOAP = (
+    str(os.environ.get("GEXCEL_SIMULAR_RECUSA_SOAP", "")).strip().lower() in ("1", "true", "sim", "on", "yes")
+)
+_MODO_TESTE_SCRAPER: Dict[str, Any] = {
+    "ativo": _DEFAULT_SIMULAR_RECUSA_SOAP,
     "ultimas_extracoes": [],
 }
+_MODO_TESTE_SCRAPER_LOCK = threading.Lock()
+_MODO_TESTE_SCRAPER_BY_WS: Dict[str, Dict[str, Any]] = {
+    "__local__": _MODO_TESTE_SCRAPER,
+}
+
+
+def _ws_teste_key() -> str:
+    return workspace_context.get_current_ws_id() if workspace_context.is_cloud_zero_storage() else "__local__"
+
+
+def _get_modo_teste_bucket(ws_key: Optional[str] = None) -> Dict[str, Any]:
+    k = ws_key or _ws_teste_key()
+    with _MODO_TESTE_SCRAPER_LOCK:
+        bucket = _MODO_TESTE_SCRAPER_BY_WS.get(k)
+        if bucket is None:
+            bucket = {
+                "ativo": _DEFAULT_SIMULAR_RECUSA_SOAP if not workspace_context.is_cloud_zero_storage() else False,
+                "ultimas_extracoes": [],
+            }
+            _MODO_TESTE_SCRAPER_BY_WS[k] = bucket
+        return bucket
+
+
+def _is_modo_teste_scraper() -> bool:
+    return bool(_get_modo_teste_bucket().get("ativo"))
+
+
+def _set_modo_teste_scraper(ativo: bool) -> bool:
+    with _MODO_TESTE_SCRAPER_LOCK:
+        k = _ws_teste_key()
+        bucket = _MODO_TESTE_SCRAPER_BY_WS.get(k)
+        if bucket is None:
+            bucket = {"ativo": False, "ultimas_extracoes": []}
+            _MODO_TESTE_SCRAPER_BY_WS[k] = bucket
+        bucket["ativo"] = bool(ativo)
+        return bucket["ativo"]
 
 
 def _deve_acionar_failover_scraper(ws_err: Any) -> bool:
@@ -816,10 +1014,16 @@ def _registar_auditoria_extracao(nif: str, periodo: str, tipo: str, metodo: str,
             "total_documentos": int(total_docs or 0),
             "motivo": motivo,
         }
-        lista = _MODO_TESTE_SCRAPER.setdefault("ultimas_extracoes", [])
-        lista.insert(0, reg)
-        if len(lista) > 30:
-            del lista[30:]
+        k = _ws_teste_key()
+        with _MODO_TESTE_SCRAPER_LOCK:
+            bucket = _MODO_TESTE_SCRAPER_BY_WS.get(k)
+            if bucket is None:
+                bucket = {"ativo": False, "ultimas_extracoes": []}
+                _MODO_TESTE_SCRAPER_BY_WS[k] = bucket
+            lista = bucket.setdefault("ultimas_extracoes", [])
+            lista.insert(0, reg)
+            if len(lista) > 30:
+                del lista[30:]
     except Exception:
         pass
 
@@ -841,7 +1045,7 @@ async def read_root():
     except ValueError:
         porta_ativa = 8015
     tag_build = obter_tag_versao_build()
-    sim_ativa = bool(_MODO_TESTE_SCRAPER.get("ativo"))
+    sim_ativa = _is_modo_teste_scraper() if not workspace_context.is_cloud_zero_storage() else False
     sufixo_sim = " · [Simulação Portal Web Ativa]" if sim_ativa else ""
     return {
         "status": "ok",
@@ -865,24 +1069,32 @@ async def read_root():
 @app.get("/api/modo-teste-scraper")
 def obter_modo_teste_scraper():
     """Consulta o estado da simulação de recusa SOAP (para testar Web Scraping em 2025/2026) e histórico recente."""
+    bucket = _get_modo_teste_bucket()
+    with _MODO_TESTE_SCRAPER_LOCK:
+        hist = list(bucket.get("ultimas_extracoes", []))
+        ativo = bool(bucket.get("ativo"))
     return {
         "status": "ok",
         "assinatura": "API Importador e-Fatura Gexcel",
-        "modo_teste_scraper": bool(_MODO_TESTE_SCRAPER.get("ativo")),
-        "ultimas_extracoes": list(_MODO_TESTE_SCRAPER.get("ultimas_extracoes", [])),
+        "modo_teste_scraper": ativo,
+        "ultimas_extracoes": hist,
     }
 
 
 @app.post("/api/modo-teste-scraper")
 def alterar_modo_teste_scraper(req: ModoTesteScraperRequest):
     """Ativa ou desativa em tempo real a simulação de recusa do Webservice SOAP para forçar contingência Portal Web."""
-    _MODO_TESTE_SCRAPER["ativo"] = bool(req.ativo)
-    estado_txt = "ATIVADO" if _MODO_TESTE_SCRAPER["ativo"] else "DESATIVADO"
+    if workspace_context.is_cloud_zero_storage():
+        auth_u = workspace_context.get_current_auth_user() or {}
+        if str(auth_u.get("role") or "").upper() not in ("DEV", "SUPERADMIN"):
+            raise HTTPException(status_code=403, detail="Acesso reservado ao canal de suporte DEV.")
+    novo_estado = _set_modo_teste_scraper(bool(req.ativo))
+    estado_txt = "ATIVADO" if novo_estado else "DESATIVADO"
     LOGGER.info(f"🧪 [MODO TESTE SCRAPER] Simulador de recusa SOAP {estado_txt}.")
     return {
         "status": "ok",
         "assinatura": "API Importador e-Fatura Gexcel",
-        "modo_teste_scraper": bool(_MODO_TESTE_SCRAPER["ativo"]),
+        "modo_teste_scraper": novo_estado,
         "mensagem": f"Modo de teste Portal Web {estado_txt.lower()}.",
     }
 
@@ -912,7 +1124,9 @@ def get_licenca_estado():
 
 @app.post("/api/licenca/abrir-painel")
 def abrir_painel_licenca():
-    """Abre a janela de suporte e registo de licenças em segundo plano."""
+    """Abre a janela de suporte e registo de licenças em segundo plano (apenas Desktop local)."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="Indisponível em modo Cloud Zero-Storage.")
     threading.Thread(target=license_bridge.abrir_painel_suporte, daemon=True).start()
     return {"status": "ok", "mensagem": "Painel de suporte acionado com sucesso."}
 
@@ -1484,14 +1698,15 @@ def executar_scraping_completo(
 
         # Autenticação limpa: limpar marcação de senha inválida no banco local se existia
         pb_client.clear_invalid_password_if_success(nif_clean)
-        try:
-            import logins_Gov
-            logins_Gov.limpar_bloqueio_sucesso(login_user, "AT")
-            logins_Gov.limpar_bloqueio_sucesso(nif_clean, "AT")
-            logins_Gov.limpar_bloqueio_sucesso(login_user, "EFATURA")
-            logins_Gov.limpar_bloqueio_sucesso(nif_clean, "EFATURA")
-        except Exception:
-            pass
+        if not workspace_context.is_cloud_zero_storage():
+            try:
+                import logins_Gov
+                logins_Gov.limpar_bloqueio_sucesso(login_user, "AT")
+                logins_Gov.limpar_bloqueio_sucesso(nif_clean, "AT")
+                logins_Gov.limpar_bloqueio_sucesso(login_user, "EFATURA")
+                logins_Gov.limpar_bloqueio_sucesso(nif_clean, "EFATURA")
+            except Exception:
+                pass
 
         if cancel_check and cancel_check():
             return [], [], 0
@@ -2423,7 +2638,7 @@ def resolver_e_completar_nomes_vendas(
         modo_sincrono and (
             total_faturas_lote > 300
             or len(nifs_particulares) > 8
-            or pipeline_worker.is_computador_fraco()
+            or (not workspace_context.is_cloud_zero_storage() and pipeline_worker.is_computador_fraco())
         )
     )
     if deve_delegar_particulares_sync and nifs_particulares:
@@ -2703,11 +2918,12 @@ def extrair_faturas(req: ExtracaoRequest, lic = Depends(verificar_licenca_ativa)
 
     modo_saida = (req.modo_saida or "sqlite").strip().lower()
     salvar_sqlite = modo_saida not in ("apenas_memoria", "apenas_xml")
-    gerar_xml = modo_saida not in ("apenas_memoria", "apenas_sqlite")
+    gerar_xml = (not workspace_context.is_cloud_zero_storage()) and (modo_saida in ("xml", "apenas_xml", "completo", "ambos"))
     incluir_dados_memoria = True
-    pipeline_worker.sinalizar_primeiro_plano(True, nif=req.nif)
+    if not workspace_context.is_cloud_zero_storage():
+        pipeline_worker.sinalizar_primeiro_plano(True, nif=req.nif)
 
-    simulacao_soap_ativa = bool(_MODO_TESTE_SCRAPER.get("ativo"))
+    simulacao_soap_ativa = _is_modo_teste_scraper()
     forcar_scraper_efetivo = bool(req.forcar_scraper)
     if forcar_scraper_efetivo or simulacao_soap_ativa:
         req.reimportar_tudo = True
@@ -2825,7 +3041,7 @@ def extrair_faturas(req: ExtracaoRequest, lic = Depends(verificar_licenca_ativa)
                         req.nif,
                         horizontal_rows[1:],
                         as_buyer=as_buyer,
-                        pasta_raiz=req.pasta_raiz_dados,
+                        pasta_raiz=req.pasta_raiz_dados or pb_client.obter_pasta_dados_raiz(),
                         caminho_personalizado=req.caminho_xml_personalizado,
                         data_inicio=req.data_inicio,
                         data_fim=req.data_fim,
@@ -2918,7 +3134,7 @@ def extrair_faturas(req: ExtracaoRequest, lic = Depends(verificar_licenca_ativa)
 
                 def on_period_done(period_start, period_end, period_invoices, p_expected, is_complete, docs_existentes=None):
                     docs_na_bd = docs_existentes if docs_existentes is not None else docs_existentes_fn(period_start.year, period_start.month)
-                    mes_completo = bool(is_complete or (p_expected > 0 and docs_na_bd >= p_expected) or (p_expected == 0))
+                    mes_completo = bool((p_expected == 0 and is_complete) or (p_expected > 0 and docs_na_bd >= p_expected))
                     if salvar_sqlite:
                         pb_client.atualizar_status_mes(
                             req.nif, period_start.year, period_start.month, tipo_str,
@@ -3133,7 +3349,7 @@ def extrair_faturas(req: ExtracaoRequest, lic = Depends(verificar_licenca_ativa)
                 req.nif,
                 horizontal_rows[1:],
                 as_buyer=as_buyer,
-                pasta_raiz=req.pasta_raiz_dados,
+                pasta_raiz=req.pasta_raiz_dados or pb_client.obter_pasta_dados_raiz(),
                 caminho_personalizado=req.caminho_xml_personalizado,
                 data_inicio=req.data_inicio,
                 data_fim=req.data_fim,
@@ -3171,26 +3387,27 @@ def extrair_faturas(req: ExtracaoRequest, lic = Depends(verificar_licenca_ativa)
         except Exception as e_clean:
             LOGGER.warning(f"Aviso ao limpar staging pós-conclusão síncrona: {e_clean}")
 
-        # Agendamento automático no Pipeline de Segundo Plano (Anuladas + Nomes de Vendas)
-        try:
-            tem_particulares = False
-            if not as_buyer:
-                for vr in vertical_rows:
-                    cp_nif = str(vr.get("Contraparte NIF") or "").strip()
-                    cp_nome = str(vr.get("Contraparte") or "").strip()
-                    if cp_nif and cp_nif not in ("999999990", "999999999", "99999999") and (not cp_nome or cp_nome == "[Sem Nome Registado]"):
-                        tem_particulares = True
-                        break
-            pipeline_worker.adicionar_tarefas_pos_extracao(
-                nif=req.nif,
-                nome_entidade=req.nome_entidade or "",
-                modulo=tipo_str,
-                data_inicio=str(req.data_inicio),
-                data_fim=str(req.data_fim),
-                tem_particulares_sem_nome=tem_particulares
-            )
-        except Exception as e_pipe:
-            LOGGER.warning(f"Aviso ao agendar tarefas de segundo plano pós-extração: {e_pipe}")
+        # Agendamento automático no Pipeline de Segundo Plano (apenas ambiente Desktop/Local)
+        if not workspace_context.is_cloud_zero_storage():
+            try:
+                tem_particulares = False
+                if not as_buyer:
+                    for vr in vertical_rows:
+                        cp_nif = str(vr.get("Contraparte NIF") or "").strip()
+                        cp_nome = str(vr.get("Contraparte") or "").strip()
+                        if cp_nif and cp_nif not in ("999999990", "999999999", "99999999") and (not cp_nome or cp_nome == "[Sem Nome Registado]"):
+                            tem_particulares = True
+                            break
+                pipeline_worker.adicionar_tarefas_pos_extracao(
+                    nif=nif_clean if 'nif_clean' in locals() else req.nif,
+                    nome_entidade=req.nome_entidade or "",
+                    modulo=tipo_str,
+                    data_inicio=str(data_inicio) if 'data_inicio' in locals() else str(req.data_inicio),
+                    data_fim=str(data_fim) if 'data_fim' in locals() else str(req.data_fim),
+                    tem_particulares_sem_nome=tem_particulares
+                )
+            except Exception as e_pipe:
+                LOGGER.warning(f"Aviso ao agendar tarefas de segundo plano pós-extração: {e_pipe}")
 
         return resp
         
@@ -3371,6 +3588,22 @@ class DynamicConcurrencyManager:
                 except Exception:
                     pass
             self._wait_queue.clear()
+
+    def cancel_client(self, client_id: str):
+        """Cancela e acorda apenas as tarefas em espera na fila SJF pertencentes a um workspace/cliente."""
+        cid = str(client_id or "default")
+        with self._lock:
+            restantes = []
+            for item in self._wait_queue:
+                if len(item) >= 6 and item[5] == cid:
+                    try:
+                        item[3].set()
+                    except Exception:
+                        pass
+                else:
+                    restantes.append(item)
+            self._wait_queue = restantes
+            heapq.heapify(self._wait_queue)
 
     def release(self, client_id: str = "default"):
         cid = str(client_id or "default")
@@ -3569,7 +3802,8 @@ def executar_extracao_agendamento(
         LOGGER.debug(f"[Scheduler] Verificação prévia de status do mês: {ce}")
 
     # Concorrência adaptativa com limite de workers
-    CONCURRENCY_MANAGER.acquire(volume=500)
+    ws_client_id = workspace_context.get_current_ws_id() if workspace_context.is_cloud_zero_storage() else "default"
+    CONCURRENCY_MANAGER.acquire(volume=500, client_id=ws_client_id)
     try:
         month_lock = efatura_api.get_month_lock(nif, p_yr, p_mn, tipo_str)
         with month_lock:
@@ -3599,7 +3833,7 @@ def executar_extracao_agendamento(
 
             def on_period_done(period_start, period_end, period_invoices, p_expected, is_complete, docs_existentes=None):
                 docs_na_bd = docs_existentes if docs_existentes is not None else docs_existentes_fn(period_start.year, period_start.month)
-                mes_completo = bool(is_complete or (p_expected > 0 and docs_na_bd >= p_expected) or (p_expected == 0))
+                mes_completo = bool((p_expected == 0 and is_complete) or (p_expected > 0 and docs_na_bd >= p_expected))
                 with db_write_lock:
                     pb_client.atualizar_status_mes(
                         nif, period_start.year, period_start.month, tipo_str,
@@ -3609,7 +3843,7 @@ def executar_extracao_agendamento(
                     )
 
             try:
-                if _MODO_TESTE_SCRAPER.get("ativo"):
+                if _is_modo_teste_scraper():
                     raise Fault("Ocorreu um erro na autenticacao dos contribuintes.")
                 invs, _ = efatura_api.get_invoices(
                     nif,
@@ -3657,25 +3891,26 @@ def executar_extracao_agendamento(
                 else:
                     raise
 
-            # Agendar tarefas complementares completas no pipeline de segundo plano (anuladas + nomes)
-            try:
-                pipeline_worker.adicionar_tarefas_pos_extracao(
-                    nif=nif,
-                    nome_entidade=nome_entidade or "",
-                    modulo=tipo_str,
-                    data_inicio=str(data_inicio),
-                    data_fim=str(data_fim),
-                    tem_particulares_sem_nome=(not as_buyer)
-                )
-            except Exception as e_sc_pipe:
-                LOGGER.debug(f"[Scheduler] Aviso ao agendar tarefas de pipeline: {e_sc_pipe}")
+            # Agendar tarefas complementares completas no pipeline de segundo plano (apenas ambiente Desktop/Local)
+            if not workspace_context.is_cloud_zero_storage():
+                try:
+                    pipeline_worker.adicionar_tarefas_pos_extracao(
+                        nif=nif,
+                        nome_entidade=nome_entidade or "",
+                        modulo=tipo_str,
+                        data_inicio=str(data_inicio),
+                        data_fim=str(data_fim),
+                        tem_particulares_sem_nome=(not as_buyer)
+                    )
+                except Exception as e_sc_pipe:
+                    LOGGER.debug(f"[Scheduler] Aviso ao agendar tarefas de pipeline: {e_sc_pipe}")
 
             return total_obtido_sched
     except Exception as ex:
         LOGGER.error(f"[Scheduler] Erro ao extrair NIF {nif} no período {data_inicio} - {data_fim}: {ex}")
         raise
     finally:
-        CONCURRENCY_MANAGER.release()
+        CONCURRENCY_MANAGER.release(client_id=ws_client_id)
 
 SCHEDULER_ENGINE.set_callback_iniciar_job(executar_extracao_agendamento)
 
@@ -3720,11 +3955,13 @@ def _run_extracao_worker(
         return JOBS.get(job_id, {}).get("cancelar", False)
 
     acquired_concurrency = False
+    ws_client_id = workspace_context.get_current_ws_id() if workspace_context.is_cloud_zero_storage() else "default"
     salvar_sqlite = False
     tipo_str = "compras" if as_buyer else "vendas"
     meses_status_atualizados = set()
     meses_tocados_sqlite = set()
-    pipeline_worker.sinalizar_primeiro_plano(True, nif=nif)
+    if not workspace_context.is_cloud_zero_storage():
+        pipeline_worker.sinalizar_primeiro_plano(True, nif=nif)
     try:
         # Separação estrita de NIF de 9 dígitos e subutilizador
         nif_str = str(nif or "").strip()
@@ -3770,7 +4007,9 @@ def _run_extracao_worker(
         tipo_str = "compras" if as_buyer else "vendas"
         modo_saida_clean = (modo_saida or "sqlite").strip().lower()
         salvar_sqlite = modo_saida_clean not in ("apenas_memoria", "apenas_xml")
-        gerar_xml = bool(gerar_xml_legado) or (modo_saida_clean in ("xml", "apenas_xml", "completo", "ambos"))
+        gerar_xml = (not workspace_context.is_cloud_zero_storage()) and (
+            bool(gerar_xml_legado) or (modo_saida_clean in ("xml", "apenas_xml", "completo", "ambos"))
+        )
         apenas_sqlite_direto = (modo_saida_clean in ("sqlite", "apenas_sqlite")) and salvar_sqlite and not gerar_xml and not (obter_anuladas and as_buyer)
         incluir_dados_memoria = not apenas_sqlite_direto
 
@@ -3782,7 +4021,7 @@ def _run_extracao_worker(
             JOBS[job_id]["modo_saida"] = modo_saida_clean
             JOBS[job_id]["mensagem"] = "A iniciar processamento..."
 
-        CONCURRENCY_MANAGER.acquire(volume=volume_estimado, cancel_fn=cancel_check)
+        CONCURRENCY_MANAGER.acquire(volume=volume_estimado, cancel_fn=cancel_check, client_id=ws_client_id)
         acquired_concurrency = True
 
         if cancel_check():
@@ -3792,12 +4031,15 @@ def _run_extracao_worker(
             return
 
         tipo_str = "compras" if as_buyer else "vendas"
-        simulacao_soap_ativa = bool(_MODO_TESTE_SCRAPER.get("ativo"))
+        simulacao_soap_ativa = _is_modo_teste_scraper()
         forcar_scraper_efetivo = bool(forcar_scraper)
         if forcar_scraper_efetivo or simulacao_soap_ativa:
             reimportar_tudo = True
 
-        # Wipe & Fetch apenas quando explicitamente pedido pelo utilizador (reimportar_tudo)
+        if not reimportar_tudo and salvar_sqlite and pb_client.periodo_tem_inconsistencia_faturas(nif, data_inicio, data_fim, tipo_str):
+            reimportar_tudo = True
+
+        # Wipe & Fetch apenas quando explicitamente pedido pelo utilizador (reimportar_tudo) ou inconsistência detetada
         if reimportar_tudo:
             if job_id in JOBS:
                 JOBS[job_id]["docs_atuais"] = 0
@@ -3845,13 +4087,15 @@ def _run_extracao_worker(
                 executor_scraper = None
 
         docs_existentes_fn = lambda a, m: (
-            max(
+            0 if reimportar_tudo else max(
                 pb_client.contar_docs_na_bd(nif, a, m, tipo_str) if salvar_sqlite else 0,
                 efatura_api.contar_staging(nif, a, m, tipo_str)
             )
         )
         docs_intervalo_fn = lambda d_i, d_f: (
-            pb_client.contar_docs_intervalo_na_bd(nif, d_i, d_f, tipo_str) if salvar_sqlite else 0
+            0 if reimportar_tudo else (
+                pb_client.contar_docs_intervalo_na_bd(nif, d_i, d_f, tipo_str) if salvar_sqlite else 0
+            )
         )
 
         # Deteção prévia de documentos já presentes na BD/Staging para retoma imediata
@@ -3873,6 +4117,7 @@ def _run_extracao_worker(
         db_write_lock = threading.Lock()
         fetched_v_rows = []
         paginas_gravadas_no_callback = False
+        houve_erro_gravacao_callback = False
         total_linhas_gravadas_callback = 0
 
         def on_scout_done(scout_items):
@@ -3881,7 +4126,7 @@ def _run_extracao_worker(
                     pb_client.registar_scout_mensal(nif, tipo_str, scout_items)
 
         def on_page_fetched(page_invoices):
-            nonlocal paginas_gravadas_no_callback, total_linhas_gravadas_callback
+            nonlocal paginas_gravadas_no_callback, houve_erro_gravacao_callback, total_linhas_gravadas_callback
             # Gravação contínua e instantânea página a página no Staging e SQLite (~25ms)
             if page_invoices:
                 try:
@@ -3913,20 +4158,24 @@ def _run_extracao_worker(
                                 fetched_v_rows.extend(p_vert)
                             if salvar_sqlite:
                                 if as_buyer:
-                                    pb_client.upsert_faturas_direto(p_vert)
+                                    grav_pg = pb_client.upsert_faturas_direto(p_vert)
                                 else:
-                                    pb_client.upsert_vendas_direto(p_vert)
-                                paginas_gravadas_no_callback = True
-                                total_linhas_gravadas_callback += len(p_vert)
+                                    grav_pg = pb_client.upsert_vendas_direto(p_vert)
+                                if grav_pg > 0:
+                                    paginas_gravadas_no_callback = True
+                                    total_linhas_gravadas_callback += grav_pg
+                                else:
+                                    houve_erro_gravacao_callback = True
                                 for p_yr_m, p_mn_m in meses_pagina:
                                     meses_tocados_sqlite.add((p_yr_m, p_mn_m))
                                     pb_client.atualizar_status_mes(nif, p_yr_m, p_mn_m, tipo_str, completo=False)
                 except Exception as pe:
+                    houve_erro_gravacao_callback = True
                     LOGGER.error(f"Erro ao gravar página no SQLite/Staging: {pe}")
 
         def on_period_done(period_start, period_end, period_invoices, p_expected, is_complete, docs_existentes=None):
             # 1. Gravar faturas deste período imediatamente no SQLite se on_page_fetched não tiver gravado
-            if period_invoices and salvar_sqlite and not on_page_fetched:
+            if period_invoices and salvar_sqlite and (not paginas_gravadas_no_callback or houve_erro_gravacao_callback):
                 with db_write_lock:
                     _, p_vertical = efatura_api.invoices_to_rows(
                         nif, period_invoices, as_buyer=as_buyer, entity_name=nome_entidade, total_esperado=p_expected
@@ -3942,8 +4191,8 @@ def _run_extracao_worker(
                 pb_client.contar_docs_na_bd(nif, period_start.year, period_start.month, tipo_str) if salvar_sqlite else docs_existentes_fn(period_start.year, period_start.month)
             )
             
-            # O mês é completo se docs_na_bd >= p_expected ou se marcado como completo
-            mes_completo = bool(is_complete or (p_expected > 0 and docs_na_bd >= p_expected) or (p_expected == 0))
+            # O mês é completo se (p_expected == 0 and is_complete) ou docs_na_bd >= p_expected
+            mes_completo = bool((p_expected == 0 and is_complete) or (p_expected > 0 and docs_na_bd >= p_expected))
 
             # 3. Registar status do mês na tabela persistente de controlo
             if salvar_sqlite:
@@ -3976,6 +4225,7 @@ def _run_extracao_worker(
             else:
                 meses_a_extrair = list(meses_pedidos)
 
+            usou_cache_scraper = False
             if not meses_a_extrair and not reimportar_tudo and meses_pedidos:
                 horizontal_rows, vertical_rows, docs_totais_bd = reconstruir_horizontal_vertical_de_sqlite(
                     nif=nif,
@@ -3984,18 +4234,23 @@ def _run_extracao_worker(
                     as_buyer=as_buyer,
                     nome_entidade=nome_entidade or "",
                 )
-                veio_de_sqlite_reconstruido = True
-                if not docs_totais_bd:
-                    docs_totais_bd = sum(pb_client.contar_docs_na_bd(nif, p_s.year, p_s.month, tipo_str) for p_s, p_e in meses_pedidos)
-                LOGGER.info(f"⚡ [SCRAPER SKIP] Todos os {len(meses_pedidos)} meses ({data_inicio} a {data_fim}) já estão 100% completos na BD ({docs_totais_bd} docs) para NIF {nif}. A devolver dados da BD.")
-                if job_id in JOBS:
-                    JOBS[job_id]["docs_atuais"] = docs_totais_bd
-                    JOBS[job_id]["total_esperado"] = docs_totais_bd
-                    JOBS[job_id]["total_documentos"] = docs_totais_bd
-                    JOBS[job_id]["percentagem"] = 100
-                    JOBS[job_id]["mensagem"] = f"Mês(es) já completo(s) ({docs_totais_bd} docs na BD)."
-                total_esperado = docs_totais_bd
-            else:
+                if apenas_sqlite_direto or horizontal_rows:
+                    usou_cache_scraper = True
+                    veio_de_sqlite_reconstruido = True
+                    if not docs_totais_bd:
+                        docs_totais_bd = sum(pb_client.contar_docs_na_bd(nif, p_s.year, p_s.month, tipo_str) for p_s, p_e in meses_pedidos)
+                    LOGGER.info(f"⚡ [SCRAPER SKIP] Todos os {len(meses_pedidos)} meses ({data_inicio} a {data_fim}) já estão 100% completos na BD ({docs_totais_bd} docs) para NIF {nif}. A devolver dados da BD.")
+                    if job_id in JOBS:
+                        JOBS[job_id]["docs_atuais"] = docs_totais_bd
+                        JOBS[job_id]["total_esperado"] = docs_totais_bd
+                        JOBS[job_id]["total_documentos"] = docs_totais_bd
+                        JOBS[job_id]["percentagem"] = 100
+                        JOBS[job_id]["mensagem"] = f"Mês(es) já completo(s) ({docs_totais_bd} docs na BD)."
+                    total_esperado = docs_totais_bd
+                else:
+                    LOGGER.warning(f"⚠️ [SCRAPER SKIP RECOVER] SQLite sem linhas para reconstruir ({data_inicio} a {data_fim}); a forçar recolha no Portal Web para NIF {nif}.")
+                    meses_a_extrair = list(meses_pedidos)
+            if not usou_cache_scraper:
                 scrap_ini = meses_a_extrair[0][0] if meses_a_extrair else data_inicio
                 scrap_fim = meses_a_extrair[-1][1] if meses_a_extrair else data_fim
                 _garantir_scraper_pronto(
@@ -4099,7 +4354,7 @@ def _run_extracao_worker(
 
         foi_interrompido = cancel_check()
 
-        if not precisa_scraper and not horizontal_rows and not (apenas_sqlite_direto and not usou_web_scraping and paginas_gravadas_no_callback):
+        if not precisa_scraper and not horizontal_rows and not (apenas_sqlite_direto and not usou_web_scraping and paginas_gravadas_no_callback and not houve_erro_gravacao_callback):
             if apenas_sqlite_direto and not usou_web_scraping and salvar_sqlite:
                 # Todos os meses já completos no SQLite (nenhuma página nova descarregada): evita reconstrução pesada em RAM
                 veio_de_sqlite_reconstruido = True
@@ -4242,8 +4497,8 @@ def _run_extracao_worker(
             JOBS[job_id]["mensagem"] = "A gravar registos e a organizar totais..."
             JOBS[job_id]["percentagem"] = 98
 
-        linhas_gravadas = total_linhas_gravadas_callback if (paginas_gravadas_no_callback and salvar_sqlite) else len(vertical_rows)
-        if vertical_rows and salvar_sqlite and not veio_de_sqlite_reconstruido and not paginas_gravadas_no_callback:
+        linhas_gravadas = total_linhas_gravadas_callback if (paginas_gravadas_no_callback and not houve_erro_gravacao_callback and salvar_sqlite) else len(vertical_rows)
+        if vertical_rows and salvar_sqlite and not veio_de_sqlite_reconstruido and (not paginas_gravadas_no_callback or houve_erro_gravacao_callback):
             try:
                 if as_buyer:
                     linhas_gravadas = pb_client.upsert_faturas_direto(vertical_rows)
@@ -4286,7 +4541,7 @@ def _run_extracao_worker(
                     nif,
                     horizontal_rows[1:],
                     as_buyer=as_buyer,
-                    pasta_raiz=pasta_raiz_dados,
+                    pasta_raiz=pasta_raiz_dados or pb_client.obter_pasta_dados_raiz(),
                     caminho_personalizado=caminho_xml_personalizado,
                     data_inicio=data_inicio,
                     data_fim=data_fim,
@@ -4371,29 +4626,30 @@ def _run_extracao_worker(
             except Exception as e_clean:
                 LOGGER.warning(f"Aviso ao limpar staging pós-conclusão no job {job_id[:8]}: {e_clean}")
 
-            # Agendamento automático no Pipeline de Segundo Plano (Anuladas + Nomes de Vendas)
-            try:
-                tem_particulares = False
-                if not as_buyer:
-                    if vertical_rows:
-                        for vr in vertical_rows:
-                            cp_nif = str(vr.get("Contraparte NIF") or "").strip()
-                            cp_nome = str(vr.get("Contraparte") or "").strip()
-                            if cp_nif and cp_nif not in ("999999990", "999999999", "99999999") and (not cp_nome or cp_nome == "[Sem Nome Registado]"):
-                                tem_particulares = True
-                                break
-                    elif salvar_sqlite:
-                        tem_particulares = bool(pb_client.obter_nifs_vendas_sem_nome(nif))
-                pipeline_worker.adicionar_tarefas_pos_extracao(
-                    nif=nif,
-                    nome_entidade=nome_entidade or "",
-                    modulo=tipo_str,
-                    data_inicio=str(data_inicio),
-                    data_fim=str(data_fim),
-                    tem_particulares_sem_nome=tem_particulares
-                )
-            except Exception as e_pipe:
-                LOGGER.warning(f"Aviso no job {job_id[:8]} ao agendar tarefas de segundo plano: {e_pipe}")
+            # Agendamento automático no Pipeline de Segundo Plano (apenas ambiente Desktop/Local)
+            if not workspace_context.is_cloud_zero_storage():
+                try:
+                    tem_particulares = False
+                    if not as_buyer:
+                        if vertical_rows:
+                            for vr in vertical_rows:
+                                cp_nif = str(vr.get("Contraparte NIF") or "").strip()
+                                cp_nome = str(vr.get("Contraparte") or "").strip()
+                                if cp_nif and cp_nif not in ("999999990", "999999999", "99999999") and (not cp_nome or cp_nome == "[Sem Nome Registado]"):
+                                    tem_particulares = True
+                                    break
+                        elif salvar_sqlite:
+                            tem_particulares = bool(pb_client.obter_nifs_vendas_sem_nome(nif))
+                    pipeline_worker.adicionar_tarefas_pos_extracao(
+                        nif=nif,
+                        nome_entidade=nome_entidade or "",
+                        modulo=tipo_str,
+                        data_inicio=str(data_inicio),
+                        data_fim=str(data_fim),
+                        tem_particulares_sem_nome=tem_particulares
+                    )
+                except Exception as e_pipe:
+                    LOGGER.warning(f"Aviso no job {job_id[:8]} ao agendar tarefas de segundo plano: {e_pipe}")
 
 
     except efatura_api.LimiteVolumeExcedidoError as vol_err:
@@ -4454,11 +4710,12 @@ def _run_extracao_worker(
                     pb_client.atualizar_status_mes(nif, yr_t, mn_t, tipo_str, completo=False)
                 except Exception as _e_fin:
                     LOGGER.warning(f"Aviso ao sincronizar estado final do mês {mn_t}/{yr_t} ({nif}): {_e_fin}")
-        pipeline_worker.sinalizar_primeiro_plano(False)
+        if not workspace_context.is_cloud_zero_storage():
+            pipeline_worker.sinalizar_primeiro_plano(False)
         if 'executor_scraper' in locals() and executor_scraper:
             executor_scraper.shutdown(wait=False)
         if acquired_concurrency:
-            CONCURRENCY_MANAGER.release()
+            CONCURRENCY_MANAGER.release(client_id=ws_client_id)
         # Higienização de senha
         password = None
 
@@ -4476,6 +4733,7 @@ def iniciar_extracao_async(req: ExtracaoRequest, lic = Depends(verificar_licenca
 
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {
+        "ws_id": workspace_context.get_current_ws_id(),
         "status": "em_progresso",
         "nif": req.nif,
         "nome_empresa": req.nome_entidade or "",
@@ -4528,10 +4786,16 @@ def iniciar_extracao_async(req: ExtracaoRequest, lic = Depends(verificar_licenca
         "mensagem": "Job iniciado com sucesso",
     }
 
+def _job_pertence_workspace(job: Dict[str, Any]) -> bool:
+    if not workspace_context.is_cloud_zero_storage():
+        return True
+    return str(job.get("ws_id") or "") == workspace_context.get_current_ws_id()
+
+
 @app.post("/api/extracao/parar/{job_id}")
 async def parar_extracao_individual(job_id: str):
     """Sinaliza uma tarefa de extração específica para interromper imediatamente."""
-    if job_id not in JOBS:
+    if job_id not in JOBS or not _job_pertence_workspace(JOBS[job_id]):
         raise HTTPException(status_code=404, detail="Job ID não encontrado.")
     
     JOBS[job_id]["cancelar"] = True
@@ -4548,12 +4812,15 @@ async def parar_todas_extracoes():
     """Sinaliza todas as tarefas ativas para parar e limpa a fila SJF imediatamente."""
     parados = 0
     for jid, job in list(JOBS.items()):
-        if job.get("status") in ("em_progresso", "iniciado"):
+        if _job_pertence_workspace(job) and job.get("status") in ("em_progresso", "iniciado"):
             job["cancelar"] = True
             job["status"] = "cancelado"
             job["mensagem"] = "Cancelado pelo utilizador."
             parados += 1
-    CONCURRENCY_MANAGER.cancel_all()
+    if workspace_context.is_cloud_zero_storage():
+        CONCURRENCY_MANAGER.cancel_client(workspace_context.get_current_ws_id())
+    else:
+        CONCURRENCY_MANAGER.cancel_all()
     LOGGER.info(f"🛑 [PARAR TUDO] {parados} tarefa(s) cancelada(s). Fila SJF limpa.")
     return {
         "status": "paragem_geral_concluida",
@@ -4564,7 +4831,7 @@ async def parar_todas_extracoes():
 @app.get("/api/extracao/status/{job_id}")
 async def obter_status_job(job_id: str):
     """Consulta o progresso ou dados de um job assíncrono."""
-    if job_id not in JOBS:
+    if job_id not in JOBS or not _job_pertence_workspace(JOBS[job_id]):
         raise HTTPException(status_code=404, detail="Job ID não encontrado ou expirado.")
 
     job = JOBS[job_id]
@@ -4627,19 +4894,20 @@ def exportar_xml_legado_endpoint(req: ExportarXmlRequest, lic = Depends(verifica
     xml_str = efatura_api.gerar_xml_legado_string(req.horizontal_rows)
 
     caminho_final = None
-    if req.caminho_personalizado:
-        caminho_final = req.caminho_personalizado
-    elif req.pasta_raiz_dados and req.ano and req.mes:
-        caminho_final = efatura_api.construir_caminho_xml_legado(
-            req.pasta_raiz_dados, req.nif, req.ano, req.mes, as_buyer
-        )
-    elif req.ano and req.mes:
-        caminho_final = efatura_api.construir_caminho_xml_legado(
-            efatura_api.DEFAULT_PASTA_RAIZ_LEGADO, req.nif, req.ano, req.mes, as_buyer
-        )
+    if not workspace_context.is_cloud_zero_storage():
+        if req.caminho_personalizado:
+            caminho_final = req.caminho_personalizado
+        elif req.pasta_raiz_dados and req.ano and req.mes:
+            caminho_final = efatura_api.construir_caminho_xml_legado(
+                req.pasta_raiz_dados, req.nif, req.ano, req.mes, as_buyer
+            )
+        elif req.ano and req.mes:
+            caminho_final = efatura_api.construir_caminho_xml_legado(
+                pb_client.obter_pasta_dados_raiz(), req.nif, req.ano, req.mes, as_buyer
+            )
 
-    if caminho_final:
-        efatura_api.salvar_xml_legado_ficheiro(req.horizontal_rows, caminho_final)
+        if caminho_final:
+            efatura_api.salvar_xml_legado_ficheiro(req.horizontal_rows, caminho_final)
 
     return {
         "status": "sucesso",
@@ -4779,6 +5047,27 @@ def validar_operador_admin(
     token: Any = Query(None)
 ) -> Dict[str, Any]:
     """Valida se o operador tem sessão ativa com privilégios de Administrador ou Superadministrador."""
+    if workspace_context.is_cloud_zero_storage():
+        auth_u = workspace_context.get_current_auth_user()
+        if not auth_u:
+            raise HTTPException(
+                status_code=401,
+                detail="Autenticação obrigatória. Inicie sessão com privilégios de Administrador."
+            )
+        role_u = str(auth_u.get("role") or "").upper()
+        if role_u not in ("ADMIN", "DEV", "SUPERADMIN"):
+            raise HTTPException(
+                status_code=403,
+                detail="Permissão negada. Esta funcionalidade é estritamente reservada a Administradores."
+            )
+        res_u = dict(auth_u)
+        tk_u = token or x_auth_token
+        if not tk_u and authorization and str(authorization).startswith("Bearer "):
+            tk_u = str(authorization).split(" ", 1)[1].strip()
+        if tk_u:
+            res_u["token"] = tk_u
+        return res_u
+
     tk = token or x_auth_token
     if not tk and authorization and authorization.startswith("Bearer "):
         tk = authorization.split(" ", 1)[1].strip()
@@ -4839,16 +5128,17 @@ def api_reset_senha_invalida(nif: str):
         if not nif_clean:
             raise HTTPException(status_code=400, detail="NIF inválido.")
         pb_client.clear_invalid_password_if_success(nif_clean)
-        try:
-            import logins_Gov
-            sub, _ = pb_client.get_credentials(nif_clean)
-            if sub:
-                logins_Gov.limpar_bloqueio_sucesso(sub, "AT")
-                logins_Gov.limpar_bloqueio_sucesso(sub, "EFATURA")
-            logins_Gov.limpar_bloqueio_sucesso(nif_clean, "AT")
-            logins_Gov.limpar_bloqueio_sucesso(nif_clean, "EFATURA")
-        except Exception:
-            pass
+        if not workspace_context.is_cloud_zero_storage():
+            try:
+                import logins_Gov
+                sub, _ = pb_client.get_credentials(nif_clean)
+                if sub:
+                    logins_Gov.limpar_bloqueio_sucesso(sub, "AT")
+                    logins_Gov.limpar_bloqueio_sucesso(sub, "EFATURA")
+                logins_Gov.limpar_bloqueio_sucesso(nif_clean, "AT")
+                logins_Gov.limpar_bloqueio_sucesso(nif_clean, "EFATURA")
+            except Exception:
+                pass
         LOGGER.info(f"Bloqueio de autenticação do NIF {nif_clean} limpo manualmente na base central.")
         return {
             "status": "sucesso",
@@ -5051,7 +5341,7 @@ def api_efatura_login_browser(req: LoginBrowserRequest, request: Request, lic = 
         raise HTTPException(status_code=500, detail="Script 'abrir_browser_sessao.py' não encontrado no sistema.")
 
     # Preparar ficheiro de log de auditoria da sessão de browser
-    local_app = os.environ.get("LOCALAPPDATA", "") or os.path.expanduser("~\\AppData\\Local")
+    local_app = os.environ.get("LOCALAPPDATA", "") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
     pasta_logs = Path(local_app) / "GExcelAYD" / "logs"
     pasta_logs.mkdir(parents=True, exist_ok=True)
     log_browser_path = pasta_logs / "efatura_browser_login.log"
@@ -5162,11 +5452,12 @@ def api_efatura_scrape_anuladas(req: ScrapeAnuladasRequest, lic = Depends(verifi
     )
 
     try:
+        canal_efetivo = "chromium" if sys.platform != "win32" else (req.canal or "msedge")
         sessao = iniciar_sessao_efatura(
             nif=login_user,
             password=senha,
             headless=True,
-            canal=req.canal or "msedge"
+            canal=canal_efetivo
         )
     except GovAuthError as ge:
         LOGGER.error(f"Erro de autenticação no portal e-Fatura para NIF {nif_clean}: {ge}")
@@ -5208,24 +5499,37 @@ def api_efatura_scrape_anuladas(req: ScrapeAnuladasRequest, lic = Depends(verifi
                 except Exception as e_anul_db:
                     LOGGER.warning(f"Aviso ao gravar em anuladas_{nif_clean}.db: {e_anul_db}")
 
-            persistencia = PersistenciaSQLite()
-            if linhas_extraidas:
-                if is_vendas:
-                    linhas_gravadas, novas_inconformidades = persistencia.gravar_linhas_vendas(linhas_extraidas)
-                else:
-                    linhas_gravadas, novas_inconformidades = persistencia.gravar_linhas_compras(linhas_extraidas)
+            if not workspace_context.is_cloud_zero_storage():
+                persistencia = PersistenciaSQLite()
+                if linhas_extraidas:
+                    if is_vendas:
+                        linhas_gravadas, novas_inconformidades = persistencia.gravar_linhas_vendas(linhas_extraidas)
+                    else:
+                        linhas_gravadas, novas_inconformidades = persistencia.gravar_linhas_compras(linhas_extraidas)
 
-                # Sincronizar também na base particionada do cliente em BdsefaturaV4
-                v_rows = [l.to_dict() for l in linhas_extraidas]
-                if is_vendas:
-                    pb_client.upsert_vendas_direto(v_rows)
-                else:
-                    pb_client.upsert_faturas_direto(v_rows)
-            elif faturas_anuladas:
-                # Caso haja faturas anuladas sem linhas de taxa, garantir registo no Cofre
-                cofre = cofre_ledger.CofreEstadosLedger()
-                novas_inconf_list = cofre.registar_e_confrontar(faturas_anuladas, nif_titular=nif_clean)
-                novas_inconformidades = len(novas_inconf_list)
+                    # Sincronizar também na base particionada do cliente em BdsefaturaV4
+                    v_rows = [l.to_dict() for l in linhas_extraidas]
+                    if is_vendas:
+                        pb_client.upsert_vendas_direto(v_rows)
+                    else:
+                        pb_client.upsert_faturas_direto(v_rows)
+                elif faturas_anuladas:
+                    # Caso haja faturas anuladas sem linhas de taxa, garantir registo no Cofre
+                    cofre = cofre_ledger.CofreEstadosLedger()
+                    novas_inconf_list = cofre.registar_e_confrontar(faturas_anuladas, nif_titular=nif_clean)
+                    novas_inconformidades = len(novas_inconf_list)
+            else:
+                if linhas_extraidas:
+                    v_rows = [l.to_dict() for l in linhas_extraidas]
+                    if is_vendas:
+                        linhas_gravadas = pb_client.upsert_vendas_direto(v_rows)
+                    else:
+                        linhas_gravadas = pb_client.upsert_faturas_direto(v_rows)
+                    cofre = cofre_ledger.CofreEstadosLedger()
+                    novas_inconformidades = len(cofre.registar_e_confrontar(v_rows, nif_titular=nif_clean))
+                elif faturas_anuladas:
+                    cofre = cofre_ledger.CofreEstadosLedger()
+                    novas_inconformidades = len(cofre.registar_e_confrontar(faturas_anuladas, nif_titular=nif_clean))
 
         LOGGER.info(
             f"✅ [SCRAPE ANULADAS CONCLUÍDO] NIF {nif_clean}: {len(faturas_anuladas)} faturas anuladas, "
@@ -5317,13 +5621,16 @@ def alterar_config_performance(req: PerformanceConfigRequest):
 def startup_event():
     """Inicia os subsistemas autónomos no arranque da API."""
     try:
-        if sys.platform == "win32":
+        if workspace_context.is_cloud_zero_storage():
+            workspace_context.limpar_workspaces_expirados_disco(forcar=True)
+            LOGGER.info("API e-Fatura pronta em modo Cloud Online Zero-Storage (workspaces limpos no arranque).")
+        elif sys.platform == "win32":
             SCHEDULER_ENGINE.start()
             LOGGER.info("API e-Fatura pronta e reativa (Agendador autónomo de background ativo).")
         else:
-            LOGGER.info("API e-Fatura pronta em modo Cloud Online (Agendador reservado ao Conector Local).")
+            LOGGER.info("API e-Fatura pronta em modo Linux local.")
     except Exception as e_sc:
-        LOGGER.warning(f"Aviso ao iniciar agendador no arranque: {e_sc}")
+        LOGGER.warning(f"Aviso ao iniciar subsistemas no arranque: {e_sc}")
 
 @app.on_event("shutdown")
 def shutdown_event():
@@ -5371,6 +5678,14 @@ class ConfirmarAtrasoRequest(BaseModel):
 @app.get("/api/agendador/tarefas")
 def api_listar_agendamentos():
     """Lista todas as tarefas agendadas registadas no sistema com telemetria ao vivo."""
+    if workspace_context.is_cloud_zero_storage():
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "tarefas": [],
+            "tarefas_em_execucao": 0,
+            "modo": "cloud_zero_storage",
+        }
     tarefas = scheduler.listar_agendamentos()
     progresso_vivo = scheduler.SCHEDULER_ENGINE.obter_progresso_vivo()
     executando_ids = set(scheduler.SCHEDULER_ENGINE._executando_tarefas)
@@ -5390,10 +5705,10 @@ def api_listar_agendamentos():
 @app.post("/api/agendador/tarefas")
 def api_criar_agendamento(req: AgendamentoCriarRequest):
     """Cria uma nova tarefa agendada persistente."""
-    if sys.platform != "win32":
+    if sys.platform != "win32" or workspace_context.is_cloud_zero_storage():
         raise HTTPException(
             status_code=503,
-            detail="⚠️ Em atualização — disponível em breve (requer Conector Local do escritório)."
+            detail="O agendador local requer o Conector Local do escritório."
         )
     dados = req.dict()
     tarefa = scheduler.criar_agendamento(dados)
@@ -5406,6 +5721,8 @@ def api_criar_agendamento(req: AgendamentoCriarRequest):
 @app.put("/api/agendador/tarefas/{task_id}")
 def api_atualizar_agendamento(task_id: str, req: AgendamentoAtualizarRequest):
     """Atualiza as configurações de uma tarefa agendada existente."""
+    if sys.platform != "win32" or workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=503, detail="O agendador local requer o Conector Local do escritório.")
     dados = {k: v for k, v in req.dict().items() if v is not None}
     tarefa = scheduler.atualizar_agendamento(task_id, dados)
     if not tarefa:
@@ -5419,6 +5736,8 @@ def api_atualizar_agendamento(task_id: str, req: AgendamentoAtualizarRequest):
 @app.delete("/api/agendador/tarefas/{task_id}")
 def api_eliminar_agendamento(task_id: str):
     """Elimina uma tarefa agendada e o respetivo histórico."""
+    if sys.platform != "win32" or workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=503, detail="O agendador local requer o Conector Local do escritório.")
     removido = scheduler.eliminar_agendamento(task_id)
     if not removido:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
@@ -5431,6 +5750,8 @@ def api_eliminar_agendamento(task_id: str):
 @app.post("/api/agendador/tarefas/{task_id}/toggle")
 def api_toggle_agendamento(task_id: str):
     """Alterna o estado ativo/pausado de uma tarefa."""
+    if sys.platform != "win32" or workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=503, detail="O agendador local requer o Conector Local do escritório.")
     tarefa = scheduler.toggle_agendamento(task_id)
     if not tarefa:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
@@ -5443,10 +5764,10 @@ def api_toggle_agendamento(task_id: str):
 @app.post("/api/agendador/tarefas/{task_id}/executar")
 def api_executar_tarefa_agora(task_id: str):
     """Dispara a execução imediata em background de uma tarefa agendada."""
-    if sys.platform != "win32":
+    if sys.platform != "win32" or workspace_context.is_cloud_zero_storage():
         raise HTTPException(
             status_code=503,
-            detail="⚠️ Em atualização — disponível em breve (requer Conector Local do escritório)."
+            detail="O agendador local requer o Conector Local do escritório."
         )
     iniciado = SCHEDULER_ENGINE.executar_agora_async(task_id)
     if not iniciado:
@@ -5460,6 +5781,12 @@ def api_executar_tarefa_agora(task_id: str):
 @app.get("/api/agendador/tarefas/pendentes")
 def api_obter_tarefas_pendentes():
     """Retorna tarefas que falharam a hora prevista por PC desligado com política 'perguntar'."""
+    if workspace_context.is_cloud_zero_storage():
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "pendentes": []
+        }
     pendentes = scheduler.obter_tarefas_pendentes_confirmacao()
     return {
         "status": "sucesso",
@@ -5470,6 +5797,8 @@ def api_obter_tarefas_pendentes():
 @app.post("/api/agendador/tarefas/{task_id}/confirmar-atraso")
 def api_confirmar_atraso(task_id: str, req: ConfirmarAtrasoRequest):
     """Resolve uma tarefa atrasada (executa imediatamente ou salta para a próxima ocorrência)."""
+    if sys.platform != "win32" or workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=503, detail="O agendador local requer o Conector Local do escritório.")
     if req.acao not in ("executar", "saltar"):
         raise HTTPException(status_code=400, detail="Ação inválida. Use 'executar' ou 'saltar'.")
     tarefa = scheduler.resolver_atraso_agendamento(task_id, req.acao)
@@ -5484,6 +5813,12 @@ def api_confirmar_atraso(task_id: str, req: ConfirmarAtrasoRequest):
 @app.get("/api/agendador/logs")
 def api_listar_logs_agendamento(agendamento_id: Optional[str] = None, limite: int = 50):
     """Retorna o histórico de auditoria e logs de execução das tarefas agendadas."""
+    if workspace_context.is_cloud_zero_storage():
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "logs": []
+        }
     logs = scheduler.listar_logs_agendamento(agendamento_id, limite)
     return {
         "status": "sucesso",
@@ -5498,6 +5833,22 @@ def api_listar_logs_agendamento(agendamento_id: Optional[str] = None, limite: in
 @app.get("/api/pipeline/status")
 def api_obter_pipeline_status():
     """Retorna o estado da fila de segundo plano, contagens e tarefa atual em curso."""
+    if workspace_context.is_cloud_zero_storage():
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "versao": API_VERSION,
+            "tag_build": obter_tag_versao_build(),
+            "ativo": False,
+            "em_execucao": False,
+            "pendentes": 0,
+            "em_curso": 0,
+            "concluido": 0,
+            "erro": 0,
+            "fila": 0,
+            "tarefa_atual": None,
+            "modo": "cloud_zero_storage",
+        }
     return {
         "status": "sucesso",
         "assinatura": "API Importador e-Fatura Gexcel",
@@ -5509,6 +5860,8 @@ def api_obter_pipeline_status():
 @app.post("/api/pipeline/acordar")
 def api_acordar_pipeline_worker():
     """Acorda ou reinicia o worker de segundo plano caso haja tarefas pendentes."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=503, detail="Pipeline local indisponível em modo Cloud Zero-Storage.")
     pipeline_worker.garantir_worker_ativo()
     return {
         "status": "sucesso",
@@ -5593,6 +5946,16 @@ def _invalidar_caches_mudanca_centro():
 @app.get("/api/app/centros-dados")
 def api_listar_centros_dados():
     """Lista todos os Centros de Dados nomeados registados na conta do cliente."""
+    if workspace_context.is_cloud_zero_storage():
+        ws_id = workspace_context.get_current_ws_id()
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "centros_dados": [],
+            "centro_dados_ativo_id": ws_id,
+            "centro_dados_nome": "Posto Cloud Zero-Storage",
+            "config": api_obter_app_config()["config"],
+        }
     cfg = auth_manager.obter_config_geral()
     return {
         "status": "sucesso",
@@ -5610,6 +5973,12 @@ def api_guardar_centro_dados_nomeado(
     operador: Any = Depends(validar_operador_admin)
 ):
     """Cria ou atualiza um Centro de Dados nomeado (ex: Escritório da Maia, Porto, PHC, Sage) e prepara a pasta Dados_evoGex."""
+    if workspace_context.is_cloud_zero_storage():
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "config": api_obter_app_config()["config"],
+        }
     try:
         cfg = auth_manager.guardar_centro_dados(
             nome=req.nome,
@@ -5633,6 +6002,13 @@ def api_guardar_centro_dados_nomeado(
 @app.post("/api/app/centros-dados/selecionar")
 def api_selecionar_centro_dados(req: AppSelecionarCentroRequest):
     """Alterna instantaneamente entre Centros de Dados nomeados (ex: Escritório da Maia <-> Escritório do Porto)."""
+    if workspace_context.is_cloud_zero_storage():
+        _invalidar_caches_mudanca_centro()
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "config": api_obter_app_config()["config"],
+        }
     try:
         auth_manager.selecionar_centro_dados_ativo(req.centro_id)
         _invalidar_caches_mudanca_centro()
@@ -5651,6 +6027,8 @@ def api_eliminar_centro_dados(
     operador: Any = Depends(validar_operador_admin)
 ):
     """Remove um Centro de Dados nomeado (protegendo caso seja o único)."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="A gestão de centros locais em Cloud é efetuada diretamente no browser.")
     try:
         auth_manager.eliminar_centro_dados(centro_id)
         _invalidar_caches_mudanca_centro()
@@ -5863,9 +6241,10 @@ def api_descarregar_instalador_centro_dados(
     pasta_gexcel_antiga: str = "",
 ):
     """
-    Gera o instalador unificado de 1 clique (.bat) exclusivamente com o binário
-    compilado e protegido (.pyd / .exe: gevo_ef2026.exe). NUNCA expõe ficheiros .py.
+    Gera o instalador unificado de 1 clique (.bat) exclusivamente em modo Desktop local.
     """
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="Instalador local desativado na arquitetura Web Cloud Zero-Storage.")
     nome_clean = (nome or "Escritório Principal").replace('"', '').strip()
     p_evo_clean = (pasta_evogex or r"C:\Dados_evoGex").replace('"', '').strip()
     p_ant_clean = (pasta_gexcel_antiga or "").replace('"', '').strip()
@@ -5927,6 +6306,12 @@ def api_definir_centro_dados(
     operador: Any = Depends(validar_operador_admin)
 ):
     """Designa e regista o computador ou servidor principal do escritório como Centro de Dados."""
+    if workspace_context.is_cloud_zero_storage():
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "config": api_obter_app_config()["config"]
+        }
     cfg = auth_manager.registar_centro_dados(
         hostname=req.hostname,
         hardware_id=req.hardware_id or "",
@@ -5946,6 +6331,12 @@ def api_definir_centro_dados(
 @app.post("/api/app/config/centro-dados/heartbeat")
 def api_heartbeat_centro_dados(req: Optional[AppCentroDadosRequest] = None):
     """Atualiza o sinal de vida (heartbeat) do Centro de Dados Único do escritório."""
+    if workspace_context.is_cloud_zero_storage():
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "config": api_obter_app_config()["config"]
+        }
     import socket
     cfg_atual = auth_manager.obter_config_geral()
     hname = (req.hostname if req and req.hostname else cfg_atual.get("centro_dados_hostname")) or socket.gethostname()
@@ -5961,6 +6352,30 @@ def api_heartbeat_centro_dados(req: Optional[AppCentroDadosRequest] = None):
 @app.get("/api/app/config")
 def api_obter_app_config():
     """Retorna o estado de configuração geral da app (centros de dados nomeados, XML legado, utilizadores, pastas locais, etc.)."""
+    if workspace_context.is_cloud_zero_storage():
+        ws_id = workspace_context.get_current_ws_id()
+        cfg = {
+            "modo": "cloud_zero_storage",
+            "modo_dados": "integrado",
+            "setup_concluido": True,
+            "setup_completo": True,
+            "alimentar_xml_legado": False,
+            "centros_dados": [],
+            "centro_dados_ativo_id": ws_id,
+            "centro_dados_nome": "Posto Cloud Zero-Storage",
+            "pasta_v4": "",
+            "pasta_v3": "",
+            "pasta_bdsrv": "",
+            "pasta_pdfs": "",
+            "versao": API_VERSION,
+            "build_number": BUILD_NUMBER,
+            "origem_motor": "cloud",
+        }
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "config": cfg
+        }
     cfg = auth_manager.obter_config_geral()
     try:
         pasta_raiz = Path(pb_client.obter_pasta_dados_raiz())
@@ -5983,6 +6398,13 @@ def api_obter_app_config():
 @app.post("/api/app/config/xml-legado")
 def api_definir_xml_legado(req: AppXmlLegadoRequest):
     """Ativa ou desativa a alimentação paralela dos ficheiros XML legados do Gexcel Apps (BdsefaturaV3 e BdsRV)."""
+    if workspace_context.is_cloud_zero_storage():
+        return {
+            "status": "ok",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "alimentar_xml_legado": False,
+            "config": api_obter_app_config()["config"]
+        }
     ativo = recibos_verdes_service.guardar_alimentar_xml_legado(req.alimentar_xml_legado)
     cfg = auth_manager.obter_config_geral()
     cfg["alimentar_xml_legado"] = ativo
@@ -5999,6 +6421,8 @@ def api_definir_app_modo(
     operador: Any = Depends(validar_operador_admin)
 ):
     """Altera o modo de ligação: 'integrado' (Gexcel Apps / CRM) ou 'autonomo'."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="A arquitetura Online Zero-Storage opera exclusivamente em modo integrado Cloud.")
     try:
         cfg = auth_manager.definir_modo_dados(req.modo)
         return {
@@ -6039,12 +6463,16 @@ def _forward_evo11_headers(request: Request) -> Dict[str, str]:
         ("x-auth-token", "X-Auth-Token"),
         ("x-evo-device-id", "X-Evo-Device-Id"),
         ("x-evo-workspace-id", "X-Evo-Workspace-Id"),
-        ("x-forwarded-host", "X-Forwarded-Host"),
+        ("origin", "Origin"),
+        ("referer", "Referer"),
         ("user-agent", "User-Agent"),
     ):
         val = request.headers.get(h_in)
         if val:
             headers[h_out] = val
+    fwd_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").strip()
+    if fwd_host:
+        headers["X-Forwarded-Host"] = fwd_host
     xff = request.headers.get("x-forwarded-for") or ""
     if xff.strip():
         headers["X-Forwarded-For"] = xff.strip()
@@ -6133,7 +6561,7 @@ def _enforcar_politica_teletrabalho(
 
 @app.post("/api/auth/login")
 def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
-    """Ponte de autenticação unificada SSO (EVO-11 + Canal Dev + DB Local)."""
+    """Ponte de autenticação unificada SSO (EVO-11 + DB Local Windows)."""
     from fastapi.responses import JSONResponse
     u_clean = (req.username or "").strip()
     p_clean = (req.password or "").strip()
@@ -6143,62 +6571,13 @@ def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
     host_hdr = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").lower()
     origin_hdr = (request.headers.get("origin") or request.headers.get("referer") or "").lower()
     is_dev_channel = (
-        bool(req.isDevChannel)
-        or host_hdr.startswith("dev.")
+        host_hdr.startswith("dev.")
         or "://dev." in origin_hdr
         or "localhost" in host_hdr
         or "127.0.0.1" in host_hdr
         or "localhost" in origin_hdr
         or "127.0.0.1" in origin_hdr
     )
-
-    dev_aliases = {
-        "@gexcel",
-        "gexcel",
-        "@evogex",
-        "evogex",
-        "dev",
-        "superadmin",
-        "victor",
-        "victor.dev@gexcel.pt",
-        "victor@gexcel.pt",
-        "gexcel2013@gmail.com",
-        "admin@gexcel.pt",
-    }
-    dev_passwords = {"9463", "2olaalip#1", "41238886", "Gexcel#Dev2026!"}
-
-    if u_clean.lower() in dev_aliases:
-        if not is_dev_channel:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "ok": False,
-                    "error": "Por motivos de segurança, as credenciais de desenvolvedor são exclusivas da consola central DEV e estão bloqueadas nas aplicações de clientes.",
-                },
-            )
-        if p_clean in dev_passwords:
-            user_info = {
-                "id": 1,
-                "username": "superadmin",
-                "nome": "Victor Gamboa · SuperAdmin (@Gexcel)",
-                "email": "gexcel2013@gmail.com",
-                "role": "superadmin",
-                "is_system": 1,
-            }
-            tok = auth_manager._criar_sessao(user_info)
-            return {
-                "ok": True,
-                "token": tok,
-                "user": {
-                    "id": "1",
-                    "username": "@Gexcel",
-                    "nome": "Victor Gamboa · SuperAdmin (@Gexcel)",
-                    "role": "DEV",
-                    "email": "gexcel2013@gmail.com",
-                    "session_context": "OFFICE",
-                },
-            }
-        return JSONResponse(status_code=401, content={"ok": False, "error": "Credenciais mestras inválidas."})
 
     # 1. Tentar autenticar no motor central Gexcel Auth Online (EVO-11 :8010)
     try:
@@ -6222,16 +6601,19 @@ def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
             local_role = "superadmin" if role_raw == "DEV" else "admin" if role_raw == "ADMIN" else "subutilizador"
             tok_11 = str(data_11.get("token") or "").strip()
             offices_11 = data_11.get("offices") or u11.get("offices") or []
-            if offices_11:
-                try:
-                    auth_manager.sincronizar_escritorios_licenciados(offices_11)
-                except Exception:
-                    pass
-            tok = auth_manager._criar_sessao({
-                "id": 1,
-                "username": str(u11.get("username") or u_clean),
-                "role": local_role,
-            }, token_override=tok_11 or None)
+            if not workspace_context.is_cloud_zero_storage():
+                if offices_11:
+                    try:
+                        auth_manager.sincronizar_escritorios_licenciados(offices_11)
+                    except Exception:
+                        pass
+                tok = auth_manager._criar_sessao({
+                    "id": 1,
+                    "username": str(u11.get("username") or u_clean),
+                    "role": local_role,
+                }, token_override=tok_11 or None)
+            else:
+                tok = tok_11
             return {
                 "ok": True,
                 "token": tok,
@@ -6240,34 +6622,35 @@ def api_unified_evo_login(req: UnifiedEvoLoginRequest, request: Request):
             }
         err_11 = str(data_11.get("error") or data_11.get("detail") or "")
         code_11 = str(data_11.get("code") or "")
-        if r_evo11.status_code == 403 or code_11 or any(k in err_11.lower() for k in ("escritório", "desativada", "congelad", "teletrabalho", "código", "equipamento")):
+        if r_evo11.status_code in (401, 403) or code_11 or any(k in err_11.lower() for k in ("escritório", "desativada", "congelad", "teletrabalho", "código", "equipamento")):
             return JSONResponse(status_code=r_evo11.status_code, content=data_11)
     except Exception:
         pass
 
-    # 2. Fallback para utilizadores locais da aplicação (gevo_efatura_app.db)
-    try:
-        res_loc = auth_manager.autenticar_utilizador(u_clean, p_clean)
-        if res_loc and res_loc.get("user"):
-            ul = res_loc["user"]
-            role_loc = str(ul.get("role") or "subutilizador").lower()
-            mapped_role = "DEV" if role_loc == "superadmin" else "ADMIN" if role_loc == "admin" else "OPERADOR"
-            return {
-                "ok": True,
-                "token": res_loc["token"],
-                "user": {
-                    "id": str(ul.get("id") or "1"),
-                    "username": str(ul.get("username") or u_clean),
-                    "nome": str(ul.get("nome") or u_clean),
-                    "role": mapped_role,
-                    "email": str(ul.get("email") or ""),
-                    "session_context": "OFFICE",
-                },
-            }
-    except PermissionError as pe:
-        return JSONResponse(status_code=403, content={"ok": False, "error": str(pe)})
-    except Exception:
-        pass
+    # 2. Fallback para utilizadores locais da aplicação (apenas Windows local, nunca em Cloud Zero-Storage)
+    if not workspace_context.is_cloud_zero_storage():
+        try:
+            res_loc = auth_manager.autenticar_utilizador(u_clean, p_clean)
+            if res_loc and res_loc.get("user"):
+                ul = res_loc["user"]
+                role_loc = str(ul.get("role") or "subutilizador").lower()
+                mapped_role = "DEV" if role_loc == "superadmin" else "ADMIN" if role_loc == "admin" else "OPERADOR"
+                return {
+                    "ok": True,
+                    "token": res_loc["token"],
+                    "user": {
+                        "id": str(ul.get("id") or "1"),
+                        "username": str(ul.get("username") or u_clean),
+                        "nome": str(ul.get("nome") or u_clean),
+                        "role": mapped_role,
+                        "email": str(ul.get("email") or ""),
+                        "session_context": "OFFICE",
+                    },
+                }
+        except PermissionError as pe:
+            return JSONResponse(status_code=403, content={"ok": False, "error": str(pe)})
+        except Exception:
+            pass
 
     return JSONResponse(status_code=401, content={"ok": False, "error": "Credenciais inválidas ou utilizador não encontrado."})
 
@@ -6299,16 +6682,19 @@ def api_unified_evo_token_activate(req: UnifiedEvoActivateRequest, request: Requ
             u11 = data["user"]
             tok_11 = str(data.get("token") or "").strip()
             offices_11 = data.get("offices") or u11.get("offices") or []
-            if offices_11:
-                try:
-                    auth_manager.sincronizar_escritorios_licenciados(offices_11)
-                except Exception:
-                    pass
-            tok = auth_manager._criar_sessao({
-                "id": 1,
-                "username": str(u11.get("username") or req.username or req.email),
-                "role": "admin",
-            }, token_override=tok_11 or None)
+            if not workspace_context.is_cloud_zero_storage():
+                if offices_11:
+                    try:
+                        auth_manager.sincronizar_escritorios_licenciados(offices_11)
+                    except Exception:
+                        pass
+                tok = auth_manager._criar_sessao({
+                    "id": 1,
+                    "username": str(u11.get("username") or req.username or req.email),
+                    "role": "admin",
+                }, token_override=tok_11 or None)
+            else:
+                tok = tok_11
             data["token"] = tok
             data["offices"] = offices_11
         return JSONResponse(status_code=r.status_code, content=data)
@@ -6333,7 +6719,7 @@ def api_unified_evo_verify(request: Request, token: str = ""):
                 timeout=3,
             )
             data = r.json()
-            if r.status_code == 200 and data.get("ok"):
+            if r.status_code == 200 and data.get("ok") and not workspace_context.is_cloud_zero_storage():
                 offices_11 = data.get("offices") or (data.get("user") or {}).get("offices") or []
                 if offices_11:
                     try:
@@ -6342,7 +6728,11 @@ def api_unified_evo_verify(request: Request, token: str = ""):
                         pass
             return JSONResponse(status_code=r.status_code, content=data)
         except Exception:
-            pass
+            if workspace_context.is_cloud_zero_storage():
+                return JSONResponse(status_code=503, content={"ok": False, "error": "Não foi possível validar a sessão no servidor central."})
+
+    if workspace_context.is_cloud_zero_storage():
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Sessão inválida ou expirada."})
 
     u_loc = auth_manager.validar_token_sessao(raw_tok)
     if not u_loc:
@@ -6377,7 +6767,7 @@ def api_unified_evo_client_state(request: Request, token: str = ""):
             timeout=4,
         )
         data = r.json()
-        if r.status_code == 200 and data.get("ok") and data.get("offices"):
+        if r.status_code == 200 and data.get("ok") and data.get("offices") and not workspace_context.is_cloud_zero_storage():
             try:
                 auth_manager.sincronizar_escritorios_licenciados(data["offices"])
             except Exception:
@@ -6399,7 +6789,7 @@ def api_unified_evo_client_office_update(body: Dict[str, Any], request: Request)
             timeout=4,
         )
         data = r.json()
-        if r.status_code == 200 and data.get("ok") and data.get("offices"):
+        if r.status_code == 200 and data.get("ok") and data.get("offices") and not workspace_context.is_cloud_zero_storage():
             try:
                 auth_manager.sincronizar_escritorios_licenciados(data["offices"])
             except Exception:
@@ -6555,16 +6945,19 @@ def api_unified_evo_transfer_confirm(body: Dict[str, Any], request: Request):
             local_role = "superadmin" if role_raw == "DEV" else "admin" if role_raw == "ADMIN" else "subutilizador"
             tok_11 = str(data.get("token") or "").strip()
             offices_11 = data.get("offices") or u11.get("offices") or []
-            if offices_11:
-                try:
-                    auth_manager.sincronizar_escritorios_licenciados(offices_11)
-                except Exception:
-                    pass
-            tok = auth_manager._criar_sessao({
-                "id": 1,
-                "username": str(u11.get("username") or u11.get("email") or ""),
-                "role": local_role,
-            }, token_override=tok_11 or None)
+            if not workspace_context.is_cloud_zero_storage():
+                if offices_11:
+                    try:
+                        auth_manager.sincronizar_escritorios_licenciados(offices_11)
+                    except Exception:
+                        pass
+                tok = auth_manager._criar_sessao({
+                    "id": 1,
+                    "username": str(u11.get("username") or u11.get("email") or ""),
+                    "role": local_role,
+                }, token_override=tok_11 or None)
+            else:
+                tok = tok_11
             data["token"] = tok
             data["offices"] = offices_11
         return JSONResponse(status_code=r.status_code, content=data)
@@ -6574,7 +6967,9 @@ def api_unified_evo_transfer_confirm(body: Dict[str, Any], request: Request):
 
 @app.post("/api/app/auth/login")
 def api_app_login(req: AppLoginRequest):
-    """Autentica o utilizador ou aceita a Chave Mestra do Superadministrador."""
+    """Autentica o utilizador local (bloqueado em Cloud Zero-Storage)."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="Autenticação local desativada em Cloud Zero-Storage.")
     try:
         res = auth_manager.autenticar_utilizador(req.username, req.password)
         if not res:
@@ -6603,6 +6998,15 @@ def api_app_logout(token: Optional[str] = None):
 @app.get("/api/app/auth/me")
 def api_app_obter_me(token: Optional[str] = None):
     """Devolve os dados do utilizador autenticado pelo token."""
+    if workspace_context.is_cloud_zero_storage():
+        auth_u = workspace_context.get_current_auth_user()
+        if not auth_u:
+            raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.")
+        return {
+            "status": "sucesso",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "user": auth_u
+        }
     user = auth_manager.validar_token_sessao(token)
     if not user:
         raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.")
@@ -6615,6 +7019,8 @@ def api_app_obter_me(token: Optional[str] = None):
 @app.get("/api/app/users")
 def api_app_listar_users():
     """Lista todos os utilizadores da aplicação (excluindo contas técnicas de sistema/superadmin)."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="Gestão de utilizadores efetuada pelo Portal Central de Identidade.")
     users = auth_manager.listar_utilizadores(incluir_superadmin=False)
     return {
         "status": "sucesso",
@@ -6628,6 +7034,8 @@ def api_app_criar_user(
     operador: Any = Depends(validar_operador_admin)
 ):
     """Cria um novo utilizador local com validação estrita de RBAC e centros permitidos."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="Gestão de utilizadores efetuada pelo Portal Central de Identidade.")
     try:
         user = auth_manager.criar_utilizador(
             username=req.username,
@@ -6656,6 +7064,8 @@ def api_app_atualizar_user(
     operador: Any = Depends(validar_operador_admin)
 ):
     """Atualiza dados, perfil, centros permitidos ou palavra-passe de um utilizador com validação RBAC."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="Gestão de utilizadores efetuada pelo Portal Central de Identidade.")
     try:
         auth_manager.atualizar_utilizador(
             user_id=user_id,
@@ -6684,6 +7094,8 @@ def api_app_eliminar_user(
     operador: Any = Depends(validar_operador_admin)
 ):
     """Elimina um utilizador com validação RBAC e proteção contra auto-eliminação."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="Gestão de utilizadores efetuada pelo Portal Central de Identidade.")
     try:
         auth_manager.eliminar_utilizador(user_id, caller_token=operador.get("token"))
         return {
@@ -6801,6 +7213,8 @@ def api_evo06_start_hub_report_logic(payload: StartHubSubmitLogicReportPayload):
 @app.post("/api/app/setup-inicial")
 def api_app_setup_inicial(req: AppSetupInicialRequest):
     """Cria o primeiro Administrador local da entidade."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="Configuração inicial gerida pelo Portal Central de Identidade.")
     try:
         res = auth_manager.executar_setup_inicial(
             nome_admin=req.nome_admin,
@@ -6893,6 +7307,139 @@ def api_sincronizar_anuladas_lote(req: SincronizarAnuladasLoteRequest, lic = Dep
         mod_clean = str(req.modulo or "ambos").strip().lower()
         modulos = ["compras", "vendas"] if mod_clean in ("ambos", "tudo", "all") else (["vendas"] if mod_clean == "vendas" else ["compras"])
 
+        if workspace_context.is_cloud_zero_storage():
+            _limpar_jobs_antigos()
+            if not nifs_alvo:
+                raise HTTPException(status_code=400, detail="Nenhuma entidade com credenciais AT encontrada para verificar anuladas.")
+            if iniciar_sessao_efatura is None:
+                _tentar_importar_scraper()
+            if iniciar_sessao_efatura is None:
+                _garantir_scraper_pronto()
+
+            ws_client_id = workspace_context.get_current_ws_id()
+            job_id = str(uuid.uuid4())
+            total_passos = max(1, len(nifs_alvo) * len(modulos))
+            JOBS[job_id] = {
+                "ws_id": ws_client_id,
+                "status": "em_progresso",
+                "nif": nifs_alvo[0],
+                "nome_empresa": f"{len(nifs_alvo)} entidade(s)",
+                "mensagem": f"A sincronizar faturas anuladas ({len(nifs_alvo)} entidade(s))...",
+                "volume_estimado": len(nifs_alvo) * 5,
+                "docs_atuais": 0,
+                "total_esperado": total_passos,
+                "percentagem": 2,
+                "fase": "anuladas",
+                "parcial": False,
+                "cancelar": False,
+                "total_documentos": 0,
+                "dados_legacy_horizontal": None,
+                "dados_novos_vertical": None,
+                "erro": None,
+                "tipo_erro": None,
+                "badge_label": None,
+                "criado_em": time.time(),
+            }
+
+            def _run_anuladas_lote_cloud():
+                total_anuladas_encontradas = 0
+                total_linhas_detalhes = 0
+                concluidos = 0
+                try:
+                    for n_alvo in nifs_alvo:
+                        for m_str in modulos:
+                            if JOBS.get(job_id, {}).get("cancelar"):
+                                if job_id in JOBS:
+                                    JOBS[job_id]["status"] = "cancelado"
+                                    JOBS[job_id]["mensagem"] = "Cancelado pelo utilizador."
+                                return
+                            nome_cli = mapa_nomes.get(n_alvo, n_alvo)
+                            if job_id in JOBS:
+                                JOBS[job_id]["mensagem"] = f"[{nome_cli or n_alvo}] A verificar anuladas ({m_str})..."
+                                JOBS[job_id]["percentagem"] = min(98, max(2, int((concluidos / total_passos) * 100)))
+                            sub_c, pwd_c = pb_client.get_credentials(n_alvo)
+                            if not pwd_c:
+                                concluidos += 1
+                                continue
+                            login_user = str(sub_c).strip() if sub_c and str(sub_c).strip() else n_alvo
+                            is_vendas_m = m_str == "vendas"
+                            acq = False
+                            sess = None
+                            try:
+                                CONCURRENCY_MANAGER.acquire(volume=10, cancel_fn=lambda: JOBS.get(job_id, {}).get("cancelar", False), client_id=ws_client_id)
+                                acq = True
+                                if JOBS.get(job_id, {}).get("cancelar"):
+                                    continue
+                                sess = iniciar_sessao_efatura(
+                                    nif=login_user,
+                                    password=pwd_c,
+                                    headless=True,
+                                    canal="chromium",
+                                )
+                                extrator_m = EFaturaVendas(sess, visual=False) if is_vendas_m else EFaturaCompras(sess, visual=False)
+                                fats_anul = extrator_m.consultar_anuladas(d_ini, d_fim)
+                                if fats_anul:
+                                    total_anuladas_encontradas += len(fats_anul)
+                                    pb_client.upsert_anuladas_direto(n_alvo, fats_anul, modulo=m_str)
+                                    ext_det = ExtratorDetalhes(sess, max_workers=4)
+                                    lins = ext_det.extrair_detalhes_lote(
+                                        documentos=fats_anul,
+                                        nif_titular=n_alvo,
+                                        tipo_fluxo=m_str,
+                                    )
+                                    if lins:
+                                        total_linhas_detalhes += len(lins)
+                                        v_rows_m = [l.to_dict() for l in lins]
+                                        if is_vendas_m:
+                                            pb_client.upsert_vendas_direto(v_rows_m)
+                                        else:
+                                            pb_client.upsert_faturas_direto(v_rows_m)
+                                        cofre_ledger.CofreEstadosLedger().registar_e_confrontar(v_rows_m, nif_titular=n_alvo)
+                                    else:
+                                        cofre_ledger.CofreEstadosLedger().registar_e_confrontar(fats_anul, nif_titular=n_alvo)
+                            except Exception as e_item:
+                                LOGGER.warning(f"[Anuladas Lote Cloud] Falha no NIF {n_alvo} ({m_str}): {e_item}")
+                            finally:
+                                if sess is not None:
+                                    try:
+                                        sess.close()
+                                    except Exception:
+                                        pass
+                                if acq:
+                                    CONCURRENCY_MANAGER.release(client_id=ws_client_id)
+                                pwd_c = None
+                            concluidos += 1
+                    if job_id in JOBS:
+                        JOBS[job_id]["status"] = "concluido"
+                        JOBS[job_id]["fase"] = "concluido"
+                        JOBS[job_id]["percentagem"] = 100
+                        JOBS[job_id]["docs_atuais"] = total_anuladas_encontradas
+                        JOBS[job_id]["total_documentos"] = total_anuladas_encontradas
+                        JOBS[job_id]["total_linhas_vertical"] = total_linhas_detalhes
+                        JOBS[job_id]["mensagem"] = f"Concluído: {total_anuladas_encontradas} fatura(s) anulada(s) detetada(s)."
+                except Exception as exc_lote:
+                    LOGGER.error(f"[Anuladas Lote Cloud] Erro no job {job_id[:8]}: {exc_lote}")
+                    if job_id in JOBS:
+                        JOBS[job_id]["status"] = "erro"
+                        JOBS[job_id]["erro"] = str(exc_lote)
+                        JOBS[job_id]["mensagem"] = str(exc_lote)
+
+            threading.Thread(
+                target=workspace_context.wrap_thread_target(_run_anuladas_lote_cloud),
+                daemon=True,
+            ).start()
+
+            return {
+                "status": "iniciado",
+                "assinatura": "API Importador e-Fatura Gexcel",
+                "job_id": job_id,
+                "tarefas_agendadas": total_passos,
+                "total_nifs": len(nifs_alvo),
+                "modo": "cloud_async",
+                "periodo": {"data_inicio": d_ini, "data_fim": d_fim},
+                "mensagem": f"Sincronização de anuladas iniciada ({len(nifs_alvo)} entidade(s)).",
+            }
+
         tarefas_criadas = 0
         for n_alvo in nifs_alvo:
             for m_str in modulos:
@@ -6917,6 +7464,8 @@ def api_sincronizar_anuladas_lote(req: SincronizarAnuladasLoteRequest, lic = Dep
             "periodo": {"data_inicio": d_ini, "data_fim": d_fim},
             "mensagem": f"{tarefas_criadas} tarefa(s) de sincronização de anuladas adicionada(s) à fila."
         }
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Erro ao sincronizar lote de anuladas: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -7038,6 +7587,7 @@ def api_iniciar_extracao_rv(req: RecibosVerdesExtracaoRequest, lic = Depends(ver
 
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {
+        "ws_id": workspace_context.get_current_ws_id(),
         "status": "em_progresso",
         "nif": req.nif,
         "nome_empresa": req.nome_entidade or "",
@@ -7221,6 +7771,7 @@ def api_pendentes_recolher_lote(req: PendentesRecolherLoteRequest, lic = Depends
 
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {
+        "ws_id": workspace_context.get_current_ws_id(),
         "status": "em_progresso",
         "nif": nifs_alvo[0],
         "nome_empresa": f"{len(nifs_alvo)} contribuinte(s)",
@@ -7374,6 +7925,7 @@ def api_pendentes_submeter(req: PendentesSubmeterRequest, request: Request, lic 
         nifs_ensaio = sorted({d["nif_cliente"] for d in docs_prontos})
         job_id = str(uuid.uuid4())
         JOBS[job_id] = {
+            "ws_id": workspace_context.get_current_ws_id(),
             "status": "em_progresso",
             "nif": nifs_ensaio[0] if nifs_ensaio else "",
             "nome_empresa": f"{len(nifs_ensaio)} contribuinte(s)",
@@ -7446,6 +7998,7 @@ def api_pendentes_submeter(req: PendentesSubmeterRequest, request: Request, lic 
 
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {
+        "ws_id": workspace_context.get_current_ws_id(),
         "status": "em_progresso",
         "nif": reg_termo["nifs"][0] if reg_termo["nifs"] else "",
         "nome_empresa": f"{len(reg_termo['nifs'])} contribuinte(s)",
@@ -7497,7 +8050,7 @@ def api_pendentes_submeter(req: PendentesSubmeterRequest, request: Request, lic 
 def api_pendentes_ensaio_status(job_id: str):
     """Devolve estado, transmissao visual e capturas completas do Ensaio Visual DEV na AT."""
     job = JOBS.get(job_id)
-    if not job:
+    if not job or not _job_pertence_workspace(job):
         raise HTTPException(status_code=404, detail="Sessão de ensaio visual não encontrada ou expirada.")
     return {
         "status": job.get("status", "em_progresso"),
@@ -7580,6 +8133,13 @@ class AbrirExploradorRequest(BaseModel):
 @app.post("/api/sistema/abrir-explorador")
 def api_abrir_explorador_windows(req: AbrirExploradorRequest):
     """Abre a pasta no Explorador do Windows ou seleciona o ficheiro indicado."""
+    if sys.platform != "win32" or workspace_context.is_cloud_zero_storage():
+        return {
+            "status": "indisponivel_cloud",
+            "origem": "cloud",
+            "assinatura": "API Importador e-Fatura Gexcel",
+            "mensagem": "A abertura direta do Explorador requer a Ponte Local Windows ativa.",
+        }
     caminho_raw = str(req.caminho or "").strip()
     if not caminho_raw:
         raise HTTPException(status_code=400, detail="Caminho vazio.")
@@ -7610,6 +8170,8 @@ def api_abrir_explorador_windows(req: AbrirExploradorRequest):
 @app.post("/api/sistema/shutdown")
 def api_sistema_shutdown():
     """Permite aos clientes (VBA / Desktop) solicitar um encerramento limpo do motor."""
+    if workspace_context.is_cloud_zero_storage():
+        raise HTTPException(status_code=403, detail="O encerramento remoto do servidor está bloqueado em modo Cloud.")
     def _graceful_exit():
         time.sleep(0.5)
         LOGGER.info("Encerramento limpo solicitado via API.")

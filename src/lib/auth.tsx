@@ -4,6 +4,9 @@ import {
   sincronizarLocalFsComAppConfig,
   sincronizarEscritoriosLocaisComLicenca,
   selecionarLocalFsCentroAtivo,
+  limparCredenciaisTemporariasIdb,
+  resetarCacheHidratacaoNifs,
+  hidratarSessaoIsoladaLocal,
 } from './localFsBridge';
 import {
   clearSharedSsoCookie,
@@ -277,6 +280,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearSessionState = useCallback(() => {
     clearSharedSsoCookie();
+    resetarCacheHidratacaoNifs();
+    void limparCredenciaisTemporariasIdb();
     setToken(null);
     setCurrentUser(null);
     setLicensedOffices([]);
@@ -356,7 +361,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!savedEvo) {
         clearSessionState();
         if (!cancel) setLoading(false);
-        refreshConfig();
         return;
       }
 
@@ -432,6 +436,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        await hidratarSessaoIsoladaLocal(true).catch(() => false);
+      }
       await refreshConfig();
       if (!cancel) setLoading(false);
     }
@@ -479,6 +486,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setCurrentUser(usr);
         applyLicensedOfficesState(offs, cc);
         setShowLoginModal(false);
+        if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+          await hidratarSessaoIsoladaLocal(true).catch(() => false);
+        }
         await refreshConfig();
         return { success: true };
       }
