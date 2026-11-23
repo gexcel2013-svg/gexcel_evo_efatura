@@ -351,7 +351,12 @@ function AppContent() {
         let localBridgeOk = false;
         if (bridgeSettled.status === 'fulfilled' && bridgeSettled.value.ok) {
           const bData = await bridgeSettled.value.json().catch(() => null);
-          localBridgeOk = Boolean(bData && bData.status === 'ok');
+          localBridgeOk = Boolean(
+            bData &&
+            bData.status === 'ok' &&
+            bData.signature === 'Gexcel SafeDrive Bridge' &&
+            bData.cloud_mode !== true
+          );
         }
 
         if (cancel) return;

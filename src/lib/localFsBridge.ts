@@ -88,7 +88,7 @@ export function obterWorkspaceIdIsolado(): string {
       return `sbx_${sbx.sandboxId}`;
     }
     const centroId =
-      (localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || readSharedCentroMeta()?.id || 'escritorio-principal').trim() ||
+      (readSharedCentroMeta()?.id || localStorage.getItem(ACTIVE_ID_STORAGE_KEY) || 'escritorio-principal').trim() ||
       'escritorio-principal';
     return getOrCreateSharedWorkspaceId(centroId);
   } catch {

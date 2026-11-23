@@ -324,8 +324,9 @@ if (typeof window !== 'undefined') {
 
     const matchPb = rawUrl.match(LOCAL_PB_PREFIX);
     const isLocalOnly = new Headers(init?.headers || undefined).get('X-Evo-Local-Only') === '1';
-    if (matchPb && isCloudHost && !isLocalOnly) {
-      const pathPart = matchPb[3] || '/';
+    const pbPathPart = matchPb ? matchPb[3] || '/' : '';
+    if (matchPb && isCloudHost && !isLocalOnly && !pbPathPart.startsWith('/api/bridge/health')) {
+      const pathPart = pbPathPart;
       try {
         const cloudPbRes = await origFetch(pathPart, withWorkspaceHeader(init));
         if (cloudPbRes.ok) {

@@ -6245,9 +6245,9 @@ def api_descarregar_instalador_centro_dados(
     """
     if workspace_context.is_cloud_zero_storage():
         raise HTTPException(status_code=403, detail="Instalador local desativado na arquitetura Web Cloud Zero-Storage.")
-    nome_clean = (nome or "Escritório Principal").replace('"', '').strip()
-    p_evo_clean = (pasta_evogex or r"C:\Dados_evoGex").replace('"', '').strip()
-    p_ant_clean = (pasta_gexcel_antiga or "").replace('"', '').strip()
+    nome_clean = re.sub(r'[\r\n&|<>%^;!`"]', '', str(nome or "Escritório Principal")).strip() or "Escritório Principal"
+    p_evo_clean = re.sub(r'[\r\n&|<>%^;!`"]', '', str(pasta_evogex or r"C:\Dados_evoGex")).strip() or r"C:\Dados_evoGex"
+    p_ant_clean = re.sub(r'[\r\n&|<>%^;!`"]', '', str(pasta_gexcel_antiga or "")).strip()
 
     bat_lines = [
         "@echo off",
@@ -7907,6 +7907,11 @@ def api_pendentes_validar(req: PendentesValidarRequest):
 @app.post("/api/pendentes/submeter")
 def api_pendentes_submeter(req: PendentesSubmeterRequest, request: Request, lic = Depends(verificar_licenca_ativa)):
     """Regista o Termo de Responsabilidade legal e dispara a submissão dos documentos validados na AT (ou Ensaio Visual DEV sem submeter)."""
+    if workspace_context.resolve_sandbox_dir() is not None or workspace_context.get_current_ws_id().startswith("sbx_"):
+        raise HTTPException(
+            status_code=403,
+            detail="Ambiente temporário de suporte em modo só de leitura: submissões fiscais na AT bloqueadas.",
+        )
     _limpar_jobs_antigos()
     if iniciar_sessao_efatura is None:
         _tentar_importar_scraper()
@@ -8134,12 +8139,10 @@ class AbrirExploradorRequest(BaseModel):
 def api_abrir_explorador_windows(req: AbrirExploradorRequest):
     """Abre a pasta no Explorador do Windows ou seleciona o ficheiro indicado."""
     if sys.platform != "win32" or workspace_context.is_cloud_zero_storage():
-        return {
-            "status": "indisponivel_cloud",
-            "origem": "cloud",
-            "assinatura": "API Importador e-Fatura Gexcel",
-            "mensagem": "A abertura direta do Explorador requer a Ponte Local Windows ativa.",
-        }
+        raise HTTPException(
+            status_code=403,
+            detail="A abertura direta do Explorador está bloqueada em modo Cloud.",
+        )
     caminho_raw = str(req.caminho or "").strip()
     if not caminho_raw:
         raise HTTPException(status_code=400, detail="Caminho vazio.")
@@ -8154,13 +8157,14 @@ def api_abrir_explorador_windows(req: AbrirExploradorRequest):
             elif p.parent.exists():
                 os.startfile(str(p.parent))
             else:
-                p.mkdir(parents=True, exist_ok=True)
-                os.startfile(str(p))
+                raise HTTPException(status_code=404, detail="A pasta indicada não existe no computador local.")
         return {
             "status": "sucesso",
             "assinatura": "API Importador e-Fatura Gexcel",
             "caminho": str(p)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Erro ao abrir explorador em {caminho_raw}: {e}")
         raise HTTPException(status_code=500, detail=f"Não foi possível abrir o Explorador: {e}")
@@ -8170,7 +8174,7 @@ def api_abrir_explorador_windows(req: AbrirExploradorRequest):
 @app.post("/api/sistema/shutdown")
 def api_sistema_shutdown():
     """Permite aos clientes (VBA / Desktop) solicitar um encerramento limpo do motor."""
-    if workspace_context.is_cloud_zero_storage():
+    if workspace_context.is_cloud_zero_storage() or sys.platform != "win32":
         raise HTTPException(status_code=403, detail="O encerramento remoto do servidor está bloqueado em modo Cloud.")
     def _graceful_exit():
         time.sleep(0.5)

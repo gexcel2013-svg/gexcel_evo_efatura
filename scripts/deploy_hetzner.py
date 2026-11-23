@@ -78,6 +78,27 @@ def build_caddy_site_block(domain: str, web_root: str, on_demand_tls: bool = Tru
     header @html_or_ver Pragma "no-cache"
     header @html_or_ver Expires "0"
 
+    handle /api/admins* {{
+        respond 403
+    }}
+    handle /api/superusers* {{
+        respond 403
+    }}
+    handle /api/files* {{
+        respond 403
+    }}
+    handle /api/backups* {{
+        respond 403
+    }}
+    handle /api/logs* {{
+        respond 403
+    }}
+    handle /api/settings* {{
+        respond 403
+    }}
+    handle /_/* {{
+        respond 403
+    }}
     handle /api/collections/* {{
         reverse_proxy 127.0.0.1:8095
     }}
