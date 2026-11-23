@@ -398,7 +398,7 @@ if sys.platform != "win32":
         pass
 
 API_VERSION = os.environ.get("GEXCEL_EFATURA_VERSION", "4.2.30")
-BUILD_NUMBER = 54
+BUILD_NUMBER = 55
 _PROCESS_BOOT_STR = datetime.now().strftime("%d/%m %H:%M")
 _PROCESS_BOOT_SHORT = datetime.now().strftime("%H:%M")
 _PROCESS_MODE = "EXE" if getattr(sys, "frozen", False) else "DEV"
@@ -428,7 +428,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 _ALLOWED_ORIGIN_RE = re.compile(
-    r"^(https?://([a-zA-Z0-9-]+\.)?(evogex\.com|gexcelapps\.com|localhost|127\.0\.0\.1)(:\d+)?|tauri://localhost|https://tauri\.localhost)$",
+    r"^(https?://(([a-zA-Z0-9-]+\.)*(evogex\.com|gexcelapps\.com)|localhost|127\.0\.0\.1)(:\d+)?|tauri://localhost|https://tauri\.localhost)$",
     re.IGNORECASE,
 )
 _CLOUD_PUBLIC_API_PATHS = frozenset({
