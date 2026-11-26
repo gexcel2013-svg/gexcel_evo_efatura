@@ -89,6 +89,7 @@ export interface AppUser {
   office_id?: string;
   office_ids?: string[];
   centros_permitidos?: string[];
+  allowed_apps?: string[];
   session_context?: 'OFFICE' | 'TELEWORK';
   telework_expires_at?: string;
   telework?: UserTeleworkInfo;

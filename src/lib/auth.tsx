@@ -42,6 +42,7 @@ interface AuthContextType {
   isSubutilizador: boolean;
   isTeleworkExternal: boolean;
   teleworkExpiresAt: string;
+  moduleAccessDenied: string | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -61,6 +62,7 @@ interface StoredEvoSession {
   session_context?: 'OFFICE' | 'TELEWORK';
   telework_expires_at?: string;
   offices?: LicensedOfficeInfo[];
+  allowed_apps?: string[];
   token: string;
 }
 
@@ -96,6 +98,9 @@ function decodeGxtkSsoToken(rawToken: string): StoredEvoSession | null {
       session_context: payload.ctx === 'TELEWORK' ? 'TELEWORK' : 'OFFICE',
       telework_expires_at: String(payload.telework_expires_at || ''),
       offices: Array.isArray(payload.offices) ? (payload.offices as LicensedOfficeInfo[]) : undefined,
+      allowed_apps: Array.isArray(payload.allowed_apps)
+        ? (payload.allowed_apps as unknown[]).map(a => String(a).trim().toUpperCase()).filter(Boolean)
+        : undefined,
       token: clean,
     };
   } catch {
@@ -221,6 +226,7 @@ function mapEvoSessionToAppUser(u: StoredEvoSession): AppUser {
     session_context: u.session_context || 'OFFICE',
     telework_expires_at: u.telework_expires_at || '',
     centros_permitidos: u.offices?.length ? u.offices.map(o => o.officeId) : undefined,
+    allowed_apps: Array.isArray(u.allowed_apps) ? u.allowed_apps : undefined,
     created_at: new Date().toISOString(),
   };
 }
@@ -245,6 +251,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState<boolean>(() => Boolean(initialSession));
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [showSetupWizard, setShowSetupWizard] = useState<boolean>(false);
+  const [moduleAccessDenied, setModuleAccessDenied] = useState<string | null>(null);
 
   const applyLicensedOfficesState = useCallback(
     (
@@ -282,6 +289,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearSharedSsoCookie();
     resetarCacheHidratacaoNifs();
     void limparCredenciaisTemporariasIdb();
+    setModuleAccessDenied(null);
     setToken(null);
     setCurrentUser(null);
     setLicensedOffices([]);
@@ -366,12 +374,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setLoading(true);
       try {
-        const res = await fetch(`/api/auth/verify?token=${encodeURIComponent(savedEvo.token)}`, {
+        const res = await fetch(`/api/auth/verify?token=${encodeURIComponent(savedEvo.token)}&appCodigo=EVO-06`, {
           headers: { Authorization: `Bearer ${savedEvo.token}` },
           cache: 'no-store',
         });
         if (res.status === 401 || res.status === 403) {
           const errData = await res.json().catch(() => null);
+          if (res.status === 403 && errData?.code === 'MODULE_ACCESS_DENIED') {
+            if (!cancel) {
+              setToken(savedEvo.token);
+              setCurrentUser(mapEvoSessionToAppUser(savedEvo));
+              setModuleAccessDenied(
+                String(errData.error || 'Esta conta não tem permissão para aceder ao Importador e-Fatura.')
+              );
+              setLoading(false);
+            }
+            return;
+          }
           if (errData?.error || errData?.detail) {
             try {
               sessionStorage.setItem('gexcel_evo06_security_kick', String(errData.error || errData.detail));
@@ -393,12 +412,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
           }
           if (!cancel && data?.ok && data?.user) {
+            setModuleAccessDenied(null);
             const offs: LicensedOfficeInfo[] = Array.isArray(data.offices)
               ? data.offices
               : Array.isArray(data.user.offices)
               ? data.user.offices
               : [];
             const cc = String(data.user.client_code || savedEvo.client_code || '').trim().toUpperCase();
+            const allowedApps: string[] | undefined = Array.isArray(data.allowed_apps)
+              ? data.allowed_apps.map((a: unknown) => String(a).trim().toUpperCase()).filter(Boolean)
+              : Array.isArray(data.user.allowed_apps)
+              ? data.user.allowed_apps.map((a: unknown) => String(a).trim().toUpperCase()).filter(Boolean)
+              : savedEvo.allowed_apps;
             const refreshedSession: StoredEvoSession = {
               id: data.user.id ?? savedEvo.id ?? 1,
               username: String(data.user.username || savedEvo.username).trim(),
@@ -410,6 +435,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               session_context: data.user.session_context === 'TELEWORK' ? 'TELEWORK' : (savedEvo.session_context || 'OFFICE'),
               telework_expires_at: String(data.user.telework_expires_at ?? savedEvo.telework_expires_at ?? ''),
               offices: offs.length > 0 ? offs : undefined,
+              allowed_apps: allowedApps,
               token: savedEvo.token,
             };
             const mapped = mapEvoSessionToAppUser(refreshedSession);
@@ -531,6 +557,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       persistSharedSsoFromSession(evoSess, extras?.preferredOfficeId);
       localStorage.setItem(USER_KEY, JSON.stringify(usr));
       localStorage.setItem(TOKEN_KEY, cleanTok);
+      setModuleAccessDenied(null);
       setCurrentUser({ ...usr, client_code: cc || usr.client_code });
       setToken(cleanTok);
       applyLicensedOfficesState(offs, cc, undefined, undefined, extras?.preferredOfficeId);
@@ -558,19 +585,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancel = false;
     const verificarHeartbeat = async () => {
       try {
-        const res = await fetch(`/api/auth/verify?token=${encodeURIComponent(token)}`, {
+        const res = await fetch(`/api/auth/verify?token=${encodeURIComponent(token)}&appCodigo=EVO-06`, {
           headers: { Authorization: `Bearer ${token}` },
           cache: 'no-store',
         });
         if (cancel) return;
         if (res.status === 401 || res.status === 403) {
           const d = await res.json().catch(() => null);
+          if (res.status === 403 && d?.code === 'MODULE_ACCESS_DENIED') {
+            setModuleAccessDenied(
+              String(d.error || 'Esta conta não tem permissão para aceder ao Importador e-Fatura.')
+            );
+            return;
+          }
           if (d?.error || d?.detail) {
             try {
               sessionStorage.setItem('gexcel_evo06_security_kick', String(d.error || d.detail));
             } catch {}
           }
           clearSessionState();
+        } else if (res.ok) {
+          setModuleAccessDenied(null);
         }
       } catch {
         // tolerar quebra transitória de rede
@@ -624,6 +659,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isSubutilizador,
         isTeleworkExternal,
         teleworkExpiresAt,
+        moduleAccessDenied,
       }}
     >
       {children}

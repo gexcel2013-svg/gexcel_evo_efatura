@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ShieldCheck, ExternalLink, LogOut } from 'lucide-react';
+import { ShieldCheck, ExternalLink, LogOut, Lock, ArrowLeft } from 'lucide-react';
 import { Sidebar, MobileBottomNav } from './components/Sidebar';
 import { InicioHubView } from './components/InicioHubView';
 import CommandCenter from './components/CommandCenter';
@@ -48,6 +48,7 @@ function AppContent() {
     logout,
     isTeleworkExternal,
     teleworkExpiresAt,
+    moduleAccessDenied,
   } = useAuth();
   const [centroKey, setCentroKey] = useState<number>(0);
   const [localFsRev, setLocalFsRev] = useState<number>(0);
@@ -498,6 +499,65 @@ function AppContent() {
     if (officeId) qs.set('office_id', officeId);
     window.location.href = `${base}/?${qs.toString()}`;
   };
+
+  if (moduleAccessDenied) {
+    return (
+      <div className="min-h-screen bg-background text-foreground relative flex flex-col justify-between overflow-hidden font-sans select-none">
+        <div className="workspace-ledger absolute inset-0 pointer-events-none" />
+        <header className="h-14 flex items-center justify-between px-6 relative z-10 border-b border-border bg-white dark:bg-[#0c1520]">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-[#0a1929] font-mono text-[11px] font-bold text-primary">
+              GE
+            </span>
+            <span className="font-mono text-xs font-semibold tracking-tight text-foreground">
+              evoGex.com · EVO-06
+            </span>
+          </div>
+          <span className="font-mono text-[11px] px-2.5 py-1 rounded-md border border-border bg-slate-50 dark:bg-[#081019] text-slate-700 dark:text-slate-300">
+            {currentUser.email || currentUser.username}
+          </span>
+        </header>
+        <main className="flex-1 flex items-center justify-center px-4 relative z-10 py-8">
+          <div className="w-full max-w-[480px] bg-white dark:bg-[#0c1520] border border-border rounded-xl p-7 shadow-2xl relative before:absolute before:left-0 before:top-6 before:h-5 before:w-0.5 before:bg-rose-600">
+            <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300 font-mono text-[11px] uppercase tracking-wider mb-2">
+              <Lock size={13} />
+              <span>Acesso Restrito ao Módulo</span>
+            </div>
+            <h1 className="font-display text-2xl font-light tracking-tight text-foreground">
+              Sem Permissão para o EVO e-Fatura
+            </h1>
+            <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed mt-2">
+              {moduleAccessDenied}
+            </p>
+            <div className="mt-6 flex flex-col sm:flex-row gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = getEvoSubdomainUrl('painel');
+                }}
+                className="flex-1 py-2.5 px-4 rounded-lg bg-[#0284c7] hover:bg-[#0369a1] text-white text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer transition-colors"
+              >
+                <ArrowLeft size={14} />
+                <span>Voltar ao Painel de Navegação</span>
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="py-2.5 px-4 rounded-lg border border-border bg-white dark:bg-[#0c1520] hover:border-rose-400 text-slate-700 dark:text-slate-200 text-xs font-mono flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <LogOut size={13} />
+                <span>Terminar Sessão</span>
+              </button>
+            </div>
+          </div>
+        </main>
+        <footer className="h-10 px-6 flex items-center justify-between text-[10px] font-mono text-slate-600 dark:text-slate-400 border-t border-border bg-white dark:bg-[#0c1520] relative z-10">
+          <span>Ecossistema Gexcel EVO · Zero-Storage Cloud</span>
+          <span>Controlo de Acesso por Módulo</span>
+        </footer>
+      </div>
+    );
+  }
 
   if (gateState === 'checking') {
     return (

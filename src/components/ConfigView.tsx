@@ -46,7 +46,15 @@ import {
   type LocalFsCentroConfig,
 } from '../lib/localFsBridge';
 
-type UserSortColumn = 'nome' | 'email' | 'role' | 'centros' | 'teletrabalho' | 'ativo' | 'ultimo_login';
+type UserSortColumn = 'nome' | 'email' | 'role' | 'centros' | 'modulos' | 'teletrabalho' | 'ativo' | 'ultimo_login';
+
+const DEFAULT_AVAILABLE_APPS: Array<{ code: string; label: string }> = [
+  { code: 'EVO-12', label: 'Entidades & Cofre' },
+  { code: 'EVO-07', label: 'Conciliação Global' },
+  { code: 'EVO-06', label: 'e-Fatura' },
+  { code: 'EVO-04', label: 'Portais & Submissões' },
+  { code: 'EVO-16', label: 'PDF Finder' },
+];
 
 function isWindowsPath(p?: string): boolean {
   if (!p) return false;
@@ -165,6 +173,8 @@ export function ConfigView() {
   const [formAtivo, setFormAtivo] = useState<boolean>(true);
   const [formTodosCentros, setFormTodosCentros] = useState<boolean>(true);
   const [formCentrosSelecionados, setFormCentrosSelecionados] = useState<string[]>([]);
+  const [availableApps, setAvailableApps] = useState<Array<{ code: string; label: string }>>(DEFAULT_AVAILABLE_APPS);
+  const [formAllowedApps, setFormAllowedApps] = useState<string[]>(() => DEFAULT_AVAILABLE_APPS.map(a => a.code));
   const [salvandoUser, setSalvandoUser] = useState<boolean>(false);
   const [erroFormUser, setErroFormUser] = useState<string | null>(null);
 
@@ -365,10 +375,18 @@ export function ConfigView() {
     if (typeof data.active_external_count === 'number') {
       setActiveExternalCount(data.active_external_count);
     }
+    if (Array.isArray(data.available_apps) && data.available_apps.length > 0) {
+      setAvailableApps(data.available_apps);
+    }
     const rawUsers = Array.isArray(data.users) ? data.users : [];
     const mapped: AppUser[] = rawUsers.map((u: any, idx: number) => {
       const roleUp = String(u.role || 'OPERADOR').toUpperCase();
       const offs = Array.isArray(u.officeIds) ? u.officeIds.map(String) : [];
+      const apps = roleUp === 'ADMIN'
+        ? ['*']
+        : Array.isArray(u.allowedApps) && u.allowedApps.length > 0
+        ? u.allowedApps.map((a: unknown) => String(a).trim().toUpperCase())
+        : ['*'];
       return {
         id: idx + 1,
         cloud_id: String(u.id),
@@ -382,6 +400,7 @@ export function ConfigView() {
         client_code: data.client_code,
         office_ids: offs,
         centros_permitidos: roleUp === 'ADMIN' ? ['*'] : offs,
+        allowed_apps: apps,
         telework: u.telework,
         ultimo_login: u.ultimo_login || '',
         created_at: u.created_at || '',
@@ -473,6 +492,15 @@ export function ConfigView() {
     return nomes.join(', ') || 'Sem escritório atribuído';
   }, [centrosDadosLista]);
 
+  const formatarModulosUser = useCallback((u: AppUser): string => {
+    if (u.role === 'admin' || u.role === 'superadmin') return 'Todos';
+    const apps = u.allowed_apps;
+    if (!Array.isArray(apps) || apps.length === 0 || apps.includes('*')) return 'Todos';
+    return apps
+      .map(c => availableApps.find(a => a.code === c.toUpperCase())?.label || c)
+      .join(', ');
+  }, [availableApps]);
+
   const utilizadoresOrdenados = useMemo(() => {
     const arr = [...utilizadores];
     arr.sort((a, b) => {
@@ -485,6 +513,8 @@ export function ConfigView() {
         cmp = a.role.localeCompare(b.role, 'pt');
       } else if (sortCol === 'centros') {
         cmp = formatarCentrosUser(a).localeCompare(formatarCentrosUser(b), 'pt');
+      } else if (sortCol === 'modulos') {
+        cmp = formatarModulosUser(a).localeCompare(formatarModulosUser(b), 'pt');
       } else if (sortCol === 'teletrabalho') {
         const orderMap: Record<string, number> = { ACTIVE: 1, PENDING_PAIRING: 2, FROZEN: 3, OFFICE_ONLY: 4 };
         const ma = a.role === 'admin' ? 0 : (orderMap[a.telework?.mode || 'OFFICE_ONLY'] ?? 5);
@@ -500,7 +530,7 @@ export function ConfigView() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return arr;
-  }, [utilizadores, sortCol, sortDir, formatarCentrosUser]);
+  }, [utilizadores, sortCol, sortDir, formatarCentrosUser, formatarModulosUser]);
 
   const handleCopiarCaminho = async (caminho: string, label: string) => {
     if (!caminho) return;
@@ -848,6 +878,7 @@ export function ConfigView() {
     setFormCentrosSelecionados(
       isCloudClient && activeCid ? [activeCid] : centrosDadosLista.map(c => c.id)
     );
+    setFormAllowedApps(availableApps.map(a => a.code));
     setErroFormUser(null);
     setModalUserAberto(true);
   };
@@ -886,6 +917,13 @@ export function ConfigView() {
     setFormAtivo(user.ativo);
     setFormTodosCentros(isAll);
     setFormCentrosSelecionados(isAll ? centrosDadosLista.map(c => c.id) : perms);
+    const allCodes = availableApps.map(a => a.code);
+    const userApps = user.allowed_apps;
+    setFormAllowedApps(
+      isAll || !Array.isArray(userApps) || userApps.length === 0 || userApps.includes('*')
+        ? allCodes
+        : userApps
+    );
     setErroFormUser(null);
     setModalUserAberto(true);
   };
@@ -893,6 +931,12 @@ export function ConfigView() {
   const toggleCentroUserCheckbox = (cid: string) => {
     setFormCentrosSelecionados(prev =>
       prev.includes(cid) ? prev.filter(x => x !== cid) : [...prev, cid]
+    );
+  };
+
+  const toggleAllowedAppCheckbox = (code: string) => {
+    setFormAllowedApps(prev =>
+      prev.includes(code) ? prev.filter(x => x !== code) : [...prev, code]
     );
   };
 
@@ -934,6 +978,17 @@ export function ConfigView() {
           setSalvandoUser(false);
           return;
         }
+        if (formRole === 'subutilizador' && formAtivo && formAllowedApps.length === 0) {
+          setErroFormUser('Selecione pelo menos 1 módulo autorizado para este operador.');
+          setSalvandoUser(false);
+          return;
+        }
+        const allowedAppsPayload =
+          formRole === 'admin'
+            ? ['*']
+            : formAllowedApps.length >= availableApps.length
+            ? ['*']
+            : formAllowedApps;
         if (!userEmEdicao && (!formPassword.trim() || formPassword.trim().length < 4)) {
           setErroFormUser('A palavra-passe deve ter pelo menos 4 caracteres.');
           setSalvandoUser(false);
@@ -953,6 +1008,7 @@ export function ConfigView() {
             password: formPassword.trim(),
             ativo: formAtivo,
             officeIds: officeIdsCloud,
+            allowedApps: allowedAppsPayload,
           }),
         });
         const data = await res.json().catch(() => null);
@@ -2127,6 +2183,9 @@ export function ConfigView() {
                     <th onClick={() => handleSortUsers('centros')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
                       Centros Autorizados {renderSortIndicator('centros')}
                     </th>
+                    <th onClick={() => handleSortUsers('modulos')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
+                      Módulos Autorizados {renderSortIndicator('modulos')}
+                    </th>
                     <th onClick={() => handleSortUsers('teletrabalho')} className="py-2 px-3 cursor-pointer hover:text-foreground transition">
                       Local / Teletrabalho {renderSortIndicator('teletrabalho')}
                     </th>
@@ -2142,7 +2201,7 @@ export function ConfigView() {
                 <tbody className="divide-y divide-slate-200 dark:divide-[#1b2b3d] bg-white dark:bg-[#0c1520]">
                   {utilizadoresOrdenados.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-6 text-center text-slate-600 dark:text-slate-400">
+                      <td colSpan={9} className="py-6 text-center text-slate-600 dark:text-slate-400">
                         Nenhum operador adicional registado. Clique em &ldquo;+ Adicionar Operador&rdquo; para criar acessos para a sua equipa.
                       </td>
                     </tr>
@@ -2178,6 +2237,24 @@ export function ConfigView() {
                           <span className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-sky-50 dark:bg-[#0a1929] text-slate-800 dark:text-slate-200 border border-sky-200 dark:border-sky-900">
                             {formatarCentrosUser(u)}
                           </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {u.role === 'admin' || !Array.isArray(u.allowed_apps) || u.allowed_apps.length === 0 || u.allowed_apps.includes('*') ? (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800">
+                              Todos
+                            </span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {u.allowed_apps.map(code => (
+                                <span
+                                  key={code}
+                                  className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-sky-50 dark:bg-[#0a1929] text-sky-900 dark:text-sky-200 border border-sky-300 dark:border-sky-800"
+                                >
+                                  {availableApps.find(a => a.code === code.toUpperCase())?.label || code}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </td>
                         <td className="py-2.5 px-3">
                           {(() => {
@@ -2658,6 +2735,64 @@ export function ConfigView() {
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {!isSub && isCloudClient && (
+                <div className="p-2.5 rounded bg-slate-50 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-foreground text-[11px]">
+                      Módulos Autorizados
+                    </span>
+                    {formRole === 'admin' ? (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200">
+                        Admin: todos os módulos
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setFormAllowedApps(availableApps.map(a => a.code))}
+                          className="text-[10px] font-mono text-[#0284c7] hover:underline cursor-pointer"
+                        >
+                          Todos
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormAllowedApps([])}
+                          className="text-[10px] font-mono text-slate-600 dark:text-slate-400 hover:underline cursor-pointer"
+                        >
+                          Limpar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {availableApps.map(appOpt => {
+                      const checked = formRole === 'admin' || formAllowedApps.includes(appOpt.code);
+                      return (
+                        <label
+                          key={appOpt.code}
+                          className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[11px] ${
+                            formRole === 'admin' ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'
+                          } ${
+                            checked
+                              ? 'bg-emerald-50 dark:bg-[#091e1a] border-emerald-400 dark:border-emerald-700 text-emerald-900 dark:text-emerald-100 font-medium'
+                              : 'bg-white dark:bg-[#0c1520] border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={formRole === 'admin'}
+                            checked={checked}
+                            onChange={() => toggleAllowedAppCheckbox(appOpt.code)}
+                            className="rounded border-slate-400 text-[#0284c7] focus:ring-[#0284c7]"
+                          />
+                          <span>{appOpt.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
