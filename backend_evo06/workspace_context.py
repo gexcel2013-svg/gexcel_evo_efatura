@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 _CTX_WS_ID: contextvars.ContextVar[str] = contextvars.ContextVar("evo_ws_id", default="")
+_CTX_RAW_WS_ID: contextvars.ContextVar[str] = contextvars.ContextVar("evo_raw_ws_id", default="")
 _CTX_AUTH_USER: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar("evo_auth_user", default=None)
 _WS_LOCK = threading.RLock()
 _WORKSPACES_RAM: Dict[str, Dict[str, Any]] = {}
@@ -165,6 +166,20 @@ def get_current_ws_id() -> str:
     return sanitize_ws_id(raw)
 
 
+def set_current_raw_ws_id(raw: Optional[str]) -> contextvars.Token:
+    wid = sanitize_ws_id(raw)
+    return _CTX_RAW_WS_ID.set(wid)
+
+
+def reset_current_raw_ws_id(token: contextvars.Token) -> None:
+    _CTX_RAW_WS_ID.reset(token)
+
+
+def get_current_raw_ws_id() -> str:
+    raw = _CTX_RAW_WS_ID.get("")
+    return sanitize_ws_id(raw)
+
+
 def _limpar_workspaces_expirados_locked(agora: Optional[float] = None) -> None:
     now = agora if agora is not None else time.time()
     expirados = [
@@ -185,18 +200,21 @@ def _limpar_workspaces_expirados_locked(agora: Optional[float] = None) -> None:
 
 
 def wrap_thread_target(fn: Callable[..., Any], ws_id: Optional[str] = None) -> Callable[..., Any]:
-    """Propaga o workspace_id e utilizador autenticado para threads e executors em segundo plano."""
+    """Propaga o workspace_id, workspace bruto e utilizador autenticado para threads e executors em segundo plano."""
     captured_ws = sanitize_ws_id(ws_id if ws_id is not None else get_current_ws_id())
+    captured_raw_ws = get_current_raw_ws_id()
     captured_user = get_current_auth_user()
 
     @wraps(fn)
     def _runner(*args: Any, **kwargs: Any) -> Any:
         tok_ws = set_current_ws_id(captured_ws)
+        tok_raw_ws = set_current_raw_ws_id(captured_raw_ws)
         tok_user = set_current_auth_user(captured_user)
         try:
             return fn(*args, **kwargs)
         finally:
             reset_current_auth_user(tok_user)
+            reset_current_raw_ws_id(tok_raw_ws)
             reset_current_ws_id(tok_ws)
 
     return _runner

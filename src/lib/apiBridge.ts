@@ -161,7 +161,7 @@ export function getMotorSource(): MotorSourceType {
   return currentMotorSource;
 }
 
-async function probeLocalMotor(): Promise<boolean> {
+export async function probeLocalMotor(): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   if (readSharedSandboxMeta()) {
     localMotorAvailable = false;
@@ -195,13 +195,19 @@ async function probeLocalMotor(): Promise<boolean> {
   return false;
 }
 
+const initialLocalProbePromise: Promise<boolean> =
+  typeof window !== 'undefined'
+    ? probeLocalMotor()
+    : Promise.resolve(false);
+
+export function aguardarSondaMotorLocal(): Promise<boolean> {
+  return initialLocalProbePromise;
+}
+
 if (typeof window !== 'undefined') {
   window.__GEXCEL_MOTOR_SOURCE__ = currentMotorSource;
   if (!isCloudHost) {
     // Em modo Desktop/Local monitoriza o motor local periodicamente
-    window.setTimeout(() => {
-      void probeLocalMotor();
-    }, 150);
     window.setInterval(() => {
       void probeLocalMotor();
     }, 15000);
@@ -299,6 +305,10 @@ if (typeof window !== 'undefined') {
     if (matchApi) {
       const pathPart = matchApi[2] || '/';
       const activeSbx = readSharedSandboxMeta();
+
+      if (isCloudHost && !activeSbx && !localMotorAvailable) {
+        await initialLocalProbePromise;
+      }
 
       if (!activeSbx && (localMotorAvailable || !isCloudHost)) {
         try {

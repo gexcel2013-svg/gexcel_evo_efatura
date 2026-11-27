@@ -39,6 +39,7 @@ sqlite3._orig_connect = _ORIG_SQLITE3_CONNECT
 sqlite3.connect = _auto_closing_sqlite_connect
 
 import base64
+import json
 import os
 import uuid
 import xml.etree.ElementTree as ET
@@ -1173,43 +1174,88 @@ def obter_dbs_gestor_entidades_evo12() -> List[str]:
     return [c for c in candidatos if c and os.path.exists(c)]
 
 
+def _ws_db_owner_autorizado(db_path: str) -> bool:
+    """Valida estritamente a propriedade multi-tenant (.owner) antes de aceitar uma BD partilhada EVO-12."""
+    try:
+        import workspace_context
+        if not workspace_context.is_cloud_zero_storage():
+            return True
+        auth_u = workspace_context.get_current_auth_user()
+    except Exception:
+        return False
+    role_u = str((auth_u or {}).get("role") or "").upper()
+    is_dev = role_u in ("DEV", "SUPERADMIN")
+    cc = str((auth_u or {}).get("client_code") or "").strip()
+    uid = str(
+        (auth_u or {}).get("id")
+        or (auth_u or {}).get("uid")
+        or (auth_u or {}).get("email")
+        or (auth_u or {}).get("username")
+        or ""
+    ).strip()
+    tenant_key = f"cli:{cc}" if cc else (f"usr:{uid}" if uid else "")
+    owner_file = db_path + ".owner"
+    if os.path.isfile(owner_file):
+        try:
+            with open(owner_file, "r", encoding="utf-8") as ofh:
+                owner = str((json.load(ofh) or {}).get("tenant_key") or "").strip()
+        except Exception:
+            owner = ""
+        if is_dev:
+            return True
+        return bool(owner and tenant_key and owner == tenant_key)
+    return is_dev
+
+
 def obter_db_workspace_evo12_ram(ws_id: Optional[str] = None) -> Optional[str]:
     """
     Localiza a base SQLite efemera em RAM do Gestor de Entidades (EVO-12) para este workspace_id.
-    Utiliza exatamente o mesmo hash SHA-256[:24] do motor gexcel_bridge_service na Hetzner.
+    Utiliza exatamente o mesmo hash SHA-256[:24] do motor gexcel_bridge_service na Hetzner
+    e valida estritamente o ficheiro .owner multi-tenant.
     """
     import tempfile
-    wid = ws_id
-    if not wid:
+    candidatos_ws: List[str] = []
+    if ws_id:
+        cw = str(ws_id).strip()
+        if cw and cw != "unlinked_empty":
+            candidatos_ws.append(cw)
+    else:
         try:
             import workspace_context
-            wid = workspace_context.get_current_ws_id()
+            raw_wid = (workspace_context.get_current_raw_ws_id() or "").strip()
+            namespaced_wid = (workspace_context.get_current_ws_id() or "").strip()
+            for cand in (raw_wid, namespaced_wid):
+                if cand and cand != "unlinked_empty" and cand not in candidatos_ws:
+                    candidatos_ws.append(cand)
         except Exception:
-            wid = ""
-    clean_id = (wid or "").strip()
-    if not clean_id or clean_id == "unlinked_empty":
+            pass
+
+    if not candidatos_ws:
         return None
-    try:
-        import workspace_context
-        sbx_dir = workspace_context.resolve_sandbox_dir(clean_id)
-        if sbx_dir is not None:
-            sbx_db = sbx_dir / "data.db"
-            if sbx_db.is_file() and sbx_db.stat().st_size > 0:
-                return str(sbx_db)
-            return None
-    except Exception:
-        pass
-    digest = hashlib.sha256(clean_id.encode("utf-8")).hexdigest()[:24]
-    candidatos = [
-        f"/dev/shm/evo12_workspaces/ws_{digest}.db",
-        os.path.join(tempfile.gettempdir(), "evo12_workspaces", f"ws_{digest}.db"),
-    ]
-    for p in candidatos:
+
+    for clean_id in candidatos_ws:
         try:
-            if p and os.path.exists(p) and os.path.getsize(p) > 0:
-                return p
+            import workspace_context
+            sbx_dir = workspace_context.resolve_sandbox_dir(clean_id)
+            if sbx_dir is not None:
+                sbx_db = sbx_dir / "data.db"
+                if sbx_db.is_file() and sbx_db.stat().st_size > 0 and _ws_db_owner_autorizado(str(sbx_db)):
+                    return str(sbx_db)
+                return None
         except Exception:
-            continue
+            pass
+        digest = hashlib.sha256(clean_id.encode("utf-8")).hexdigest()[:24]
+        candidatos = [
+            f"/dev/shm/evo12_workspaces/ws_{digest}.db",
+            os.path.join(tempfile.gettempdir(), "evo12_workspaces", f"ws_{digest}.db"),
+        ]
+        for p in candidatos:
+            try:
+                if p and os.path.exists(p) and os.path.getsize(p) > 0:
+                    if _ws_db_owner_autorizado(p):
+                        return p
+            except Exception:
+                continue
     return None
 
 

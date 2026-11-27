@@ -398,7 +398,7 @@ if sys.platform != "win32":
         pass
 
 API_VERSION = os.environ.get("GEXCEL_EFATURA_VERSION", "4.2.30")
-BUILD_NUMBER = 55
+BUILD_NUMBER = 56
 _PROCESS_BOOT_STR = datetime.now().strftime("%d/%m %H:%M")
 _PROCESS_BOOT_SHORT = datetime.now().strftime("%H:%M")
 _PROCESS_MODE = "EXE" if getattr(sys, "frozen", False) else "DEV"
@@ -560,11 +560,13 @@ async def add_pna_headers(request: Request, call_next):
     else:
         raw_ws = request.headers.get("x-evo-workspace-id") or request.query_params.get("ws_id") or ""
 
+    raw_client_ws = ""
     if is_cloud and auth_user is not None:
         cc = str(auth_user.get("client_code") or "").strip()
         uid_fallback = str(auth_user.get("id") or auth_user.get("email") or auth_user.get("username") or "").strip()
         tenant_key = f"cli:{cc}" if cc else (f"usr:{uid_fallback}" if uid_fallback else "")
         base_ws = workspace_context.sanitize_ws_id(raw_ws)
+        raw_client_ws = base_ws
         if base_ws.startswith("sbx_"):
             if not is_dev_user or not workspace_context.bind_or_verify_ws_owner(base_ws, tenant_key, is_dev=is_dev_user):
                 deny_resp = JSONResponse(
@@ -596,6 +598,7 @@ async def add_pna_headers(request: Request, call_next):
             raw_ws = base_ws
 
     tok_ws = workspace_context.set_current_ws_id(raw_ws)
+    tok_raw_ws = workspace_context.set_current_raw_ws_id(raw_client_ws)
     tok_auth = workspace_context.set_current_auth_user(auth_user)
     ws_empty_hdr = "0"
     try:
@@ -608,6 +611,7 @@ async def add_pna_headers(request: Request, call_next):
             ws_empty_hdr = "1"
     finally:
         workspace_context.reset_current_auth_user(tok_auth)
+        workspace_context.reset_current_raw_ws_id(tok_raw_ws)
         workspace_context.reset_current_ws_id(tok_ws)
     _apply_cors_headers(response, request)
     response.headers["X-Evo-Zero-Storage"] = "1" if is_cloud else "0"

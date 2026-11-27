@@ -17,10 +17,12 @@ import { AuthProvider, useAuth, EVO_SESSION_KEY } from './lib/auth';
 import { EvoLoginGate } from './components/EvoLoginGate';
 import { EvoGestorSetupGate } from './components/EvoGestorSetupGate';
 import type { CentroDadosItem } from './types/auth';
+import { aguardarSondaMotorLocal } from './lib/apiBridge';
 import {
   guardarLocalFsCentroConfig,
   obterLocalFsCentroConfig,
   obterLocalFsTodosCentrosMap,
+  obterWorkspaceIdIsolado,
   reconectarPastaEscritorioNoEfatura,
   selecionarLocalFsCentroAtivo,
   sugerirPastaEvogexPorEscritorio,
@@ -335,6 +337,8 @@ function AppContent() {
           if (!cancel) setActiveSandbox(null);
         }
 
+        await aguardarSondaMotorLocal();
+
         const [entSettled, bridgeSettled] = await Promise.allSettled([
           fetch('http://127.0.0.1:8015/api/entidades', { cache: 'no-store' }),
           fetch('http://127.0.0.1:8095/api/bridge/health', {
@@ -358,6 +362,40 @@ function AppContent() {
             bData.signature === 'Gexcel SafeDrive Bridge' &&
             bData.cloud_mode !== true
           );
+        }
+
+        if (
+          !cancel &&
+          entidadesTotal === 0 &&
+          localBridgeOk &&
+          window.__GEXCEL_MOTOR_SOURCE__ !== 'local'
+        ) {
+          try {
+            const expRes = await fetch('http://127.0.0.1:8095/api/bridge/workspace/export-sqlite', {
+              headers: { 'X-Evo-Local-Only': '1' },
+              signal: AbortSignal.timeout(4000),
+            });
+            const expData = await expRes.json().catch(() => null);
+            if (expData?.ok && expData?.sqlite_b64 && Number(expData?.entidades_count || 0) > 0) {
+              const hydRes = await fetch('/api/bridge/workspace/hydrate-sqlite', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Evo-Workspace-Id': obterWorkspaceIdIsolado(),
+                },
+                body: JSON.stringify({ sqlite_b64: expData.sqlite_b64 }),
+              });
+              if (hydRes.ok) {
+                const entRetry = await fetch('http://127.0.0.1:8015/api/entidades', { cache: 'no-store' });
+                if (entRetry.ok) {
+                  const entRetryData = await entRetry.json().catch(() => null);
+                  entidadesTotal = Number(entRetryData?.total ?? entRetryData?.entidades?.length ?? 0);
+                }
+              }
+            }
+          } catch {
+            // fallback para o porteiro normal
+          }
         }
 
         if (cancel) return;
