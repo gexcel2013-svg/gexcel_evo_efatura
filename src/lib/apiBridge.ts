@@ -196,7 +196,7 @@ export async function probeLocalMotor(): Promise<boolean> {
 }
 
 const initialLocalProbePromise: Promise<boolean> =
-  typeof window !== 'undefined'
+  typeof window !== 'undefined' && !isCloudHost
     ? probeLocalMotor()
     : Promise.resolve(false);
 

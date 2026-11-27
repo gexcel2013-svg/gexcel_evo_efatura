@@ -793,6 +793,8 @@ export async function garantirAcessoPastaLocalNoClique(): Promise<boolean> {
         const estadoLocal = await lerEstadoRealPastaLocalV4DeHandle(rootHandle);
         if (estadoLocal.autoritativo && estadoLocal.todosNifs.size === 0) {
           await chamarLimparBaseServidor('tipo=tudo');
+        } else {
+          await hidratarSessaoIsoladaLocal(true);
         }
       }
       return true;

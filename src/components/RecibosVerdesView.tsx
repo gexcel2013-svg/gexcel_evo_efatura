@@ -39,6 +39,7 @@ import {
   garantirAcessoPastaLocalNoClique,
   hidratarSqliteNifSobDemanda,
   hidratarTodosSqlitesNifsSobDemanda,
+  sincronizarSqlitesParaPastaLocal,
 } from '../lib/localFsBridge';
 
 interface Entidade {
@@ -486,6 +487,7 @@ export function RecibosVerdesView({
     setExtraindoLote(true);
     const poll = async () => {
       let algumTerminou = false;
+      const nifsConcluidos: string[] = [];
       const updates: Record<string, JobProgressRV> = {};
 
       await Promise.all(
@@ -497,6 +499,9 @@ export function RecibosVerdesView({
               const novoStatus = st.status === 'concluido' ? 'concluido' : st.status === 'erro' ? 'erro' : st.status === 'cancelado' ? 'cancelado' : 'em_progresso';
               if (novoStatus !== 'em_progresso') {
                 algumTerminou = true;
+              }
+              if (novoStatus === 'concluido' && job.nif) {
+                nifsConcluidos.push(job.nif);
               }
               updates[job.nif] = {
                 jobId: job.jobId,
@@ -516,6 +521,9 @@ export function RecibosVerdesView({
         setJobsPorNif(prev => ({ ...prev, ...updates }));
       }
       if (algumTerminou) {
+        if (nifsConcluidos.length > 0) {
+          await Promise.all(nifsConcluidos.map((n) => sincronizarSqlitesParaPastaLocal(n, false)));
+        }
         carregarMatriz();
         if (vista === 'documentos') carregarDocumentos();
       }
@@ -587,6 +595,9 @@ export function RecibosVerdesView({
     }
     if (!skipFsCheck && typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
       await garantirAcessoPastaLocalNoClique();
+    }
+    if (ent.nif) {
+      await hidratarSqliteNifSobDemanda(ent.nif);
     }
     try {
       const res = await fetch('http://127.0.0.1:8015/api/recibos-verdes/iniciar', {

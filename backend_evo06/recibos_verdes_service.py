@@ -19,14 +19,14 @@ import pb_client
 
 LOGGER = logging.getLogger("gexcel.efatura.rv")
 
-# Injetar caminhos dos motores SCR-01 e SCR-03
-_BASE_EVO_DIR = Path(__file__).resolve().parent.parent
-_SCR01_DIR = _BASE_EVO_DIR / "03.9_SCR_EVO_Scrapers_Gov" / "SCR-01_Logins_Gov"
-_SCR03_DIR = _BASE_EVO_DIR / "03.9_SCR_EVO_Scrapers_Gov" / "SCR-03_Scrap_RecibosVerdes"
-
-for _p in (_SCR03_DIR, _SCR01_DIR):
-    if _p.exists() and str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+# Injetar caminhos dos motores SCR-01 e SCR-03 (suporta Hetzner /opt/gexcel e workspace local 03_EVO_Ecossistema_Evo)
+_ROOT_HERE = Path(__file__).resolve()
+for _base_dir in (_ROOT_HERE.parent.parent, _ROOT_HERE.parent.parent.parent):
+    _scr03_dir = _base_dir / "03.9_SCR_EVO_Scrapers_Gov" / "SCR-03_Scrap_RecibosVerdes"
+    _scr01_dir = _base_dir / "03.9_SCR_EVO_Scrapers_Gov" / "SCR-01_Logins_Gov"
+    for _p in (_scr03_dir, _scr01_dir):
+        if _p.exists() and str(_p) not in sys.path:
+            sys.path.insert(0, str(_p))
 
 try:
     from models import DocumentoRV, LoteRecibosVerdes, serial_excel_para_iso
@@ -44,7 +44,7 @@ except Exception as _e_rv:
     SCRAPER_RV_DISPONIVEL = False
 
 _RV_DB_LOCK = threading.Lock()
-_BROWSER_SEMAPHORE = threading.Semaphore(4)
+_BROWSER_SEMAPHORE = threading.Semaphore(2 if sys.platform != "win32" else 4)
 
 
 def obter_pasta_bdsrv() -> Path:

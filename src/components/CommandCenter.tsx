@@ -40,6 +40,7 @@ import {
   abrirPastaNoExploradorNativo,
   garantirAcessoPastaLocalNoClique,
   hidratarSessaoIsoladaLocal,
+  hidratarSqliteNifSobDemanda,
   lerEstadoRealPastaLocalV4,
   purgarNifsAusentesNoServidor,
   sincronizarSqlitesParaPastaLocal,
@@ -1592,6 +1593,10 @@ export default function CommandCenter({
           [ent.id]: 'Cancelado: selecione a pasta Dados_evoGex local para gravar os ficheiros.'
         }));
         return;
+      }
+
+      if (getMotorSource() !== 'local' && nifParaEnviar) {
+        await hidratarSqliteNifSobDemanda(nifParaEnviar);
       }
 
       // Deteção prévia de senha inválida: ignora sem chamar a AT
