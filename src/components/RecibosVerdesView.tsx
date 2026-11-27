@@ -29,8 +29,11 @@ import {
   ArrowUpRight,
   Sparkles,
   SlidersHorizontal,
-  ChevronDown
+  ChevronDown,
+  ShieldCheck,
+  Lock
 } from 'lucide-react';
+import { type Entidade2faInfo } from './SmsBridgeCard';
 import { EmpresaSelectorCombobox } from './EmpresaSelectorCombobox';
 import { AssistenteImportacaoPanel } from './AssistenteImportacaoPanel';
 import {
@@ -168,6 +171,7 @@ export function RecibosVerdesView({
   const [entidades, setEntidades] = useState<Entidade[]>([]);
   const [matrizEmpresas, setMatrizEmpresas] = useState<Record<string, EmpresaMatrizRV>>({});
   const [senhasInvalidas, setSenhasInvalidas] = useState<Record<string, any>>({});
+  const [entidades2fa, setEntidades2fa] = useState<Record<string, Entidade2faInfo>>({});
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   const [nifMatrizFiltro, setNifMatrizFiltro] = useState<string>('');
   const [carregandoMatriz, setCarregandoMatriz] = useState<boolean>(false);
@@ -341,6 +345,7 @@ export function RecibosVerdesView({
         const data = await res.json();
         setMatrizEmpresas(data.empresas || {});
         setSenhasInvalidas(data.senhas_invalidas || {});
+        setEntidades2fa(data.entidades_2fa || {});
         const resumoLocal = obterResumoDestinosConfigurados();
         setPastaV4(isWindowsPath(data.pasta_v4) && !resumoLocal.evogexConfirmado ? data.pasta_v4 : resumoLocal.pastaV4);
         setPastaBdsrv(isWindowsPath(data.pasta_bdsrv) && !resumoLocal.antigaConfirmada ? data.pasta_bdsrv : resumoLocal.pastaBdsrv);
@@ -637,8 +642,33 @@ export function RecibosVerdesView({
     } catch {}
   };
 
+  const handleAcao2fa = async (nif: string, acao: 'autorizar_sms' | 'bloquear' | 'limpar') => {
+    if (!nif) return;
+    try {
+      const res = await fetch(`http://127.0.0.1:8015/api/entidades-2fa/${nif}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acao }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEntidades2fa(data.entidades_2fa || {});
+        if (acao !== 'bloquear') {
+          setJobsPorNif(prev => {
+            const next = { ...prev };
+            delete next[nif];
+            return next;
+          });
+        }
+        await sincronizarSqlitesParaPastaLocal(undefined, false);
+      }
+    } catch {}
+  };
+
   const iniciarExtracaoSelecionadas = async () => {
-    const listaAlvo = entidades.filter(e => selecionadas.has(e.nif));
+    const listaAlvo = entidades.filter(
+      e => selecionadas.has(e.nif) && entidades2fa[e.nif]?.estado !== 'bloqueado_2fa'
+    );
     if (listaAlvo.length === 0) return;
     if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
       await garantirAcessoPastaLocalNoClique();
@@ -1666,6 +1696,46 @@ export function RecibosVerdesView({
                           <div className="font-sans font-medium text-foreground break-words leading-snug" title={ofuscarNome(resolverNomeEntidade(ent.nif, ent.nomecli), ent.nif)}>
                             {ofuscarNome(resolverNomeEntidade(ent.nif, ent.nomecli), ent.nif)}
                           </div>
+                          {entidades2fa[ent.nif]?.estado === 'bloqueado_2fa' && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] font-mono">
+                              <span
+                                title={entidades2fa[ent.nif]?.detalhe || 'AT pediu código 2FA. Entidade protegida contra envio de SMS ao cliente.'}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 dark:bg-[#231a08] text-amber-900 dark:text-amber-300 border border-amber-400 dark:border-amber-700 font-bold"
+                              >
+                                <Lock className="w-2.5 h-2.5 shrink-0" />
+                                <span>2FA Bloqueado</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleAcao2fa(ent.nif, 'autorizar_sms')}
+                                className="px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-400 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300 font-semibold cursor-pointer"
+                              >
+                                Autorizar SMS
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleAcao2fa(ent.nif, 'limpar')}
+                                className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] text-slate-700 dark:text-slate-200 font-semibold cursor-pointer"
+                              >
+                                Reavaliar
+                              </button>
+                            </div>
+                          )}
+                          {entidades2fa[ent.nif]?.estado === 'sms_autorizado' && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] font-mono">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 font-bold">
+                                <ShieldCheck className="w-2.5 h-2.5 shrink-0" />
+                                <span>SMS 2FA Ativo</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleAcao2fa(ent.nif, 'bloquear')}
+                                className="px-1.5 py-0.5 rounded bg-amber-50 dark:bg-[#231a08] border border-amber-400 dark:border-amber-700 text-amber-900 dark:text-amber-300 font-semibold cursor-pointer"
+                              >
+                                Bloquear
+                              </button>
+                            </div>
+                          )}
                           {job && (
                             <div className="mt-1 flex items-start gap-1.5 text-[10px] leading-snug">
                               {job.status === 'em_progresso' && <Loader2 className="w-3 h-3 mt-0.5 shrink-0 animate-spin text-[#0284c7]" />}

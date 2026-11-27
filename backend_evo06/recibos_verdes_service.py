@@ -753,6 +753,7 @@ def obter_matriz_anual_rv(ano: int, tipo: str = "compras", pasta_pdfs_override: 
             }
 
     invalidas = pb_client.obter_mapa_senhas_invalidas()
+    entidades_2fa = pb_client.obter_mapa_entidades_2fa()
 
     return {
         "status": "ok",
@@ -765,6 +766,7 @@ def obter_matriz_anual_rv(ano: int, tipo: str = "compras", pasta_pdfs_override: 
         "assinatura": "API Importador e-Fatura Gexcel",
         "empresas": empresas,
         "senhas_invalidas": invalidas,
+        "entidades_2fa": entidades_2fa,
     }
 
 
@@ -1051,6 +1053,26 @@ def executar_job_recibos_verdes(
         if is_inv:
             raise ValueError(f"Senha recusada anteriormente pela AT ({det_inv}). Atualize a senha antes de extrair.")
 
+        estado_2fa, det_2fa = pb_client.verificar_estado_2fa_nif(nif_clean)
+        if estado_2fa == "bloqueado_2fa":
+            msg_bloq = "2FA Bloqueado: entidade protegida para evitar envio de SMS/email ao cliente."
+            if job_id in jobs_dict:
+                jobs_dict[job_id]["status"] = "erro"
+                jobs_dict[job_id]["tipo_erro"] = "bloqueado_2fa"
+                jobs_dict[job_id]["badge_label"] = "2FA Bloqueado"
+                jobs_dict[job_id]["erro"] = det_2fa or msg_bloq
+                jobs_dict[job_id]["mensagem"] = msg_bloq
+            return
+
+        permitir_2fa_sms = (estado_2fa == "sms_autorizado")
+        sms_consumer = None
+        if permitir_2fa_sms:
+            import sms_2fa_bridge
+            tenant_key_sms = ws_client_id or "default"
+            sms_consumer = lambda portal, min_ts, timeout_s: sms_2fa_bridge.wait_for_sms_otp_for_tenant(
+                tenant_key_sms, portal=portal, timeout_sec=timeout_s, min_timestamp=min_ts
+            )
+
         login_user = str(sub).strip() if sub and str(sub).strip() else nif_clean
         pasta_bdsrv = obter_pasta_bdsrv()
         pasta_pdfs_req = str(pasta_pdfs or "").strip()
@@ -1095,6 +1117,8 @@ def executar_job_recibos_verdes(
             headless=bool(headless),
             base_dir_bdsrv=pasta_bdsrv,
             progress_callback=_on_progress,
+            permitir_2fa_sms=permitir_2fa_sms,
+            sms_bridge_consumer=sms_consumer,
         )
 
         # 1. Persistir SEMPRE na base SQLite moderna particionada (BdsefaturaV4/{NIF}/recibos_verdes_{NIF}.db)
@@ -1141,30 +1165,42 @@ def executar_job_recibos_verdes(
     except Exception as e:
         err_msg = str(e)
         LOGGER.error(f"Erro na extração de Recibos Verdes/Rendas ({nif_clean}, {ano}): {err_msg}")
-        if not pb_client.is_erro_falso_positivo_at(err_msg) and any(
-            k in err_msg.lower()
-            for k in (
-                "utilizador ou senha",
-                "utilizador ou a senha",
-                "credenciais inv",
-                "credenciais rejeitadas pelo portal",
-                "senha inv",
-                "password inv",
-                "autenticacao invalida",
-                "autenticação inválida",
-                "erro na autentica",
-            )
-        ):
-            try:
-                _, pwd_curr = pb_client.get_credentials(nif_clean)
-                if pwd_curr:
-                    pb_client.record_invalid_password(nif_clean, pwd_curr, err_msg[:200])
-            except Exception:
-                pass
-        if job_id in jobs_dict:
-            jobs_dict[job_id]["status"] = "erro"
-            jobs_dict[job_id]["erro"] = err_msg
-            jobs_dict[job_id]["mensagem"] = f"Erro: {err_msg}"
+        if "2fa_ativo_bloqueado" in err_msg.lower():
+            pb_client.registar_bloqueio_2fa_nif(nif_clean, err_msg)
+            if job_id in jobs_dict:
+                jobs_dict[job_id]["status"] = "erro"
+                jobs_dict[job_id]["tipo_erro"] = "bloqueado_2fa"
+                jobs_dict[job_id]["badge_label"] = "2FA Bloqueado"
+                jobs_dict[job_id]["erro"] = err_msg
+                jobs_dict[job_id]["mensagem"] = (
+                    "2FA Bloqueado automaticamente (a AT pediu código 2FA). "
+                    "Entidade protegida para não disparar SMS/emails ao cliente."
+                )
+        else:
+            if not pb_client.is_erro_falso_positivo_at(err_msg) and any(
+                k in err_msg.lower()
+                for k in (
+                    "utilizador ou senha",
+                    "utilizador ou a senha",
+                    "credenciais inv",
+                    "credenciais rejeitadas pelo portal",
+                    "senha inv",
+                    "password inv",
+                    "autenticacao invalida",
+                    "autenticação inválida",
+                    "erro na autentica",
+                )
+            ):
+                try:
+                    _, pwd_curr = pb_client.get_credentials(nif_clean)
+                    if pwd_curr:
+                        pb_client.record_invalid_password(nif_clean, pwd_curr, err_msg[:200])
+                except Exception:
+                    pass
+            if job_id in jobs_dict:
+                jobs_dict[job_id]["status"] = "erro"
+                jobs_dict[job_id]["erro"] = err_msg
+                jobs_dict[job_id]["mensagem"] = f"Erro: {err_msg}"
     finally:
         try:
             _BROWSER_SEMAPHORE.release()

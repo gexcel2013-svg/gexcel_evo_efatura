@@ -45,6 +45,7 @@ import start_hub_evo06
 import pipeline_worker
 import pendentes_service
 import workspace_context
+import sms_2fa_bridge
 
 # -------------------------------------------------------------------------
 # INTEGRAÇÃO COM A BIBLIOTECA DE WEB SCRAPING E COFRE DE ESTADOS
@@ -82,17 +83,61 @@ GovAuthError = Exception
 _BROWSER_SESSION_SEMAPHORE = threading.BoundedSemaphore(2)
 
 
-def _iniciar_sessao_efatura_segura(nif: str, password: str, headless: bool = True, canal: str = "auto"):
+def _obter_tenant_key_sms_atual() -> str:
+    """Resolve a chave isolada do workspace/tenant atual para a Ponte SMS 2FA em RAM."""
+    try:
+        ws = (workspace_context.get_current_ws_id() or "").strip()
+        if ws:
+            return ws
+    except Exception:
+        pass
+    return "default"
+
+
+def _resolver_politica_2fa_e_consumidor(nif_referencia: str) -> tuple[bool, Any]:
+    """
+    Avalia a política 2FA do NIF na base central:
+    - Se 'bloqueado_2fa': lança GovAuthError imediato antes de abrir browser / contactar AT;
+    - Se 'sms_autorizado': devolve (True, consumidor_ram_tenant);
+    - Caso neutro: devolve (False, None) para que qualquer 2FA real encontrado dispare bloqueio preventivo automático.
+    """
+    nif_clean = re.sub(r'[^0-9]', '', str(nif_referencia or "")).strip()[:9]
+    estado_2fa, det_2fa = pb_client.verificar_estado_2fa_nif(nif_clean)
+    if estado_2fa == "bloqueado_2fa":
+        raise GovAuthError(
+            f"2FA_ATIVO_BLOQUEADO: {det_2fa or 'Entidade bloqueada por 2FA ativo para proteger o cliente.'}"
+        )
+    permitir_2fa_sms = (estado_2fa == "sms_autorizado")
+    sms_consumer = None
+    if permitir_2fa_sms:
+        tenant_key_sms = _obter_tenant_key_sms_atual()
+        sms_consumer = lambda portal, min_ts, timeout_s: sms_2fa_bridge.wait_for_sms_otp_for_tenant(
+            tenant_key_sms, portal=portal, timeout_sec=timeout_s, min_timestamp=min_ts
+        )
+    return permitir_2fa_sms, sms_consumer
+
+
+def _iniciar_sessao_efatura_segura(
+    nif: str,
+    password: str,
+    headless: bool = True,
+    canal: str = "auto",
+    nif_titular: Optional[str] = None,
+):
     """
     Inicia sessão web no e-Fatura com limite de arranques simultâneos de navegador (máx. 2),
-    prevenindo estrangulamento de CPU/rede e bloqueios WAF em extrações concorrentes de Vendas.
+    aplicando política anti-2FA e Ponte SMS Hetzner apenas a entidades autorizadas.
     """
+    nif_ref = nif_titular or str(nif or "").split("/")[0]
+    permitir_2fa_sms, sms_consumer = _resolver_politica_2fa_e_consumidor(nif_ref)
     with _BROWSER_SESSION_SEMAPHORE:
         return iniciar_sessao_efatura(
             nif=nif,
             password=password,
             headless=headless,
             canal=canal,
+            permitir_2fa_sms=permitir_2fa_sms,
+            sms_bridge_consumer=sms_consumer,
         )
 
 def _garantir_uv_exe() -> Optional[Path]:
@@ -398,7 +443,7 @@ if sys.platform != "win32":
         pass
 
 API_VERSION = os.environ.get("GEXCEL_EFATURA_VERSION", "4.2.30")
-BUILD_NUMBER = 58
+BUILD_NUMBER = 59
 _PROCESS_BOOT_STR = datetime.now().strftime("%d/%m %H:%M")
 _PROCESS_BOOT_SHORT = datetime.now().strftime("%H:%M")
 _PROCESS_MODE = "EXE" if getattr(sys, "frozen", False) else "DEV"
@@ -425,7 +470,7 @@ app = FastAPI(title="API Importador e-Fatura Gexcel", description="API local de 
 
 from fastapi import Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 
 _ALLOWED_ORIGIN_RE = re.compile(
     r"^(https?://(([a-zA-Z0-9-]+\.)*(evogex\.com|gexcelapps\.com)|localhost|127\.0\.0\.1)(:\d+)?|tauri://localhost|https://tauri\.localhost)$",
@@ -441,6 +486,8 @@ _CLOUD_PUBLIC_API_PATHS = frozenset({
     "/api/auth/token/activate",
     "/api/auth/transfer/confirm",
     "/api/auth/verify",
+    "/api/sms-bridge/webhook",
+    "/api/sms-bridge/painel",
 })
 _TOKEN_VERIFY_CACHE: Dict[str, Any] = {}
 _TOKEN_VERIFY_LOCK = threading.Lock()
@@ -537,7 +584,10 @@ async def add_pna_headers(request: Request, call_next):
     auth_user: Optional[Dict[str, Any]] = None
     is_dev_user = False
 
-    if is_cloud and req_path.startswith("/api/") and req_path not in _CLOUD_PUBLIC_API_PATHS:
+    is_sms_status_with_token = (
+        req_path == "/api/sms-bridge/status" and bool((request.query_params.get("token") or "").strip())
+    )
+    if is_cloud and req_path.startswith("/api/") and req_path not in _CLOUD_PUBLIC_API_PATHS and not is_sms_status_with_token:
         raw_tok = _extract_token_from_request(request, request.query_params.get("token", ""))
         auth_user = await asyncio.to_thread(_validar_token_cloud_cached, request, raw_tok)
         if not auth_user:
@@ -863,7 +913,16 @@ def classificar_erro_at(erro_obj_ou_str) -> dict:
             "detalhe": texto
         }
 
-    # 6. Segundo Fator de Autenticação (2FA / SMS / Email) pendente ou expirado
+    # 6. Segundo Fator de Autenticação (2FA / SMS / Email) — distinguir bloqueio preventivo automático de timeout
+    if "2fa_ativo_bloqueado" in texto_lower or "entidade bloqueada automaticamente" in texto_lower:
+        return {
+            "tipo_erro": "bloqueado_2fa",
+            "memorizar_invalida": False,
+            "badge_label": "2FA Bloqueado",
+            "mensagem_amigavel": "2FA Bloqueado (Proteção Cliente)",
+            "detalhe": "A AT solicitou código 2FA e a entidade foi bloqueada automaticamente para não enviar SMS/emails ao cliente. Autorize a Ponte SMS se pretender continuar."
+        }
+
     if any(p in texto_lower for p in [
         "2fa", "dois fatores", "segundo fator", "duplo fator", "sms", "otp", 
         "código de validação", "codigo de validacao", "código não recebido", "codigo nao recebido"
@@ -1465,7 +1524,8 @@ def executar_scraping_anuladas_paralelo(
             nif=login_user,
             password=password,
             headless=True,
-            canal="auto"
+            canal="auto",
+            nif_titular=nif_clean,
         )
         if as_buyer:
             extrator = EFaturaCompras(sessao, visual=False)
@@ -1697,7 +1757,8 @@ def executar_scraping_completo(
             nif=login_user,
             password=password,
             headless=True,
-            canal="auto"
+            canal="auto",
+            nif_titular=nif_clean,
         )
 
         # Autenticação limpa: limpar marcação de senha inválida no banco local se existia
@@ -2087,6 +2148,9 @@ def executar_scraping_completo(
 
     except GovAuthError as g_err:
         info_erro = classificar_erro_at(g_err)
+        if info_erro["tipo_erro"] == "bloqueado_2fa":
+            pb_client.registar_bloqueio_2fa_nif(nif_clean, str(g_err))
+            raise RuntimeError(str(g_err))
         if info_erro["memorizar_invalida"] and not pb_client.is_erro_falso_positivo_at(g_err):
             LOGGER.warning(f"Credenciais rejeitadas pelo e-Fatura: {g_err}")
             pb_client.record_invalid_password(nif_clean, password, str(g_err))
@@ -2658,7 +2722,8 @@ def resolver_e_completar_nomes_vendas(
                 nif=login_user,
                 password=password,
                 headless=True,
-                canal="auto"
+                canal="auto",
+                nif_titular=nif_clean,
             )
             extrator = ExtratorDetalhes(sessao)
             try:
@@ -4008,6 +4073,18 @@ def _run_extracao_worker(
             LOGGER.info(f"NIF {nif}: Ignorado chamada à AT pois a senha atual já foi rejeitada.")
             return
 
+        estado_2fa_w, det_2fa_w = pb_client.verificar_estado_2fa_nif(nif)
+        if estado_2fa_w == "bloqueado_2fa":
+            msg_2fa_w = "2FA Bloqueado (entidade protegida para não disparar SMS/emails ao cliente)."
+            if job_id in JOBS:
+                JOBS[job_id]["status"] = "erro"
+                JOBS[job_id]["tipo_erro"] = "bloqueado_2fa"
+                JOBS[job_id]["badge_label"] = "2FA Bloqueado"
+                JOBS[job_id]["mensagem"] = msg_2fa_w
+                JOBS[job_id]["erro"] = det_2fa_w or msg_2fa_w
+            LOGGER.info(f"NIF {nif}: Extração ignorada preventivamente por 2FA Bloqueado.")
+            return
+
         tipo_str = "compras" if as_buyer else "vendas"
         modo_saida_clean = (modo_saida or "sqlite").strip().lower()
         salvar_sqlite = modo_saida_clean not in ("apenas_memoria", "apenas_xml")
@@ -4699,7 +4776,9 @@ def _run_extracao_worker(
     except Exception as exc:
         LOGGER.exception("Job %s terminou com erro interno do tipo %s", job_id[:8], type(exc).__name__)
         info_erro = classificar_erro_at(exc)
-        if info_erro["memorizar_invalida"] and not pb_client.is_erro_falso_positivo_at(info_erro["detalhe"]):
+        if info_erro["tipo_erro"] == "bloqueado_2fa":
+            pb_client.registar_bloqueio_2fa_nif(nif, str(exc))
+        elif info_erro["memorizar_invalida"] and not pb_client.is_erro_falso_positivo_at(info_erro["detalhe"]):
             pb_client.record_invalid_password(nif, password, info_erro["detalhe"])
         if job_id in JOBS:
             JOBS[job_id]["status"] = "erro"
@@ -5030,8 +5109,9 @@ def obter_matriz_anual(ano: int, tipo: str = "compras"):
             resultado[nif]["tem_incompletos"] = len(meses_incompletos) > 0
             resultado[nif]["meses_incompletos"] = sorted(list(set(meses_incompletos)))
 
-        # Obter lista de NIFs com senhas comprovadamente rejeitadas pela AT
+        # Obter lista de NIFs com senhas comprovadamente rejeitadas pela AT e estados 2FA
         invalidas = pb_client.obter_mapa_senhas_invalidas()
+        entidades_2fa = pb_client.obter_mapa_entidades_2fa()
 
         return {
             "status": "ok",
@@ -5039,7 +5119,8 @@ def obter_matriz_anual(ano: int, tipo: str = "compras"):
             "tipo": tipo_str,
             "assinatura": "API Importador e-Fatura Gexcel",
             "empresas": resultado,
-            "senhas_invalidas": invalidas
+            "senhas_invalidas": invalidas,
+            "entidades_2fa": entidades_2fa,
         }
     except Exception as e:
         LOGGER.error(f"Erro ao obter matriz anual ({tipo}): {e}")
@@ -5152,6 +5233,151 @@ def api_reset_senha_invalida(nif: str):
     except Exception as e:
         LOGGER.error(f"Erro ao resetar senha inválida para NIF {nif}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class Entidade2faAcaoRequest(BaseModel):
+    acao: str = Field(..., description="'autorizar_sms', 'bloquear' ou 'limpar'")
+    detalhe: Optional[str] = Field(default="")
+
+
+@app.get("/api/entidades-2fa")
+def api_listar_entidades_2fa():
+    """Devolve o mapa de entidades com estado 2FA ('bloqueado_2fa' ou 'sms_autorizado')."""
+    try:
+        return {
+            "status": "ok",
+            "entidades_2fa": pb_client.obter_mapa_entidades_2fa(),
+        }
+    except Exception as e:
+        LOGGER.error(f"Erro ao listar entidades 2FA: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/entidades-2fa/{nif}")
+def api_definir_entidade_2fa(nif: str, req: Entidade2faAcaoRequest):
+    """Atualiza o estado 2FA de uma entidade (autorizar Ponte SMS, bloquear ou limpar)."""
+    try:
+        res = pb_client.definir_estado_2fa_nif(nif, req.acao, req.detalhe or "")
+        return {
+            "status": "ok",
+            "nif": res["nif"],
+            "estado": res["estado"],
+            "entidades_2fa": pb_client.obter_mapa_entidades_2fa(),
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        LOGGER.error(f"Erro ao atualizar estado 2FA para {nif}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _obter_base_url_publica(request: Request) -> str:
+    xf_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc or "").strip()
+    xf_proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip().lower()
+    if any(d in xf_host.lower() for d in ("evogex.com", "gexcelapps.com")):
+        xf_proto = "https"
+    if not xf_host:
+        return "https://dev.efatura.evogex.com"
+    return f"{xf_proto}://{xf_host}"
+
+
+@app.get("/api/sms-bridge/config")
+def api_sms_bridge_config(request: Request):
+    """Devolve configuração, URLs, QR Code SVG e estado RAM da Ponte SMS 2FA do tenant atual."""
+    tenant_key = _obter_tenant_key_sms_atual()
+    token = sms_2fa_bridge.get_tenant_webhook_token(tenant_key)
+    base_url = _obter_base_url_publica(request)
+    webhook_url = f"{base_url}/api/sms-bridge/webhook?token={token}"
+    painel_url = f"{base_url}/api/sms-bridge/painel?token={token}"
+    qr_svg = sms_2fa_bridge.build_qr_svg(painel_url)
+    st = sms_2fa_bridge.get_bridge_status_for_tenant(tenant_key)
+    return {
+        "ok": True,
+        "token": token,
+        "webhook_url": webhook_url,
+        "painel_url": painel_url,
+        "qr_svg": qr_svg,
+        "status": st,
+    }
+
+
+@app.get("/api/sms-bridge/status")
+def api_sms_bridge_status(token: Optional[str] = None):
+    """Consulta o estado atual em RAM da Ponte SMS 2FA (via sessão tenant ou ?token= do telemóvel)."""
+    if token and token.strip():
+        bucket_id = sms_2fa_bridge.validate_webhook_token(token.strip())
+        if not bucket_id:
+            raise HTTPException(status_code=401, detail="Token SMS inválido.")
+        return sms_2fa_bridge.get_bridge_status_by_bucket(bucket_id)
+    tenant_key = _obter_tenant_key_sms_atual()
+    return sms_2fa_bridge.get_bridge_status_for_tenant(tenant_key)
+
+
+@app.post("/api/sms-bridge/webhook")
+@app.get("/api/sms-bridge/webhook")
+async def api_sms_bridge_webhook(
+    request: Request,
+    token: Optional[str] = None,
+    message: Optional[str] = None,
+    text: Optional[str] = None,
+    sender: Optional[str] = None,
+):
+    """Recebe notificações/SMS do MacroDroid ou Atalhos Apple diretamente para RAM efêmera do tenant."""
+    tok_eff = (token or request.headers.get("x-sms-token") or "").strip()
+    raw_text = (message or text or "").strip()
+    sender_eff = (sender or request.headers.get("x-sms-sender") or "").strip()
+
+    if request.method == "POST" and not raw_text:
+        try:
+            body_bytes = await request.body()
+            body_str = body_bytes.decode("utf-8", errors="replace").strip()
+        except Exception:
+            body_str = ""
+        if body_str.startswith("{"):
+            try:
+                parsed = json.loads(body_str)
+                if isinstance(parsed, dict):
+                    raw_text = str(
+                        parsed.get("message")
+                        or parsed.get("text")
+                        or parsed.get("body")
+                        or parsed.get("sms")
+                        or ""
+                    ).strip()
+                    if not sender_eff:
+                        sender_eff = str(parsed.get("sender") or parsed.get("from") or "").strip()
+                    if not tok_eff:
+                        tok_eff = str(parsed.get("token") or "").strip()
+            except Exception:
+                raw_text = body_str
+        else:
+            raw_text = body_str
+
+    status_code, payload = sms_2fa_bridge.receive_sms_webhook(tok_eff, raw_text, sender=sender_eff)
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+@app.get("/api/sms-bridge/painel")
+def api_sms_bridge_painel(request: Request, token: Optional[str] = None):
+    """Serve a página móvel de emparelhamento QR da Ponte SMS 2FA (Zero-Storage)."""
+    tok_eff = (token or "").strip()
+    if not sms_2fa_bridge.validate_webhook_token(tok_eff):
+        return HTMLResponse(
+            status_code=401,
+            content="<html><body style='font-family:sans-serif;background:#07121c;color:#f87171;padding:24px;'>Token de emparelhamento SMS inválido ou expirado.</body></html>",
+        )
+    base_url = _obter_base_url_publica(request)
+    webhook_url = f"{base_url}/api/sms-bridge/webhook?token={tok_eff}"
+    status_url = f"{base_url}/api/sms-bridge/status?token={tok_eff}"
+    return HTMLResponse(content=sms_2fa_bridge.render_mobile_panel_html(webhook_url, status_url, tok_eff))
+
+
+@app.post("/api/sms-bridge/teste")
+def api_sms_bridge_teste():
+    """Simula um sinal de teste na RAM deste tenant para validar a ponte SMS."""
+    tenant_key = _obter_tenant_key_sms_atual()
+    status_code, payload = sms_2fa_bridge.push_simulated_test(tenant_key)
+    return JSONResponse(status_code=status_code, content=payload)
 
 @app.post("/api/base-dados/limpar")
 def api_limpar_base_dados(

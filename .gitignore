@@ -30,3 +30,5 @@ __pycache__/
 backend_evo06/.env
 backend_evo06/certs/
 backend_evo06/__pycache__/
+
+backend_evo06/.sms_bridge_secret

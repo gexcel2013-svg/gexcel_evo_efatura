@@ -20,8 +20,10 @@ import {
   Laptop,
   Wifi,
   ShieldAlert,
-  ArrowUpRight
+  ArrowUpRight,
+  Smartphone
 } from 'lucide-react';
+import { SmsBridgeCard } from './SmsBridgeCard';
 import { useAuth } from '../lib/auth';
 import { getEvoSubdomainUrl } from '../lib/evoCrossAppBridge';
 import { validateEmail, validatePhone, formatPhoneDisplay } from '../lib/contactValidation';
@@ -98,7 +100,7 @@ export function ConfigView() {
   const [sincronizandoSqlites, setSincronizandoSqlites] = useState<boolean>(false);
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
-  const [passoAtivo, setPassoAtivo] = useState<1 | 2 | 3>(1);
+  const [passoAtivo, setPassoAtivo] = useState<1 | 2 | 3 | 4>(1);
   const [mostrarPastasTecnicas, setMostrarPastasTecnicas] = useState<boolean>(false);
 
   const [localFsCfg, setLocalFsCfg] = useState<LocalFsCentroConfig | null>(() => obterLocalFsCentroConfig());
@@ -1434,7 +1436,7 @@ export function ConfigView() {
       )}
 
       {/* Barra de Navegação Passo a Passo (1 passo de cada vez, ultra-limpo) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 shrink-0 font-mono text-xs">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2.5 shrink-0 font-mono text-xs">
         <button
           type="button"
           onClick={() => setPassoAtivo(1)}
@@ -1527,6 +1529,35 @@ export function ConfigView() {
               </span>
             </div>
           </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setPassoAtivo(4)}
+          className={`p-3 rounded-md border text-left transition flex items-center justify-between cursor-pointer ${
+            passoAtivo === 4
+              ? 'bg-sky-50 dark:bg-[#0a1929] border-[#0284c7] shadow-2xs'
+              : 'bg-white dark:bg-[#0c1520] border-[#d7e0ea] dark:border-[#222f3e] hover:border-slate-400'
+          }`}
+        >
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <span
+              className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                passoAtivo === 4
+                  ? 'bg-[#0284c7] text-white'
+                  : 'bg-slate-200 dark:bg-[#132233] text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              4
+            </span>
+            <div className="min-w-0">
+              <span className="font-bold text-foreground block truncate">Ponte SMS 2FA</span>
+              <span className="text-[10.5px] text-slate-600 dark:text-slate-400 block truncate">
+                MacroDroid / iPhone + 2FA
+              </span>
+            </div>
+          </div>
+          <Smartphone className="w-4 h-4 text-[#0284c7] shrink-0 ml-2" />
         </button>
       </div>
 
@@ -2429,6 +2460,11 @@ export function ConfigView() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* PASSO 4: PONTE SMS 2FA */}
+      {passoAtivo === 4 && (
+        <SmsBridgeCard />
       )}
 
       {/* Modal de Criação / Edição de Centro de Dados Nomeado */}

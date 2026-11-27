@@ -1039,6 +1039,15 @@ def init_controlo_db():
             """)
 
             c.execute("""
+            CREATE TABLE IF NOT EXISTS `entidades_2fa_at` (
+                `nif` TEXT PRIMARY KEY,
+                `estado` TEXT NOT NULL DEFAULT 'bloqueado_2fa',
+                `detalhe` TEXT DEFAULT '',
+                `updated_at` TEXT DEFAULT ''
+            );
+            """)
+
+            c.execute("""
             CREATE TABLE IF NOT EXISTS `efatura_inconformidades` (
                 `id` TEXT PRIMARY KEY,
                 `id_fatura_unico` TEXT NOT NULL,
@@ -1854,6 +1863,147 @@ def clear_invalid_password_if_success(nif):
             LOGGER.info(f"Marcação de senha inválida para NIF {nif_clean} limpa com sucesso na base central.")
     except Exception as e:
         LOGGER.error(f"Erro ao limpar senha inválida: {e}")
+
+
+def obter_mapa_entidades_2fa() -> dict:
+    """
+    Devolve mapa {nif: {estado, detalhe, updated_at}} com estados 2FA da base central:
+    - 'bloqueado_2fa': entidade bloqueada automaticamente para nunca disparar SMS/emails ao cliente;
+    - 'sms_autorizado': entidade explicitamente autorizada a receber códigos via Ponte SMS 2FA.
+    """
+    mapa = {}
+    ctrl_db = obter_db_controlo_path()
+    if not os.path.exists(ctrl_db):
+        return mapa
+    init_controlo_db()
+    try:
+        with db_connect(ctrl_db, timeout=5) as conn:
+            c = conn.cursor()
+            c.execute("SELECT nif, estado, detalhe, updated_at FROM entidades_2fa_at")
+            for r_nif, r_est, r_det, r_upd in c.fetchall():
+                n_clean = re.sub(r'[^0-9]', '', str(r_nif or "")).strip()[:9]
+                if not n_clean or not r_est:
+                    continue
+                mapa[n_clean] = {
+                    "estado": str(r_est).strip(),
+                    "detalhe": str(r_det or "").strip(),
+                    "updated_at": str(r_upd or "").strip(),
+                }
+    except Exception as e:
+        LOGGER.debug(f"Aviso ao ler entidades_2fa_at: {e}")
+    return mapa
+
+
+def verificar_estado_2fa_nif(nif: str) -> tuple[str, str]:
+    """Devolve (estado, detalhe) 2FA atual para o NIF ('bloqueado_2fa', 'sms_autorizado' ou '')."""
+    nif_clean = re.sub(r'[^0-9]', '', str(nif or "")).strip()[:9]
+    if not nif_clean:
+        return "", ""
+    ctrl_db = obter_db_controlo_path()
+    if not os.path.exists(ctrl_db):
+        return "", ""
+    init_controlo_db()
+    try:
+        with db_connect(ctrl_db, timeout=5) as conn:
+            c = conn.cursor()
+            c.execute("SELECT estado, detalhe FROM entidades_2fa_at WHERE nif=?", (nif_clean,))
+            row = c.fetchone()
+            if row and row[0]:
+                return str(row[0]).strip(), str(row[1] or "").strip()
+    except Exception as e:
+        LOGGER.debug(f"Aviso ao verificar estado 2FA para {nif_clean}: {e}")
+    return "", ""
+
+
+def registar_bloqueio_2fa_nif(nif: str, detalhe: str = ""):
+    """
+    Marca o NIF como 'bloqueado_2fa' após deteção confirmada de 2FA na AT,
+    protegendo entidades não autorizadas contra novos disparos de SMS/emails.
+    Nunca sobrescreve um NIF já marcado como 'sms_autorizado'.
+    """
+    nif_clean = re.sub(r'[^0-9]', '', str(nif or "")).strip()[:9]
+    if not nif_clean:
+        return
+    init_controlo_db()
+    ctrl_db = obter_db_controlo_path()
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.000Z")
+    det_clean = str(detalhe or "AT solicitou código 2FA (proteção automática ativa).").strip()[:300]
+    try:
+        with db_connect(ctrl_db, timeout=10) as conn:
+            c = conn.cursor()
+            c.execute("SELECT estado FROM entidades_2fa_at WHERE nif=?", (nif_clean,))
+            row = c.fetchone()
+            if row and str(row[0] or "").strip() == "sms_autorizado":
+                return
+            c.execute(
+                """
+                INSERT INTO entidades_2fa_at (nif, estado, detalhe, updated_at)
+                VALUES (?, 'bloqueado_2fa', ?, ?)
+                ON CONFLICT(nif) DO UPDATE SET
+                    estado='bloqueado_2fa',
+                    detalhe=excluded.detalhe,
+                    updated_at=excluded.updated_at
+                """,
+                (nif_clean, det_clean, now_str),
+            )
+            conn.commit()
+            LOGGER.warning(f"NIF {nif_clean} marcado automaticamente como 'bloqueado_2fa' para proteção do cliente.")
+    except Exception as e:
+        LOGGER.error(f"Erro ao registar bloqueio 2FA para {nif_clean}: {e}")
+
+
+def definir_estado_2fa_nif(nif: str, acao: str, detalhe: str = "") -> dict:
+    """Atualiza manualmente o estado 2FA de um NIF ('autorizar_sms', 'bloquear' ou 'limpar')."""
+    nif_clean = re.sub(r'[^0-9]', '', str(nif or "")).strip()[:9]
+    if not nif_clean:
+        raise ValueError("NIF inválido.")
+    acao_norm = str(acao or "").strip().lower()
+    if acao_norm not in ("autorizar_sms", "bloquear", "limpar"):
+        raise ValueError("Ação 2FA inválida (use 'autorizar_sms', 'bloquear' ou 'limpar').")
+
+    init_controlo_db()
+    ctrl_db = obter_db_controlo_path()
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.000Z")
+    novo_estado = ""
+    try:
+        with db_connect(ctrl_db, timeout=10) as conn:
+            c = conn.cursor()
+            if acao_norm == "limpar":
+                c.execute("DELETE FROM entidades_2fa_at WHERE nif=?", (nif_clean,))
+                novo_estado = ""
+            elif acao_norm == "autorizar_sms":
+                novo_estado = "sms_autorizado"
+                det_val = str(detalhe or "Ponte SMS 2FA autorizada pelo utilizador.").strip()[:300]
+                c.execute(
+                    """
+                    INSERT INTO entidades_2fa_at (nif, estado, detalhe, updated_at)
+                    VALUES (?, 'sms_autorizado', ?, ?)
+                    ON CONFLICT(nif) DO UPDATE SET
+                        estado='sms_autorizado',
+                        detalhe=excluded.detalhe,
+                        updated_at=excluded.updated_at
+                    """,
+                    (nif_clean, det_val, now_str),
+                )
+            else:
+                novo_estado = "bloqueado_2fa"
+                det_val = str(detalhe or "Bloqueado manualmente para prevenir envio de 2FA.").strip()[:300]
+                c.execute(
+                    """
+                    INSERT INTO entidades_2fa_at (nif, estado, detalhe, updated_at)
+                    VALUES (?, 'bloqueado_2fa', ?, ?)
+                    ON CONFLICT(nif) DO UPDATE SET
+                        estado='bloqueado_2fa',
+                        detalhe=excluded.detalhe,
+                        updated_at=excluded.updated_at
+                    """,
+                    (nif_clean, det_val, now_str),
+                )
+            conn.commit()
+    except Exception as e:
+        LOGGER.error(f"Erro ao definir estado 2FA ({acao_norm}) para {nif_clean}: {e}")
+        raise
+    return {"nif": nif_clean, "estado": novo_estado}
 
 def obter_mapa_senhas_invalidas() -> dict:
     """

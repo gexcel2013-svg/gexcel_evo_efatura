@@ -31,8 +31,11 @@ import {
   X,
   Sparkles,
   Copy,
-  FolderOpen
+  FolderOpen,
+  ShieldCheck,
+  Lock
 } from 'lucide-react';
+import { type Entidade2faInfo } from './SmsBridgeCard';
 import { getMotorSource, type MotorSourceType } from '../lib/apiBridge';
 import {
   isWindowsPath,
@@ -399,6 +402,7 @@ export default function CommandCenter({
   // Matriz de dados agregados por ano (NIF -> DadosEmpresaMatriz)
   const [matriz, setMatriz] = useState<Record<string, DadosEmpresaMatriz>>({});
   const [senhasInvalidas, setSenhasInvalidas] = useState<Record<string, string>>({});
+  const [entidades2fa, setEntidades2fa] = useState<Record<string, Entidade2faInfo>>({});
   const [carregandoMatriz, setCarregandoMatriz] = useState<boolean>(false);
   
   // Ordenação das colunas da tabela
@@ -653,6 +657,7 @@ export default function CommandCenter({
 
         setMatriz(normalizarMatrizEmpresas(empresasRaw));
         setSenhasInvalidas(data.senhas_invalidas || {});
+        setEntidades2fa(data.entidades_2fa || {});
       }
 
       // Carregar estimativas inteligentes de volume (SJF - Menor Volume Primeiro)
@@ -705,6 +710,43 @@ export default function CommandCenter({
     } catch (err: any) {
       console.error("Erro ao resetar senha inválida:", err);
       alert(`Erro de comunicação com a API: ${err.message}`);
+    }
+  };
+
+  const handleAcao2fa = async (
+    nif: string,
+    acao: 'autorizar_sms' | 'bloquear' | 'limpar',
+    entId?: string,
+    e?: React.MouseEvent
+  ) => {
+    if (e) e.stopPropagation();
+    if (!nif) return;
+    try {
+      const res = await fetch(`http://127.0.0.1:8015/api/entidades-2fa/${nif}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acao }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEntidades2fa(data.entidades_2fa || {});
+        if (entId && acao !== 'bloquear') {
+          setSyncStatus(prev => {
+            const next = { ...prev };
+            delete next[entId];
+            return next;
+          });
+          setEntidadeErros(prev => {
+            const next = { ...prev };
+            delete next[entId];
+            return next;
+          });
+        }
+        await sincronizarSqlitesParaPastaLocal(undefined, false);
+        carregarMatriz(ano, tipoOperacao);
+      }
+    } catch (err) {
+      console.error('Erro ao atualizar estado 2FA:', err);
     }
   };
 
@@ -1273,9 +1315,28 @@ export default function CommandCenter({
       };
     }
 
+    // 1.5. Entidade protegida por Bloqueio 2FA (evita envio automático de SMS/email ao cliente)
+    const info2fa = entidades2fa[nifReal];
+    if (info2fa?.estado === 'bloqueado_2fa') {
+      return {
+        type: 'blocked_2fa' as const,
+        label: '2FA Bloqueado',
+        detail: info2fa.detalhe || 'A AT solicitou código 2FA. Autorize a Ponte SMS ou reavalie manualmente.',
+        priority: 1,
+      };
+    }
+
     // 2. Erros específicos classificados na sessão recente
     const erroRecente = entidadeErros[ent.id];
     if (erroRecente) {
+      if (erroRecente.tipo_erro === 'bloqueado_2fa') {
+        return {
+          type: 'blocked_2fa' as const,
+          label: erroRecente.badge_label || '2FA Bloqueado',
+          detail: erroRecente.detalhe || erroRecente.mensagem,
+          priority: 1,
+        };
+      }
       if (erroRecente.tipo_erro === 'servidor_at') {
         return {
           type: 'server_error' as const,
@@ -1501,7 +1562,7 @@ export default function CommandCenter({
 
       return sortDir === 'asc' ? comp : -comp;
     });
-  }, [entidades, nifFiltroEmpresa, matriz, estimativasVolume, senhasInvalidas, activeJobs, syncStatus, entidadeErros, sortCol, sortDir, batchSyncIds]);
+  }, [entidades, nifFiltroEmpresa, matriz, estimativasVolume, senhasInvalidas, entidades2fa, activeJobs, syncStatus, entidadeErros, sortCol, sortDir, batchSyncIds]);
 
   // Totais agregados calculados para a barra de rodapé e contadores mensais
   const { totalGeralDocs, totaisPorMes } = useMemo(() => {
@@ -1599,12 +1660,20 @@ export default function CommandCenter({
         await hidratarSqliteNifSobDemanda(nifParaEnviar);
       }
 
-      // Deteção prévia de senha inválida: ignora sem chamar a AT
+      // Deteção prévia de senha inválida ou bloqueio 2FA: ignora sem chamar a AT
       if (senhasInvalidas[nifParaEnviar]) {
         const mot = senhasInvalidas[nifParaEnviar];
         setSyncStatus(prev => ({ 
           ...prev, 
           [ent.id]: `Bloqueado: Senha Inválida (${mot})` 
+        }));
+        return;
+      }
+
+      if (entidades2fa[nifParaEnviar]?.estado === 'bloqueado_2fa') {
+        setSyncStatus(prev => ({
+          ...prev,
+          [ent.id]: '2FA Bloqueado (proteção automática ativa)'
         }));
         return;
       }
@@ -1774,10 +1843,14 @@ export default function CommandCenter({
       console.warn("Aviso ao carregar estimativas no handleSync:", err);
     }
 
-    // 2. Ordenação Inteligente SJF: menor volume estimado primeiro (0 ➔ N)
+    // 2. Ordenação Inteligente SJF: menor volume estimado primeiro (0 ➔ N), excluindo bloqueadas por 2FA
     const entidadesParaSincronizar = Array.from(selectedIds)
       .map(id => entidades.find(e => e.id === id))
-      .filter((e): e is Entidade => !!e)
+      .filter((e): e is Entidade => {
+        if (!e) return false;
+        const n = (e.nif || e.nif_cc || '').trim();
+        return entidades2fa[n]?.estado !== 'bloqueado_2fa';
+      })
       .sort((a, b) => {
         const nifA = (a.nif || a.nif_cc || '').trim();
         const nifB = (b.nif || b.nif_cc || '').trim();
@@ -2625,6 +2698,15 @@ export default function CommandCenter({
                               <Key className="w-2.5 h-2.5" />
                             </span>
                           )}
+                          {nifReal && entidades2fa[nifReal]?.estado === 'sms_autorizado' && (
+                            <span
+                              title="Ponte SMS 2FA autorizada para esta entidade"
+                              className="inline-flex items-center gap-0.5 shrink-0 mr-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] text-emerald-800 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 text-[9px] font-mono font-bold"
+                            >
+                              <ShieldCheck className="w-2.5 h-2.5" />
+                              <span>SMS</span>
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => {
@@ -2919,6 +3001,35 @@ export default function CommandCenter({
                               <ShieldAlert className="w-2.5 h-2.5 mr-1 shrink-0 text-orange-500" />
                               <span className="break-words max-w-[170px] leading-tight">{statusInfo.label}</span>
                             </span>
+                          </div>
+                        )}
+
+                        {statusInfo.type === 'blocked_2fa' && (
+                          <div className="flex flex-wrap items-center justify-end gap-1 text-left">
+                            <span
+                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-mono border bg-amber-50 dark:bg-[#231a08] text-amber-900 dark:text-amber-300 border-amber-400 dark:border-amber-700 shadow-2xs font-bold cursor-help whitespace-normal"
+                              title={`2FA Bloqueado (Proteção Cliente):\n${statusInfo.detail}`}
+                            >
+                              <Lock className="w-2.5 h-2.5 mr-1 shrink-0" />
+                              <span className="break-words max-w-[140px] leading-tight">{statusInfo.label}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => handleAcao2fa(nifReal, 'autorizar_sms', ent.id, e)}
+                              className="px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-[#091e1a] hover:bg-emerald-100 dark:hover:bg-[#0f3028] text-emerald-800 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 text-[9px] font-mono font-semibold cursor-pointer shrink-0"
+                              title="Autorizar uso da Ponte SMS 2FA para esta entidade"
+                            >
+                              Autorizar SMS
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => handleAcao2fa(nifReal, 'limpar', ent.id, e)}
+                              className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#132233] hover:bg-slate-200 dark:hover:bg-[#1c314a] text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-[#222f3e] text-[9px] font-mono font-semibold flex items-center gap-0.5 cursor-pointer shrink-0"
+                              title="Limpar bloqueio e reavaliar na próxima sincronização"
+                            >
+                              <RotateCcw className="w-2.5 h-2.5" />
+                              <span>Reavaliar</span>
+                            </button>
                           </div>
                         )}
 
