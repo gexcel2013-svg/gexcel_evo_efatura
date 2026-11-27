@@ -821,6 +821,9 @@ export async function garantirAcessoPastaLocalNoClique(): Promise<boolean> {
 export function sincronizarSqlitesParaPastaLocal(nif?: string, pedirPermissao = false): Promise<number> {
   const exec = async (): Promise<number> => {
     try {
+      if (typeof window !== 'undefined' && (window as any).__GEXCEL_MOTOR_SOURCE__ === 'local') {
+        return 0;
+      }
       if (readSharedSandboxMeta()) return 0;
       const rootHandle = await obterHandleEvogexAtivo(pedirPermissao);
       if (!rootHandle) return 0;

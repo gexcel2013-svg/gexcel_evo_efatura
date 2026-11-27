@@ -216,6 +216,9 @@ if (typeof window !== 'undefined') {
 
 function inspecionarRespostaESincronizarSqlite(pathPart: string, res: Response) {
   if (!res.ok) return;
+  if (currentMotorSource === 'local' || (typeof window !== 'undefined' && window.__GEXCEL_MOTOR_SOURCE__ === 'local')) {
+    return;
+  }
   if (
     pathPart.startsWith('/api/pendentes/classificar') ||
     pathPart.startsWith('/api/pendentes/validar') ||
@@ -316,7 +319,6 @@ if (typeof window !== 'undefined') {
           if (localRes.ok || !isCloudHost) {
             localMotorAvailable = true;
             setMotorSource('local');
-            inspecionarRespostaESincronizarSqlite(pathPart, localRes);
             return localRes;
           }
         } catch (err) {
