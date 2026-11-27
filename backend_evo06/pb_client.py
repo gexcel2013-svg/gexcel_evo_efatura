@@ -1215,20 +1215,25 @@ def obter_db_workspace_evo12_ram(ws_id: Optional[str] = None) -> Optional[str]:
     """
     import tempfile
     candidatos_ws: List[str] = []
+    try:
+        import workspace_context
+        raw_wid = (workspace_context.get_current_raw_ws_id() or "").strip()
+        namespaced_wid = (workspace_context.get_current_ws_id() or "").strip()
+    except Exception:
+        raw_wid = ""
+        namespaced_wid = ""
+
     if ws_id:
         cw = str(ws_id).strip()
         if cw and cw != "unlinked_empty":
-            candidatos_ws.append(cw)
+            if raw_wid and raw_wid != "unlinked_empty" and (cw == namespaced_wid or cw.endswith("_" + raw_wid)):
+                candidatos_ws.append(raw_wid)
+            if cw not in candidatos_ws:
+                candidatos_ws.append(cw)
     else:
-        try:
-            import workspace_context
-            raw_wid = (workspace_context.get_current_raw_ws_id() or "").strip()
-            namespaced_wid = (workspace_context.get_current_ws_id() or "").strip()
-            for cand in (raw_wid, namespaced_wid):
-                if cand and cand != "unlinked_empty" and cand not in candidatos_ws:
-                    candidatos_ws.append(cand)
-        except Exception:
-            pass
+        for cand in (raw_wid, namespaced_wid):
+            if cand and cand != "unlinked_empty" and cand not in candidatos_ws:
+                candidatos_ws.append(cand)
 
     if not candidatos_ws:
         return None
@@ -1367,7 +1372,7 @@ def carregar_entidades_gestor_evo12() -> List[Dict[str, Any]]:
                 if ws_id == "unlinked_empty":
                     return []
                 por_nif_ws: Dict[str, Dict[str, Any]] = {}
-                db_ws = obter_db_workspace_evo12_ram(ws_id)
+                db_ws = obter_db_workspace_evo12_ram()
                 if db_ws:
                     _carregar_entidades_db_evo12(db_ws, por_nif_ws, origem="evo12_workspace_ram")
                 ents_ram = workspace_context.get_entidades_ram(ws_id)

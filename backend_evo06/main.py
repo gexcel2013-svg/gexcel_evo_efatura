@@ -398,7 +398,7 @@ if sys.platform != "win32":
         pass
 
 API_VERSION = os.environ.get("GEXCEL_EFATURA_VERSION", "4.2.30")
-BUILD_NUMBER = 57
+BUILD_NUMBER = 58
 _PROCESS_BOOT_STR = datetime.now().strftime("%d/%m %H:%M")
 _PROCESS_BOOT_SHORT = datetime.now().strftime("%H:%M")
 _PROCESS_MODE = "EXE" if getattr(sys, "frozen", False) else "DEV"
