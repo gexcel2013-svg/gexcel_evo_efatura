@@ -232,6 +232,7 @@ export function RecibosVerdesView({
   const [loginEmCurso, setLoginEmCurso] = useState<string | null>(null);
   const [loginStatusMsg, setLoginStatusMsg] = useState<{ tipo: 'sucesso' | 'erro' | 'info'; texto: string } | null>(null);
   const pollingRef = useRef<number | null>(null);
+  const syncedJobIdsRef = useRef<Set<string>>(new Set());
 
   // Estado da Consulta Detalhada de Documentos
   const hoje = new Date();
@@ -500,7 +501,8 @@ export function RecibosVerdesView({
               if (novoStatus !== 'em_progresso') {
                 algumTerminou = true;
               }
-              if (novoStatus === 'concluido' && job.nif) {
+              if (novoStatus === 'concluido' && job.nif && !syncedJobIdsRef.current.has(job.jobId)) {
+                syncedJobIdsRef.current.add(job.jobId);
                 nifsConcluidos.push(job.nif);
               }
               updates[job.nif] = {
@@ -1660,15 +1662,15 @@ export function RecibosVerdesView({
                             </button>
                           </div>
                         </td>
-                        <td className="py-1.5 px-2 max-w-[230px]">
-                          <div className="truncate font-sans font-medium text-foreground" title={ofuscarNome(resolverNomeEntidade(ent.nif, ent.nomecli), ent.nif)}>
+                        <td className="py-1.5 px-2 min-w-[230px] max-w-[320px] align-top whitespace-normal">
+                          <div className="font-sans font-medium text-foreground break-words leading-snug" title={ofuscarNome(resolverNomeEntidade(ent.nif, ent.nomecli), ent.nif)}>
                             {ofuscarNome(resolverNomeEntidade(ent.nif, ent.nomecli), ent.nif)}
                           </div>
                           {job && (
-                            <div className="mt-0.5 flex items-center space-x-1.5 text-[10px]">
-                              {job.status === 'em_progresso' && <Loader2 className="w-3 h-3 animate-spin text-[#0284c7]" />}
+                            <div className="mt-1 flex items-start gap-1.5 text-[10px] leading-snug">
+                              {job.status === 'em_progresso' && <Loader2 className="w-3 h-3 mt-0.5 shrink-0 animate-spin text-[#0284c7]" />}
                               <span
-                                className={`truncate ${
+                                className={`whitespace-normal break-words ${
                                   job.status === 'erro'
                                     ? 'text-rose-600 dark:text-rose-400 font-bold'
                                     : job.status === 'concluido'
