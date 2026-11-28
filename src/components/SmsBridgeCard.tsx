@@ -12,6 +12,8 @@ import {
   Send,
   Lock,
   Download,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { sincronizarSqlitesParaPastaLocal } from '../lib/localFsBridge';
 
@@ -61,6 +63,7 @@ export function SmsBridgeCard() {
   const [testando, setTestando] = useState(false);
   const [msgTeste, setMsgTeste] = useState<string | null>(null);
   const [ocupadoNif, setOcupadoNif] = useState<string | null>(null);
+  const [avancadoAberto, setAvancadoAberto] = useState<boolean>(false);
 
   const carregarDados = useCallback(async () => {
     try {
@@ -200,26 +203,10 @@ export function SmsBridgeCard() {
                   : 'Ponte Online em RAM'}
               </span>
             </span>
-            <button
-              type="button"
-              onClick={testarLigacao}
-              disabled={testando || carregando}
-              className="px-3 py-1 rounded bg-[#0284c7] hover:bg-[#0369a1] text-white font-mono text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-            >
-              {testando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              <span>Testar Ligação</span>
-            </button>
           </div>
         </div>
 
-        {msgTeste && (
-          <div className="px-3 py-2 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-400 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 font-mono text-xs flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-            <span>{msgTeste}</span>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
           <div className="lg:col-span-4 flex flex-col items-center justify-center p-4 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-slate-50 dark:bg-[#07121c] space-y-2">
             {config?.qr_svg ? (
               <div
@@ -231,75 +218,130 @@ export function SmsBridgeCard() {
                 {carregando ? 'A gerar QR...' : 'QR indisponível'}
               </div>
             )}
-            <span className="text-[11px] font-mono text-slate-700 dark:text-slate-300 text-center">
-              Ler com a câmara do telemóvel para configurar
+            <span className="text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-200 text-center">
+              Aponte a câmara do telemóvel
             </span>
-            {config?.painel_url && (
-              <a
-                href={config.painel_url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-[#0284c7] dark:text-sky-400 hover:underline"
-              >
-                <ExternalLink className="w-3 h-3" />
-                <span>Abrir Página Telemóvel</span>
-              </a>
-            )}
-            {config?.macro_download_url && (
-              <a
-                href={config.macro_download_url}
-                download="evoGex_2FA.macro"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-[11px] font-semibold"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Descarregar Macro Pronta</span>
-              </a>
-            )}
           </div>
 
           <div className="lg:col-span-8 space-y-3">
-            <div className="p-3 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-slate-50 dark:bg-[#07121c] space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                  Endereço Privado Webhook (MacroDroid / iPhone)
-                </span>
-                <button
-                  type="button"
-                  onClick={copiarWebhook}
-                  disabled={!config?.webhook_url}
-                  className="px-2.5 py-1 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] hover:border-[#0284c7] text-xs font-mono font-semibold text-foreground flex items-center gap-1 cursor-pointer"
-                >
-                  <Copy className="w-3 h-3 text-[#0284c7]" />
-                  <span>{copiado ? 'Copiado!' : 'Copiar Endereço'}</span>
-                </button>
+            <div className="p-4 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-slate-50 dark:bg-[#07121c] space-y-3">
+              <div className="text-xs font-mono font-bold text-[#0284c7] dark:text-sky-400 uppercase tracking-wider">
+                Como ligar em 3 passos simples
               </div>
-              <div className="px-2.5 py-2 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] font-mono text-[11px] text-[#0284c7] dark:text-sky-300 break-all select-all">
-                {config?.webhook_url || 'A carregar endereço...'}
-              </div>
+              <ol className="space-y-2.5 text-xs text-slate-800 dark:text-slate-200">
+                <li className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-[#0284c7] text-white font-mono font-bold text-[11px] flex items-center justify-center shrink-0">
+                    1
+                  </span>
+                  <span>
+                    <strong>Aponte a câmara do telemóvel</strong> ao QR Code ao lado e abra a ligação.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-[#0284c7] text-white font-mono font-bold text-[11px] flex items-center justify-center shrink-0">
+                    2
+                  </span>
+                  <span>
+                    No telemóvel, toque em <strong>Importar Macro evoGex Pronta</strong> e carregue em{' '}
+                    <strong>✓ Guardar</strong> no MacroDroid <em>(bateria Sem Restrições)</em>.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-[#0284c7] text-white font-mono font-bold text-[11px] flex items-center justify-center shrink-0">
+                    3
+                  </span>
+                  <span>
+                    <strong>Autorize abaixo</strong> as entidades que pretende ligar à Ponte SMS.
+                  </span>
+                </li>
+              </ol>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-              <div className="p-3 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] space-y-1.5">
-                <div className="font-mono font-bold text-[#0284c7] dark:text-sky-400">
-                  Android (MacroDroid · 1 Toque via QR)
-                </div>
-                <ul className="list-disc pl-4 space-y-1 text-slate-700 dark:text-slate-300 text-[11.5px]">
-                  <li>Ler o QR Code com o telemóvel (ou descarregar a macro pronta).</li>
-                  <li>Abrir o ficheiro no MacroDroid e tocar em Guardar.</li>
-                  <li>Definir bateria do MacroDroid como Sem Restrições.</li>
-                </ul>
-              </div>
-              <div className="p-3 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] space-y-1.5">
-                <div className="font-mono font-bold text-[#0284c7] dark:text-sky-400">
-                  iPhone / iOS (App Atalhos Apple)
-                </div>
-                <ul className="list-disc pl-4 space-y-1 text-slate-700 dark:text-slate-300 text-[11.5px]">
-                  <li>Automação por Mensagem contendo «AT» ou «código».</li>
-                  <li>Ativar Executar Imediatamente (sem confirmação).</li>
-                  <li>Obter conteúdo do URL (POST texto) para o endereço acima.</li>
-                </ul>
-              </div>
+            <div>
+              <button
+                type="button"
+                onClick={() => setAvancadoAberto(v => !v)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-100 dark:bg-[#132233] border border-slate-300 dark:border-[#222f3e] hover:border-[#0284c7] text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                {avancadoAberto ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                <span>Opções avançadas / iPhone</span>
+              </button>
             </div>
+
+            {avancadoAberto && (
+              <div className="p-4 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-slate-50 dark:bg-[#07121c] space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  {config?.painel_url && (
+                    <a
+                      href={config.painel_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] hover:border-[#0284c7] text-xs font-mono font-semibold text-[#0284c7] dark:text-sky-400"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Abrir Página Telemóvel</span>
+                    </a>
+                  )}
+                  {config?.macro_download_url && (
+                    <a
+                      href={config.macro_download_url}
+                      download="evoGex_2FA.macro"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-xs font-semibold"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Descarregar Macro Pronta</span>
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={testarLigacao}
+                    disabled={testando || carregando}
+                    className="px-3 py-1.5 rounded bg-[#0284c7] hover:bg-[#0369a1] text-white font-mono text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {testando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    <span>Testar Ligação</span>
+                  </button>
+                </div>
+
+                {msgTeste && (
+                  <div className="px-3 py-2 rounded bg-emerald-50 dark:bg-[#091e1a] border border-emerald-400 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 font-mono text-xs flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <span>{msgTeste}</span>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                      Endereço Privado Webhook (iPhone / Manual)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copiarWebhook}
+                      disabled={!config?.webhook_url}
+                      className="px-2.5 py-1 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] hover:border-[#0284c7] text-xs font-mono font-semibold text-foreground flex items-center gap-1 cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3 text-[#0284c7]" />
+                      <span>{copiado ? 'Copiado!' : 'Copiar Endereço'}</span>
+                    </button>
+                  </div>
+                  <div className="px-2.5 py-2 rounded bg-white dark:bg-[#0c1520] border border-slate-300 dark:border-[#222f3e] font-mono text-[11px] text-[#0284c7] dark:text-sky-300 break-all select-all">
+                    {config?.webhook_url || 'A carregar endereço...'}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] space-y-1.5 text-xs">
+                  <div className="font-mono font-bold text-[#0284c7] dark:text-sky-400">
+                    iPhone / iOS (App Atalhos Apple)
+                  </div>
+                  <ul className="list-disc pl-4 space-y-1 text-slate-700 dark:text-slate-300 text-[11.5px]">
+                    <li>Automação por Mensagem contendo «AT» ou «código».</li>
+                    <li>Ativar Executar Imediatamente (sem confirmação).</li>
+                    <li>Obter conteúdo do URL (POST texto) para o endereço acima.</li>
+                  </ul>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
