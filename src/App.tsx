@@ -634,6 +634,9 @@ function AppContent() {
           sharedMetaGate?.entidadesCount || localCfgGate?.total_entidades_carregadas || 0
         )}
         onOpenGestor={handleOpenGestorEntidades}
+        onOpenPainel={() => {
+          window.location.href = getEvoSubdomainUrl('painel');
+        }}
         onRecheck={() => {
           setGateRecheckTick(prev => prev + 1);
         }}

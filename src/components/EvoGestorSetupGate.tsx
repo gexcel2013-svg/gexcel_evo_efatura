@@ -26,6 +26,7 @@ interface EvoGestorSetupGateProps {
   entidadesTotal: number;
   entidadesPrevias: number;
   onOpenGestor: () => void;
+  onOpenPainel?: () => void;
   onRecheck: () => Promise<void> | void;
   onReconnectFolder: () => Promise<{
     ok: boolean;
@@ -48,6 +49,7 @@ export const EvoGestorSetupGate: React.FC<EvoGestorSetupGateProps> = ({
   entidadesTotal,
   entidadesPrevias,
   onOpenGestor,
+  onOpenPainel,
   onRecheck,
   onReconnectFolder,
   onLogout,
@@ -272,6 +274,16 @@ export const EvoGestorSetupGate: React.FC<EvoGestorSetupGateProps> = ({
                   <span>{busy ? "A verificar..." : "Voltar a Verificar"}</span>
                 </button>
               </>
+            )}
+            {onOpenPainel && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onOpenPainel}
+                className="w-full py-1.5 text-[11px] font-mono text-slate-600 dark:text-slate-400 hover:text-primary cursor-pointer"
+              >
+                Voltar ao Painel Principal
+              </button>
             )}
           </div>
         </div>
