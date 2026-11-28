@@ -443,7 +443,7 @@ if sys.platform != "win32":
         pass
 
 API_VERSION = os.environ.get("GEXCEL_EFATURA_VERSION", "4.2.30")
-BUILD_NUMBER = 59
+BUILD_NUMBER = 60
 _PROCESS_BOOT_STR = datetime.now().strftime("%d/%m %H:%M")
 _PROCESS_BOOT_SHORT = datetime.now().strftime("%H:%M")
 _PROCESS_MODE = "EXE" if getattr(sys, "frozen", False) else "DEV"
@@ -488,6 +488,7 @@ _CLOUD_PUBLIC_API_PATHS = frozenset({
     "/api/auth/verify",
     "/api/sms-bridge/webhook",
     "/api/sms-bridge/painel",
+    "/api/sms-bridge/macrodroid",
 })
 _TOKEN_VERIFY_CACHE: Dict[str, Any] = {}
 _TOKEN_VERIFY_LOCK = threading.Lock()
@@ -5289,6 +5290,7 @@ def api_sms_bridge_config(request: Request):
     base_url = _obter_base_url_publica(request)
     webhook_url = f"{base_url}/api/sms-bridge/webhook?token={token}"
     painel_url = f"{base_url}/api/sms-bridge/painel?token={token}"
+    macro_download_url = f"{base_url}/api/sms-bridge/macrodroid?token={token}"
     qr_svg = sms_2fa_bridge.build_qr_svg(painel_url)
     st = sms_2fa_bridge.get_bridge_status_for_tenant(tenant_key)
     return {
@@ -5296,6 +5298,7 @@ def api_sms_bridge_config(request: Request):
         "token": token,
         "webhook_url": webhook_url,
         "painel_url": painel_url,
+        "macro_download_url": macro_download_url,
         "qr_svg": qr_svg,
         "status": st,
     }
@@ -5369,7 +5372,31 @@ def api_sms_bridge_painel(request: Request, token: Optional[str] = None):
     base_url = _obter_base_url_publica(request)
     webhook_url = f"{base_url}/api/sms-bridge/webhook?token={tok_eff}"
     status_url = f"{base_url}/api/sms-bridge/status?token={tok_eff}"
-    return HTMLResponse(content=sms_2fa_bridge.render_mobile_panel_html(webhook_url, status_url, tok_eff))
+    macro_download_url = f"{base_url}/api/sms-bridge/macrodroid?token={tok_eff}"
+    return HTMLResponse(
+        content=sms_2fa_bridge.render_mobile_panel_html(
+            webhook_url,
+            status_url,
+            tok_eff,
+            macro_download_url=macro_download_url,
+        )
+    )
+
+
+@app.get("/api/sms-bridge/macrodroid")
+def api_sms_bridge_macrodroid(request: Request, token: Optional[str] = None):
+    """Gera e descarrega o ficheiro evoGex_2FA.macro já configurado com o token do tenant."""
+    tok_eff = (token or "").strip()
+    if not sms_2fa_bridge.validate_webhook_token(tok_eff):
+        raise HTTPException(status_code=401, detail="Token SMS inválido.")
+    base_url = _obter_base_url_publica(request)
+    webhook_url = f"{base_url}/api/sms-bridge/webhook?token={tok_eff}"
+    content = sms_2fa_bridge.build_macrodroid_export_json(webhook_url, tok_eff)
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="evoGex_2FA.macro"'},
+    )
 
 
 @app.post("/api/sms-bridge/teste")

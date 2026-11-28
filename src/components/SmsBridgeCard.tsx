@@ -11,6 +11,7 @@ import {
   Loader2,
   Send,
   Lock,
+  Download,
 } from 'lucide-react';
 import { sincronizarSqlitesParaPastaLocal } from '../lib/localFsBridge';
 
@@ -32,6 +33,7 @@ interface SmsBridgeConfigData {
   token: string;
   webhook_url: string;
   painel_url: string;
+  macro_download_url?: string;
   qr_svg: string;
   status?: {
     online: boolean;
@@ -243,6 +245,16 @@ export function SmsBridgeCard() {
                 <span>Abrir Página Telemóvel</span>
               </a>
             )}
+            {config?.macro_download_url && (
+              <a
+                href={config.macro_download_url}
+                download="evoGex_2FA.macro"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-[11px] font-semibold"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Descarregar Macro Pronta</span>
+              </a>
+            )}
           </div>
 
           <div className="lg:col-span-8 space-y-3">
@@ -269,12 +281,12 @@ export function SmsBridgeCard() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] space-y-1.5">
                 <div className="font-mono font-bold text-[#0284c7] dark:text-sky-400">
-                  Android (MacroDroid Pro · Google Play)
+                  Android (MacroDroid · 1 Toque via QR)
                 </div>
                 <ul className="list-disc pl-4 space-y-1 text-slate-700 dark:text-slate-300 text-[11.5px]">
-                  <li>Duplo gatilho: SMS Recebido + Notificação (Mensagens).</li>
-                  <li>Ação: Pedido HTTP (POST, text/plain) com o endereço acima.</li>
-                  <li>Bateria do MacroDroid definida como Sem Restrições.</li>
+                  <li>Ler o QR Code com o telemóvel (ou descarregar a macro pronta).</li>
+                  <li>Abrir o ficheiro no MacroDroid e tocar em Guardar.</li>
+                  <li>Definir bateria do MacroDroid como Sem Restrições.</li>
                 </ul>
               </div>
               <div className="p-3 rounded border border-[#d7e0ea] dark:border-[#222f3e] bg-white dark:bg-[#0c1520] space-y-1.5">

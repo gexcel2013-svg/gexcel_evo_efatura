@@ -10,6 +10,7 @@ código numérico para RAM efêmera (TTL máx. 5 minutos) e destrói o código l
 import os
 import re
 import hmac
+import json
 import time
 import html
 import hashlib
@@ -165,7 +166,14 @@ def receive_sms_webhook(token_provided: str, raw_text: str, sender: str = "") ->
         return 400, {"ok": False, "erro": "Corpo da mensagem vazio."}
 
     txt_clean = txt
-    for placeholder in ("{sms_message}", "[sms_message]", "{not_text}", "[not_text]"):
+    for placeholder in (
+        "{sms_message}",
+        "[sms_message]",
+        "{not_text}",
+        "[not_text]",
+        "{notification}",
+        "[notification]",
+    ):
         txt_clean = txt_clean.replace(placeholder, " ")
     txt_clean = " ".join(txt_clean.split()).strip()
 
@@ -583,11 +591,171 @@ def build_qr_svg(url: str) -> str:
             return ""
 
 
-def render_mobile_panel_html(webhook_url: str, status_url: str, token: str) -> str:
-    """Gera página móvel responsiva para associar o MacroDroid / Atalhos Apple em 1 minuto."""
+def _signed_int64_from_seed(seed: str) -> int:
+    """Deriva um inteiro assinado de 64 bits determinístico para GUID/SIGUID do MacroDroid."""
+    digest = hashlib.sha256(seed.encode("utf-8")).digest()[:8]
+    return int.from_bytes(digest, "big", signed=True)
+
+
+def build_macrodroid_export_json(webhook_url: str, token: str, macro_name: str = "evoGex 2FA") -> str:
+    """
+    Gera um ficheiro de exportação MacroDroid (.macro, macroExportVersion=1)
+    pronto a importar num toque com gatilhos SMS + Notificações Mensagens
+    e pedido HTTP POST direto para o webhook privado do tenant.
+    """
+    now_ms = int(time.time() * 1000)
+    payload = {
+        "globalVariables": [],
+        "macro": {
+            "aiGenerated": 0,
+            "breakpoints": [],
+            "disabledTimestamp": 0,
+            "exportedActionBlocks": [],
+            "exportedSharedScenes": [],
+            "forceEvenIfNotEnabledTimestamp": 0,
+            "isActionBlock": False,
+            "isExtra": False,
+            "isFavourite": False,
+            "lastEditedTimestamp": now_ms,
+            "localVariableSeparators": [],
+            "localVariables": [],
+            "localVarsAlphabetical": True,
+            "loggingLevel": 0,
+            "m_GUID": _signed_int64_from_seed(f"{token}:macro"),
+            "m_actionList": [
+                {
+                    "requestConfig": {
+                        "allFilesAccessPath": "",
+                        "allowAnyCertificate": False,
+                        "basicAuthEnabled": False,
+                        "basicAuthPassword": "",
+                        "basicAuthUsername": "",
+                        "blockNextAction": False,
+                        "clientCertEnabled": False,
+                        "clientCertKeyStoreDisplayName": "",
+                        "clientCertKeyStoreUri": "",
+                        "clientCertPassword": "",
+                        "contentBodyDynamicFileName": "",
+                        "contentBodyFileDisplayName": "",
+                        "contentBodyFileUri": "",
+                        "contentBodyFolderDisplayName": "",
+                        "contentBodyFolderUri": "",
+                        "contentBodySource": 0,
+                        "contentBodyText": "{notification} {sms_message}",
+                        "contentType": "text/plain",
+                        "followRedirects": True,
+                        "headerParams": [],
+                        "localFileUri": "",
+                        "maxTotalDurationSeconds": 3600,
+                        "prettifyJson": False,
+                        "proxyEnabled": False,
+                        "proxyHost": "",
+                        "proxyPort": 8080,
+                        "proxyType": 0,
+                        "queryParams": [],
+                        "requestTimeOutSeconds": 30,
+                        "requestType": 1,
+                        "saveResponseAllFilesAccessPath": "",
+                        "saveResponseFileName": "",
+                        "saveResponseFolderPathDisplayName": "",
+                        "saveResponseFolderPathUri": "",
+                        "saveResponseType": 0,
+                        "saveResponseUseAllFilesAccess": False,
+                        "saveReturnCodeToVariable": False,
+                        "saveReturnHeadersToVariable": False,
+                        "urlToOpen": webhook_url,
+                        "useAllFilesAccess": False,
+                        "useLocalFileUri": False,
+                        "useStaticContentBodyFile": True,
+                    },
+                    "disableLogging": False,
+                    "m_SIGUID": _signed_int64_from_seed(f"{token}:action:http"),
+                    "m_classType": "HttpRequestAction",
+                    "m_comment": "",
+                    "m_constraintList": [],
+                    "m_isDisabled": False,
+                    "m_isOrCondition": False,
+                }
+            ],
+            "m_category": "evoGex",
+            "m_completed": True,
+            "m_constraintList": [],
+            "m_description": "Ponte SMS 2FA evoGex.com (RAM Zero-Storage)",
+            "m_descriptionOpen": False,
+            "m_enabled": True,
+            "m_excludeLog": False,
+            "m_headingColor": 0,
+            "m_isOrCondition": False,
+            "m_name": macro_name,
+            "m_triggerList": [
+                {
+                    "enableRegex": False,
+                    "enableRegexPhoneNumber": False,
+                    "ignoreCase": True,
+                    "isExcludeContact": False,
+                    "m_exactMatch": False,
+                    "m_excludes": False,
+                    "m_groupIdList": [],
+                    "m_groupNameList": [],
+                    "m_option": 3,
+                    "m_smsContent": "",
+                    "m_smsFromList": [],
+                    "m_smsNumber": "",
+                    "m_smsNumberExclude": False,
+                    "subscriptionId": -1,
+                    "disableLogging": False,
+                    "m_SIGUID": _signed_int64_from_seed(f"{token}:trigger:sms"),
+                    "m_classType": "IncomingSMSTrigger",
+                    "m_comment": "",
+                    "m_constraintList": [],
+                    "m_isDisabled": False,
+                    "m_isOrCondition": False,
+                },
+                {
+                    "enableRegex": False,
+                    "ignoreCase": True,
+                    "m_applicationNameList": ["Mensagens", "Mensagens"],
+                    "m_exactMatch": False,
+                    "m_excludeApps": False,
+                    "m_excludes": False,
+                    "m_ignoreOngoing": False,
+                    "m_option": 0,
+                    "m_packageNameList": [
+                        "com.google.android.apps.messaging",
+                        "com.samsung.android.messaging",
+                    ],
+                    "m_soundOption": 0,
+                    "m_supressMultiples": True,
+                    "m_textContent": "",
+                    "matchOptionMessage": 0,
+                    "matchOptionTitle": 0,
+                    "separateTitleAndMessage": False,
+                    "disableLogging": False,
+                    "m_SIGUID": _signed_int64_from_seed(f"{token}:trigger:notif"),
+                    "m_classType": "NotificationTrigger",
+                    "m_comment": "",
+                    "m_constraintList": [],
+                    "m_isDisabled": False,
+                    "m_isOrCondition": False,
+                },
+            ],
+        },
+        "macroExportVersion": 1,
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def render_mobile_panel_html(
+    webhook_url: str,
+    status_url: str,
+    token: str,
+    macro_download_url: str = "",
+) -> str:
+    """Gera página móvel responsiva com botão de 1 toque para importar MacroDroid ou copiar para iPhone."""
     wh_esc = html.escape(webhook_url, quote=True)
     st_esc = html.escape(status_url, quote=True)
     tk_esc = html.escape(token, quote=True)
+    dl_esc = html.escape(macro_download_url or "#", quote=True)
     return f"""<!DOCTYPE html>
 <html lang="pt">
 <head>
@@ -601,10 +769,13 @@ def render_mobile_panel_html(webhook_url: str, status_url: str, token: str) -> s
   .title {{ font-size:18px; font-weight:600; color:#38bdf8; margin:0 0 6px; }}
   .sub {{ font-size:13px; color:#94a3b8; margin:0; line-height:1.45; }}
   .urlbox {{ background:#07121c; border:1px solid #1e3a5f; border-radius:6px; padding:10px; font-family:ui-monospace, monospace; font-size:12px; word-break:break-all; color:#7dd3fc; margin:10px 0; }}
-  .btn {{ background:#0284c7; color:#ffffff; border:none; border-radius:6px; padding:11px 16px; font-weight:600; font-size:14px; cursor:pointer; width:100%; }}
+  .btn {{ display:block; text-align:center; text-decoration:none; box-sizing:border-box; background:#0284c7; color:#ffffff; border:none; border-radius:6px; padding:12px 16px; font-weight:600; font-size:14px; cursor:pointer; width:100%; }}
+  .btn-green {{ background:#059669; margin-top:10px; }}
+  .btn-outline {{ background:#07121c; border:1px solid #38bdf8; color:#38bdf8; }}
   .btn-ok {{ background:#059669; }}
   .badge {{ display:inline-block; padding:5px 10px; border-radius:999px; font-size:12px; font-weight:600; background:#091e1a; color:#34d399; border:1px solid #065f46; }}
   ol {{ margin:8px 0 0 18px; padding:0; font-size:13px; line-height:1.55; color:#cbd5e1; }}
+  .hint {{ font-size:12px; color:#94a3b8; margin:8px 0 0; line-height:1.45; }}
 </style>
 </head>
 <body>
@@ -615,26 +786,25 @@ def render_mobile_panel_html(webhook_url: str, status_url: str, token: str) -> s
     <div style="margin-top:10px;" id="stBadge"><span class="badge">A verificar ligação...</span></div>
   </div>
   <div class="card">
-    <div style="font-size:13px;font-weight:600;color:#f8fafc;">Endereço de Envio (Webhook)</div>
-    <div class="urlbox" id="whUrl">{wh_esc}</div>
-    <button class="btn" id="copyBtn" onclick="copyUrl()">Copiar Endereço</button>
-    <div style="margin-top:8px;font-size:11px;color:#94a3b8;font-family:monospace;">Token: {tk_esc}</div>
+    <div style="font-size:14px;font-weight:700;color:#38bdf8;margin-bottom:8px;">Android — Configuração Automática (2 toques)</div>
+    <a class="btn btn-outline" href="https://play.google.com/store/apps/details?id=com.arlosoft.macrodroid" target="_blank" rel="noreferrer">1. Instalar MacroDroid (Google Play)</a>
+    <p class="hint">Se já tem o MacroDroid instalado, avance diretamente para o Passo 2.</p>
+    <a class="btn btn-green" href="{dl_esc}" download="evoGex_2FA.macro">2. Importar Macro evoGex Pronta (1 toque)</a>
+    <p class="hint">Toque no ficheiro descarregado para abrir no MacroDroid e carregue em <strong>✓ (Guardar)</strong>. Defina a bateria do MacroDroid como <strong>Sem Restrições</strong>.</p>
   </div>
   <div class="card">
-    <div style="font-size:13px;font-weight:600;color:#38bdf8;">Android (MacroDroid Pro · Google Play)</div>
-    <ol>
-      <li>Gatilhos: <strong>SMS Recebido (Qualquer)</strong> + <strong>Notificação Recebida (Mensagens)</strong>.</li>
-      <li>Ação: <strong>Pedido HTTP</strong> → Método <strong>POST</strong>, Tipo <strong>text/plain</strong>, colar endereço acima e corpo com o texto do SMS/notificação.</li>
-      <li>Bateria do MacroDroid: definir como <strong>Sem restrições</strong>.</li>
-    </ol>
-  </div>
-  <div class="card">
-    <div style="font-size:13px;font-weight:600;color:#38bdf8;">iPhone / iOS (Atalhos Nativos Apple)</div>
+    <div style="font-size:14px;font-weight:700;color:#38bdf8;">iPhone / iOS (Atalhos Nativos Apple)</div>
     <ol>
       <li>App <strong>Atalhos</strong> → separador <strong>Automação</strong> → Nova Automação por <strong>Mensagem</strong> (contém <code>AT</code> ou <code>código</code>).</li>
       <li>Definir <strong>Executar Imediatamente</strong>.</li>
-      <li>Ação <strong>Obter conteúdo do URL</strong> → Método <strong>POST</strong>, corpo Texto com a mensagem recebida.</li>
+      <li>Ação <strong>Obter conteúdo do URL</strong> → Método <strong>POST</strong>, corpo Texto com a mensagem recebida e cole o endereço abaixo.</li>
     </ol>
+  </div>
+  <div class="card">
+    <div style="font-size:13px;font-weight:600;color:#f8fafc;">Endereço Privado (Avançado / Copiar para iPhone)</div>
+    <div class="urlbox" id="whUrl">{wh_esc}</div>
+    <button class="btn" id="copyBtn" onclick="copyUrl()">Copiar Endereço</button>
+    <div style="margin-top:8px;font-size:11px;color:#94a3b8;font-family:monospace;">Token: {tk_esc}</div>
   </div>
 </div>
 <script>
